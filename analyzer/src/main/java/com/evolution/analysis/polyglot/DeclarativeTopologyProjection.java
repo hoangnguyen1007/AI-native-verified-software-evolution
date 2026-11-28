@@ -23,6 +23,28 @@ import java.util.regex.Pattern;
 public final class DeclarativeTopologyProjection {
     public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("architecture.declarative-topology", "m8.4-v1");
 
+    /**
+     * Generic architectural protocol roles driving {@link ServiceArchitectureProjection.ProjectionProfile#DFD_EXPORT}
+     * orientation under {@link ServiceArchitectureProjection.EvidenceConcordance#DERIVED_DFD_ORIENTATION}.
+     * Derived strictly from open-standard protocol/framework roles (zero repository/app-specific exceptions).
+     */
+    public enum ProtocolOrientationRole {
+        DATA_STORE,
+        CONFIG_SERVER,
+        DISCOVERY_REGISTRY,
+        BROKER_CONSUMER,
+        CONFIG_SOURCE_REPO,
+        OBSERVABILITY_PIPELINE,
+        CONTROL_PLANE_ADMIN,
+        AUTH_PROVIDER,
+        COORDINATION_SERVICE,
+        DFD_POLICY_SYNTHESIS
+    }
+
+    private static final Set<String> DEPLOYMENT_LAYERS = Set.of("COMPOSE", "K8S");
+    private static final Set<String> APPLICATION_LAYERS = Set.of(
+            "BUILD", "SPRING_CONFIG", "SOURCE_SYNTAX", "PROXY_CONFIG", "PROMETHEUS_CONFIG");
+
     private static final Pattern ROOT_AGGREGATOR_ID = Pattern.compile("^[A-Za-z0-9_-]+:\\.(?:->\\.)?$");
     private static final String IDE_DESCRIPTOR_PREFIX = ReadinessPlan.Family.IDE.name() + ":";
     private static final Pattern IPV4_HOST = Pattern.compile("^\\d{1,3}(?:\\.\\d{1,3}){3}$");
@@ -155,6 +177,45 @@ public final class DeclarativeTopologyProjection {
 
     private record InfraOriginMeta(String name, String image, String spec, ContentDigest sourceProof) {}
 
+    private record IdentityOrigin(String serviceName, String spec, ContentDigest sourceEvidence) {}
+
+    private static final class PendingEdge {
+        final ServiceEntry src;
+        final ServiceEntry dst;
+        final String primaryMechanism;
+        final String trust;
+        final boolean dfdDerived;
+        final ProtocolOrientationRole orientationRole;
+        boolean hasDirectEvidence;
+        final Set<String> mechanisms = new TreeSet<>();
+        final Set<ContentDigest> supports = new TreeSet<>();
+        final Set<String> layers = new TreeSet<>();
+
+        PendingEdge(ServiceEntry src, ServiceEntry dst, String mechanism, String trust,
+                boolean dfdDerived, ProtocolOrientationRole orientationRole,
+                boolean directEvidence, ContentDigest support, String layer) {
+            this.src = src;
+            this.dst = dst;
+            this.primaryMechanism = mechanism;
+            this.trust = trust;
+            this.dfdDerived = dfdDerived;
+            this.orientationRole = orientationRole;
+            this.hasDirectEvidence = directEvidence;
+            if (mechanism != null && !mechanism.isEmpty()) this.mechanisms.add(mechanism);
+            if (support != null) this.supports.add(support);
+            if (layer != null && !layer.isEmpty()) this.layers.add(layer);
+        }
+
+        void mergeCorroboration(String mechanism, ContentDigest support, String layer, boolean directEvidence) {
+            if (directEvidence) {
+                this.hasDirectEvidence = true;
+            }
+            if (mechanism != null && !mechanism.isEmpty()) this.mechanisms.add(mechanism);
+            if (support != null) this.supports.add(support);
+            if (layer != null && !layer.isEmpty()) this.layers.add(layer);
+        }
+    }
+
     private record ConfigIdentitySite(KnowledgeGraph.Node node, String dir, String path, String serviceName,
             String configRepoFile, ContentDigest proof) {}
 
@@ -165,7 +226,7 @@ public final class DeclarativeTopologyProjection {
             String nodeKind, String port, boolean externalPort, String configRepoFile, String spec, ContentDigest proof) {}
 
     private record RefSite(KnowledgeGraph.Node node, String doc, String dir, String path, String owner,
-            String role, String target, String port, String configRepoFile, Map<String, Object> attrs,
+            String nodeKind, String role, String target, String port, String configRepoFile, Map<String, Object> attrs,
             ContentDigest proof) {}
 
     private record RouteSite(KnowledgeGraph.Node node, String doc, String dir, String path, String nodeKind,
@@ -576,13 +637,13 @@ public final class DeclarativeTopologyProjection {
                             port, external, configRepoFile, str(attrs.get("spec")), proof));
                 }
                 case "SOURCE_INFRA_DEPENDENCY", "SOURCE_INFRA_ENV_REF" ->
-                        envOrDepRefs.add(new RefSite(node, doc, dir, path, str(fact.get("owner")), "",
+                        envOrDepRefs.add(new RefSite(node, doc, dir, path, str(fact.get("owner")), nodeKind, "",
                                 str(attrs.get("target")), str(attrs.get("port")), configRepoFile, attrs, proof));
                 case "SOURCE_INFRA_CONFIG_REF" ->
-                        configRefs.add(new RefSite(node, doc, dir, path, str(fact.get("owner")), str(attrs.get("role")),
+                        configRefs.add(new RefSite(node, doc, dir, path, str(fact.get("owner")), nodeKind, str(attrs.get("role")),
                                 str(attrs.get("target")), str(attrs.get("port")), configRepoFile, attrs, proof));
                 case "SOURCE_INFRA_SCRAPE_TARGET" ->
-                        scrapeTargets.add(new RefSite(node, doc, dir, path, str(fact.get("owner")), "prometheus-scrape",
+                        scrapeTargets.add(new RefSite(node, doc, dir, path, str(fact.get("owner")), nodeKind, "prometheus-scrape",
                                 str(attrs.get("target")), str(attrs.get("port")), "", attrs, proof));
                 case "SOURCE_GATEWAY_ROUTE" -> {
                     String target = str(attrs.get("targetService"));
@@ -770,8 +831,10 @@ public final class DeclarativeTopologyProjection {
             }
         }
 
-        // Step 2.5: Attach canonical spring.application.name (architecture.service-identity) onto BUILD_COMPONENTs.
+        // Step 2.5: Record canonical spring.application.name identity origins onto BUILD_COMPONENTs
+        // (materialized with final multi-layer evidenceLayers and concordance in Step 7).
         var buildNodesWithCanonicalIdentity = new HashSet<String>();
+        var identityOriginByNodeId = new HashMap<String, IdentityOrigin>();
         var bestIdentityByDir = new TreeMap<String, ConfigIdentitySite>();
         for (var ci : configIdentities) {
             if (!ci.configRepoFile().isEmpty() || isConfigServerRepoPath(ci.path())) continue;
@@ -791,22 +854,8 @@ public final class DeclarativeTopologyProjection {
                 bc = buildComps.getFirst();
             }
             if (bc != null && !aggregatorDirs.contains(bc.normDir())) {
-                var idProof = GraphEvidence.capture("architecture.service-identity", Map.of(
-                        "provider", PROVIDER,
-                        "serviceName", ci.serviceName(),
-                        "name", normSvc,
-                        "directory", bc.rawDir(),
-                        "sourceEvidence", ci.proof(),
-                        "spec", "spring-config",
-                        "trust", "DECLARATIVE_CONFIG",
-                        "runtimeObserved", false));
-                evidence.putIfAbsent(idProof.identity().value(), idProof);
-                String nodeKey = bc.node().context() + "|" + bc.node().identity();
-                var baseNode = additions.getOrDefault(nodeKey, bc.node());
-                var combined = new TreeSet<>(baseNode.evidence());
-                combined.add(idProof.identity());
-                additions.put(nodeKey, new KnowledgeGraph.Node(bc.node().identity(), bc.node().context(),
-                        bc.node().kind(), List.copyOf(combined)));
+                identityOriginByNodeId.put(bc.node().identity(),
+                        new IdentityOrigin(ci.serviceName(), "spring-config", ci.proof()));
                 var updated = new ServiceEntry(bc.node().identity(), normSvc, bc.normDir(), true, bc.isFrontendTool());
                 servicesByDir.put(bc.normDir(), updated);
                 servicesByName.put(normSvc, updated);
@@ -877,6 +926,8 @@ public final class DeclarativeTopologyProjection {
         var k8sWorkloadNodeIds = new HashSet<String>();
         var composeWorkloadNodeIds = new HashSet<String>();
         var infraOriginMeta = new LinkedHashMap<String, InfraOriginMeta>();
+        var infraAppLayersByNodeId = new HashMap<String, Set<String>>();
+        var pendingEdges = new TreeMap<String, PendingEdge>();
         var infraEntries = new LinkedHashMap<String, ServiceEntry>();
         var infraByBaseToken = new HashMap<String, ServiceEntry>();
         for (var se : leafBuildServices.values()) {
@@ -1009,22 +1060,10 @@ public final class DeclarativeTopologyProjection {
                     String fbDash = bc != null ? bc.fallbackName().replace('.', '-') : "";
                     if (bc != null && fbDash.endsWith("-" + identityCandidate)
                             && !identityCandidate.equals(matched.canonicalName())) {
-                        var idProof = GraphEvidence.capture("architecture.service-identity", Map.of(
-                                "provider", PROVIDER,
-                                "serviceName", identityCandidate,
-                                "name", identityCandidate,
-                                "directory", bc.rawDir(),
-                                "sourceEvidence", decl.proof(),
-                                "spec", "compose_service".equals(decl.nodeKind()) ? "docker-compose" : "kubernetes",
-                                "trust", "DECLARATIVE_CONFIG",
-                                "runtimeObserved", false));
-                        evidence.putIfAbsent(idProof.identity().value(), idProof);
-                        String nodeKey = bc.node().context() + "|" + bc.node().identity();
-                        var baseNode = additions.getOrDefault(nodeKey, bc.node());
-                        var combined = new TreeSet<>(baseNode.evidence());
-                        combined.add(idProof.identity());
-                        additions.put(nodeKey, new KnowledgeGraph.Node(bc.node().identity(), bc.node().context(),
-                                bc.node().kind(), List.copyOf(combined)));
+                        identityOriginByNodeId.put(bc.node().identity(), new IdentityOrigin(
+                                identityCandidate,
+                                "compose_service".equals(decl.nodeKind()) ? "docker-compose" : "kubernetes",
+                                decl.proof()));
                         var updated = new ServiceEntry(matched.nodeId(), identityCandidate, matched.dirPrefix(), true, matched.frontendBuild());
                         servicesByDir.put(matched.dirPrefix(), updated);
                         servicesByNodeId.put(matched.nodeId(), updated);
@@ -1043,6 +1082,9 @@ public final class DeclarativeTopologyProjection {
                     }
                 }
                 if (!img.isEmpty()) roles.recordImage(matched.nodeId(), img);
+                if (standaloneProxyDecl && !matched.hasCodeBuild()) {
+                    infraAppLayersByNodeId.computeIfAbsent(matched.nodeId(), k -> new TreeSet<>()).add("PROXY_CONFIG");
+                }
                 if (!buildDir.isEmpty()) servicesByDir.putIfAbsent(buildDir, matched);
                 if (!resolvedBuildDir.isEmpty()) servicesByDir.putIfAbsent(resolvedBuildDir, matched);
                 if (!decl.slot().isEmpty()) docSlotToService.put(decl.doc() + "|" + decl.slot(), matched);
@@ -1092,6 +1134,7 @@ public final class DeclarativeTopologyProjection {
                                 Map.entry("hasDockerfile", true),
                                 Map.entry("componentRole", "SERVICE_COMPONENT"),
                                 Map.entry("evidenceLayers", List.of("K8S")),
+                                Map.entry("concordance", ServiceArchitectureProjection.EvidenceConcordance.SINGLE_LAYER_CONFIRMED.name()),
                                 Map.entry("trust", "DECLARATIVE_CONFIG"),
                                 Map.entry("runtimeObserved", false)));
                         evidence.putIfAbsent(svcProof.identity().value(), svcProof);
@@ -1109,7 +1152,9 @@ public final class DeclarativeTopologyProjection {
                         String infraId = KnowledgeGraph.derivedIdentity("infra-component", List.of(PROVIDER, root, canonicalInfra));
                         var infraProof = GraphEvidence.capture("architecture.infra-component", Map.of(
                                 "provider", PROVIDER, "name", canonicalInfra, "image", img, "spec", decl.nodeKind(),
-                                "sourceEvidence", decl.proof(), "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
+                                "sourceEvidence", decl.proof(),
+                                "concordance", ServiceArchitectureProjection.EvidenceConcordance.SINGLE_LAYER_CONFIRMED.name(),
+                                "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
                         evidence.putIfAbsent(infraProof.identity().value(), infraProof);
                         additions.putIfAbsent(root + "|" + infraId, new KnowledgeGraph.Node(infraId, root, "INFRA_COMPONENT",
                                 List.of(infraProof.identity())));
@@ -1118,6 +1163,9 @@ public final class DeclarativeTopologyProjection {
                         servicesByName.put(canonicalInfra, entry);
                         servicesByNodeId.put(infraId, entry);
                         infraOriginMeta.putIfAbsent(infraId, new InfraOriginMeta(canonicalInfra, img, decl.nodeKind(), decl.proof()));
+                        if (standaloneProxyDecl) {
+                            infraAppLayersByNodeId.computeIfAbsent(infraId, k -> new TreeSet<>()).add("PROXY_CONFIG");
+                        }
                         indexInfraEntry(entry, infraEntries, infraByBaseToken);
                         resolver.registerInfraComponent(infraId, canonicalInfra, buildDir, imageTail, declPorts, declLayer);
                         if ("compose_service".equals(decl.nodeKind())) composeWorkloadNodeIds.add(infraId);
@@ -1181,12 +1229,16 @@ public final class DeclarativeTopologyProjection {
             String infraId = KnowledgeGraph.derivedIdentity("infra-component", List.of(PROVIDER, root, norm));
             var infraProof = GraphEvidence.capture("architecture.infra-component", Map.of(
                     "provider", PROVIDER, "name", norm, "image", norm, "spec", "config-reference",
+                    "evidenceLayers", List.of("SPRING_CONFIG"),
+                    "concordance", ServiceArchitectureProjection.EvidenceConcordance.SINGLE_LAYER_CONFIRMED.name(),
                     "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
             evidence.putIfAbsent(infraProof.identity().value(), infraProof);
             additions.putIfAbsent(root + "|" + infraId, new KnowledgeGraph.Node(infraId, root, "INFRA_COMPONENT",
                     List.of(infraProof.identity())));
             var promoted = new ServiceEntry(infraId, norm, "", false, false);
             roles.infraNodeIds.add(infraId);
+            infraOriginMeta.putIfAbsent(infraId, new InfraOriginMeta(norm, norm, "config-reference", null));
+            infraAppLayersByNodeId.computeIfAbsent(infraId, k -> new TreeSet<>()).add("SPRING_CONFIG");
             servicesByName.put(norm, promoted);
             servicesByNodeId.put(infraId, promoted);
             indexInfraEntry(promoted, infraEntries, infraByBaseToken);
@@ -1318,8 +1370,9 @@ public final class DeclarativeTopologyProjection {
                     roles, resolveOrPromoteTarget, servicesByName);
             if (dst != null && !src.nodeId().equals(dst.nodeId())) {
                 recordDatastoreEdgeIfApplicable(src, dst, roles, servicesWithDatastoreEdge, servicesWithMongoEdge, servicesWithRedisEdge);
-                emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, dst,
-                        ref.proof(), "ENV_OR_COMPOSE_TOPOLOGY", "DECLARATIVE_CONFIG", roles);
+                String deployLayer = ref.nodeKind().startsWith("k8s_") ? "K8S" : "COMPOSE";
+                recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, dst,
+                        ref.proof(), "ENV_OR_COMPOSE_TOPOLOGY", "DECLARATIVE_CONFIG", deployLayer, false, null, roles);
             }
         }
 
@@ -1362,8 +1415,9 @@ public final class DeclarativeTopologyProjection {
                 if (roles.isAuthServer(dst)) {
                     roles.gatewayRouteToAuthNodeIds.add(src.nodeId());
                 }
-                emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, dst,
-                        route.proof(), "GATEWAY_ROUTE", "DECLARATIVE_CONFIG", roles);
+                String routeLayer = !proxyKind.isEmpty() ? "PROXY_CONFIG" : "SPRING_CONFIG";
+                recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, dst,
+                        route.proof(), "GATEWAY_ROUTE", "DECLARATIVE_CONFIG", routeLayer, false, null, roles);
             }
         }
 
@@ -1438,13 +1492,14 @@ public final class DeclarativeTopologyProjection {
                 if (dst == null) continue;
 
                 String mechanism = !proxyKind.isEmpty() ? "GATEWAY_ROUTE" : "SPRING_CONFIG_" + role.toUpperCase(Locale.ROOT);
+                String cfgLayer = !proxyKind.isEmpty() ? "PROXY_CONFIG" : "SPRING_CONFIG";
                 for (ServiceEntry src : owners) {
                     if (src.nodeId().equals(dst.nodeId())) continue;
                     if ("eureka-client".equals(role) && roles.isEurekaDisabled(src)) continue;
                     if ("turbine-monitor".equals(role)) hasExplicitTurbineMonitorRef = true;
                     recordDatastoreEdgeIfApplicable(src, dst, roles, servicesWithDatastoreEdge, servicesWithMongoEdge, servicesWithRedisEdge);
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, dst,
-                            ref.proof(), mechanism, "DECLARATIVE_CONFIG", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, dst,
+                            ref.proof(), mechanism, "DECLARATIVE_CONFIG", cfgLayer, false, null, roles);
                 }
             }
         }
@@ -1458,8 +1513,8 @@ public final class DeclarativeTopologyProjection {
                     ServiceEntry dst = resolveTargetWithLoopback(scrape.target(), scrape.port(), "",
                             uniquePortToService, roles, resolveOrPromoteTarget, servicesByName);
                     if (dst != null && !prometheusComp.nodeId().equals(dst.nodeId())) {
-                        emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, prometheusComp, dst,
-                                scrape.proof(), "PROMETHEUS_SCRAPE", "DECLARATIVE_CONFIG", roles);
+                        recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, prometheusComp, dst,
+                                scrape.proof(), "PROMETHEUS_SCRAPE", "DECLARATIVE_CONFIG", "PROMETHEUS_CONFIG", false, null, roles);
                     }
                 }
             }
@@ -1502,8 +1557,8 @@ public final class DeclarativeTopologyProjection {
             }
 
             if (dst != null && !src.nodeId().equals(dst.nodeId())) {
-                emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, dst,
-                        call.proof(), "JAVA_SERVICE_HOST_CALL", "SOURCE_SYNTAX", roles);
+                recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, dst,
+                        call.proof(), "JAVA_SERVICE_HOST_CALL", "SOURCE_SYNTAX", "SOURCE_SYNTAX", false, null, roles);
             } else if (profile == ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT
                     && dst == null && isExplicitExternalHttpsUrl(resolvedUri, servicesByName)) {
                 String extHost = extractUriHostRaw(resolvedUri);
@@ -1512,7 +1567,10 @@ public final class DeclarativeTopologyProjection {
                 var extProof = GraphEvidence.capture("architecture.external-actor", Map.of(
                         "provider", PROVIDER, "name", actorName, "host", extHost,
                         "category", "external-http-service",
-                        "sourceEvidence", call.proof(), "trust", "DERIVED_DFD_POLICY",
+                        "sourceEvidence", call.proof(),
+                        "concordance", ServiceArchitectureProjection.EvidenceConcordance.DERIVED_DFD_ORIENTATION.name(),
+                        "orientationRole", ProtocolOrientationRole.DFD_POLICY_SYNTHESIS.name(),
+                        "trust", "DERIVED_DFD_POLICY",
                         "rule", "DFD_EXTERNAL_HTTPS_API", "runtimeObserved", false));
                 evidence.putIfAbsent(extProof.identity().value(), extProof);
                 String extKey = root + "|" + extId;
@@ -1530,11 +1588,13 @@ public final class DeclarativeTopologyProjection {
                 String httpMethod = str(call.attrs().get("method")).toUpperCase(Locale.ROOT);
                 boolean isGet = "GET".equals(httpMethod) || httpMethod.isEmpty() || "UNKNOWN".equals(httpMethod);
                 if (isGet) {
-                    emitTopologyEdge(addedEdges, evidence, existingCalls, root, extEntry, src,
-                            call.proof(), "DFD_EXTERNAL_HTTPS_API", "DERIVED_DFD_POLICY");
+                    recordTopologyEdge(pendingEdges, existingCalls, extEntry, src,
+                            call.proof(), "DFD_EXTERNAL_HTTPS_API", "DERIVED_DFD_POLICY",
+                            "DFD_POLICY", true, ProtocolOrientationRole.DFD_POLICY_SYNTHESIS, false);
                 } else {
-                    emitTopologyEdge(addedEdges, evidence, existingCalls, root, src, extEntry,
-                            call.proof(), "DFD_EXTERNAL_HTTPS_API", "DERIVED_DFD_POLICY");
+                    recordTopologyEdge(pendingEdges, existingCalls, src, extEntry,
+                            call.proof(), "DFD_EXTERNAL_HTTPS_API", "DERIVED_DFD_POLICY",
+                            "DFD_POLICY", true, ProtocolOrientationRole.DFD_POLICY_SYNTHESIS, false);
                 }
             }
         }
@@ -1550,13 +1610,14 @@ public final class DeclarativeTopologyProjection {
                 if (src.nodeId().equals(roles.eurekaServer.nodeId()) || roles.isEurekaDisabled(src)) continue;
                 ContentDigest roleProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("EUREKA_CLIENT", "DISCOVERY_CLIENT"));
                 if (roleProof != null) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.eurekaServer,
-                            roleProof, "JAVA_EUREKA_CLIENT_ROLE", "SOURCE_SYNTAX", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, roles.eurekaServer,
+                            roleProof, "JAVA_EUREKA_CLIENT_ROLE", "SOURCE_SYNTAX", "SOURCE_SYNTAX", false, null, roles);
                 }
             }
         }
 
-        // 6. Opt-In DFD_EXPORT Compatibility Rules (all derived actors/edges tagged trust="DERIVED_DFD_POLICY")
+        // 6. Opt-In DFD_EXPORT Compatibility Rules (all derived actors/edges tagged trust="DERIVED_DFD_POLICY"
+        //    and concordance="DERIVED_DFD_ORIENTATION", strictly driven by generic ProtocolOrientationRole)
         if (profile == ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT) {
             // Rule 6a: Starter-evidenced & Spring-role control-plane / infra wiring
             ServiceEntry existingRabbit = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "rabbitmq", "rabbit");
@@ -1577,15 +1638,17 @@ public final class DeclarativeTopologyProjection {
                 }
                 if (eurekaProof != null && roles.eurekaServer != null && !src.nodeId().equals(roles.eurekaServer.nodeId())
                         && !roles.isEurekaDisabled(src)) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.eurekaServer,
-                            eurekaProof, "STARTER_EUREKA_CLIENT", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, roles.eurekaServer,
+                            eurekaProof, "STARTER_EUREKA_CLIENT", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.DISCOVERY_REGISTRY, roles);
                 }
 
                 // Config server client
                 ContentDigest cfgProof = modStarters.get("config-client");
                 if (cfgProof != null && roles.configServer != null && !src.nodeId().equals(roles.configServer.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.configServer,
-                            cfgProof, "STARTER_CONFIG_CLIENT", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, roles.configServer,
+                            cfgProof, "STARTER_CONFIG_CLIENT", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.CONFIG_SERVER, roles);
                 }
 
                 // Zipkin HTTP tracing (skip if Zipkin server consumes via stream; require explicit zipkin reporter starter)
@@ -1593,8 +1656,9 @@ public final class DeclarativeTopologyProjection {
                 if (traceProof != null && roles.zipkinServer != null
                         && !roles.hasRole(roles.zipkinServer, "ZIPKIN_STREAM_SERVER")
                         && !src.nodeId().equals(roles.zipkinServer.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.zipkinServer,
-                            traceProof, "STARTER_ZIPKIN_TRACING", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, roles.zipkinServer,
+                            traceProof, "STARTER_ZIPKIN_TRACING", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.OBSERVABILITY_PIPELINE, roles);
                 }
 
                 // RabbitMQ stream / hystrix-stream (never bare bus-amqp unless paired with CIRCUIT_BREAKER + TURBINE_STREAM)
@@ -1603,22 +1667,25 @@ public final class DeclarativeTopologyProjection {
                     rabbitProof = modStarters.get("bus-amqp");
                 }
                 if (rabbitProof != null && existingRabbit != null && !src.nodeId().equals(existingRabbit.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, existingRabbit,
-                            rabbitProof, "STARTER_RABBITMQ", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, existingRabbit,
+                            rabbitProof, "STARTER_RABBITMQ", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.BROKER_CONSUMER, roles);
                 }
 
                 // Kafka stream
                 ContentDigest kafkaProof = modStarters.get("stream-kafka");
                 if (kafkaProof != null && existingKafka != null && !src.nodeId().equals(existingKafka.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, existingKafka,
-                            kafkaProof, "STARTER_KAFKA", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, existingKafka,
+                            kafkaProof, "STARTER_KAFKA", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.BROKER_CONSUMER, roles);
                 }
 
                 // Spring Boot Admin client
                 ContentDigest adminProof = modStarters.get("boot-admin-client");
                 if (adminProof != null && roles.adminServer != null && !src.nodeId().equals(roles.adminServer.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.adminServer,
-                            adminProof, "STARTER_BOOT_ADMIN_CLIENT", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, roles.adminServer,
+                            adminProof, "STARTER_BOOT_ADMIN_CLIENT", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.CONTROL_PLANE_ADMIN, roles);
                 }
 
                 // OAuth2 resource server -> auth server
@@ -1627,22 +1694,25 @@ public final class DeclarativeTopologyProjection {
                     oauthProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("OAUTH2_RESOURCE", "OAUTH2_SSO"));
                 }
                 if (oauthProof != null && roles.authServer != null && !src.nodeId().equals(roles.authServer.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.authServer,
-                            oauthProof, "STARTER_OAUTH2_RESOURCE", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, roles.authServer,
+                            oauthProof, "STARTER_OAUTH2_RESOURCE", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.AUTH_PROVIDER, roles);
                 }
 
                 // Consul
                 ContentDigest consulProof = modStarters.get("consul");
                 if (consulProof != null && existingConsul != null && !src.nodeId().equals(existingConsul.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, existingConsul,
-                            consulProof, "STARTER_CONSUL", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, existingConsul,
+                            consulProof, "STARTER_CONSUL", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.DISCOVERY_REGISTRY, roles);
                 }
 
                 // Prometheus starter
                 ContentDigest promProof = modStarters.get("prometheus");
                 if (promProof != null && existingPrometheus != null && !src.nodeId().equals(existingPrometheus.nodeId())) {
-                    emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, existingPrometheus,
-                            promProof, "STARTER_PROMETHEUS", "DERIVED_DFD_POLICY", roles);
+                    recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, existingPrometheus,
+                            promProof, "STARTER_PROMETHEUS", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                            ProtocolOrientationRole.OBSERVABILITY_PIPELINE, roles);
                 }
 
                 // Logstash logback encoder
@@ -1651,8 +1721,9 @@ public final class DeclarativeTopologyProjection {
                     ServiceEntry logTarget = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "logstash", "elk");
                     if (logTarget == null) logTarget = resolveOrPromoteTarget.apply("logstash");
                     if (logTarget != null && !src.nodeId().equals(logTarget.nodeId())) {
-                        emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, logTarget,
-                                logstashProof, "STARTER_LOGSTASH", "DERIVED_DFD_POLICY", roles);
+                        recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, logTarget,
+                                logstashProof, "STARTER_LOGSTASH", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                                ProtocolOrientationRole.OBSERVABILITY_PIPELINE, roles);
                     }
                 }
 
@@ -1661,8 +1732,9 @@ public final class DeclarativeTopologyProjection {
                 if (mailProof != null) {
                     ServiceEntry mailTarget = resolveSmtpTarget("", servicesByName, roles, resolveOrPromoteTarget);
                     if (mailTarget != null && !src.nodeId().equals(mailTarget.nodeId())) {
-                        emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, mailTarget,
-                                mailProof, "STARTER_SMTP", "DERIVED_DFD_POLICY", roles);
+                        recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, mailTarget,
+                                mailProof, "STARTER_SMTP", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                                ProtocolOrientationRole.DFD_POLICY_SYNTHESIS, roles);
                     }
                 }
 
@@ -1676,8 +1748,9 @@ public final class DeclarativeTopologyProjection {
                         ServiceEntry dbTarget = findDeclaredDatastoreInfra(src, dbKind, servicesByName, roles);
                         if (dbTarget != null && !src.nodeId().equals(dbTarget.nodeId())) {
                             servicesWithDatastoreEdge.add(src.nodeId());
-                            emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, dbTarget,
-                                    dbProof, "STARTER_DATASOURCE", "DERIVED_DFD_POLICY", roles);
+                            recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, dbTarget,
+                                    dbProof, "STARTER_DATASOURCE", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                                    ProtocolOrientationRole.DATA_STORE, roles);
                         }
                     }
                 }
@@ -1685,16 +1758,18 @@ public final class DeclarativeTopologyProjection {
                     ServiceEntry mongoTarget = findDeclaredDatastoreInfra(src, "mongodb", servicesByName, roles);
                     if (mongoTarget != null && !src.nodeId().equals(mongoTarget.nodeId())) {
                         servicesWithMongoEdge.add(src.nodeId());
-                        emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, mongoTarget,
-                                modStarters.get("data-mongodb"), "STARTER_MONGODB", "DERIVED_DFD_POLICY", roles);
+                        recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, mongoTarget,
+                                modStarters.get("data-mongodb"), "STARTER_MONGODB", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                                ProtocolOrientationRole.DATA_STORE, roles);
                     }
                 }
                 if (!servicesWithRedisEdge.contains(src.nodeId()) && modStarters.containsKey("data-redis")) {
                     ServiceEntry redisTarget = findDeclaredDatastoreInfra(src, "redis", servicesByName, roles);
                     if (redisTarget != null && !src.nodeId().equals(redisTarget.nodeId())) {
                         servicesWithRedisEdge.add(src.nodeId());
-                        emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, redisTarget,
-                                modStarters.get("data-redis"), "STARTER_REDIS", "DERIVED_DFD_POLICY", roles);
+                        recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, redisTarget,
+                                modStarters.get("data-redis"), "STARTER_REDIS", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                                ProtocolOrientationRole.DATA_STORE, roles);
                     }
                 }
 
@@ -1705,8 +1780,9 @@ public final class DeclarativeTopologyProjection {
                     if (streamRoleProof == null) streamRoleProof = modStarters.get("turbine-stream");
                     ServiceEntry broker = existingRabbit != null ? existingRabbit : existingKafka;
                     if (streamRoleProof != null && broker != null && !src.nodeId().equals(broker.nodeId())) {
-                        emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, broker,
-                                streamRoleProof, "STARTER_STREAM_CONSUMER", "DERIVED_DFD_POLICY", roles);
+                        recordOrientedEdge(profile, pendingEdges, existingCalls, infraAppLayersByNodeId, src, broker,
+                                streamRoleProof, "STARTER_STREAM_CONSUMER", "DERIVED_DFD_POLICY", "DFD_POLICY", true,
+                                ProtocolOrientationRole.BROKER_CONSUMER, roles);
                     }
                 }
 
@@ -1717,8 +1793,9 @@ public final class DeclarativeTopologyProjection {
                         && roles.hasRole(src, "CIRCUIT_BREAKER")) {
                     ContentDigest cbProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("CIRCUIT_BREAKER"));
                     if (cbProof != null) {
-                        emitTopologyEdge(addedEdges, evidence, existingCalls, root, src, roles.turbineServer,
-                                cbProof, "DFD_HTTP_TURBINE_CIRCUIT_BREAKER", "DERIVED_DFD_POLICY");
+                        recordTopologyEdge(pendingEdges, existingCalls, src, roles.turbineServer,
+                                cbProof, "DFD_HTTP_TURBINE_CIRCUIT_BREAKER", "DERIVED_DFD_POLICY",
+                                "DFD_POLICY", true, ProtocolOrientationRole.OBSERVABILITY_PIPELINE, false);
                     }
                 }
             }
@@ -1729,8 +1806,9 @@ public final class DeclarativeTopologyProjection {
                 ContentDigest p = findRoleProofFast(roleProofByDirAndRole, roles.hystrixDashboard.dirPrefix(), Set.of("HYSTRIX_DASHBOARD"));
                 if (p == null) p = findRoleProofFast(roleProofByDirAndRole, roles.turbineServer.dirPrefix(), Set.of("TURBINE", "TURBINE_STREAM"));
                 if (p != null) {
-                    emitTopologyEdge(addedEdges, evidence, existingCalls, root, roles.turbineServer, roles.hystrixDashboard,
-                            p, "DFD_TURBINE_DASHBOARD_STREAM", "DERIVED_DFD_POLICY");
+                    recordTopologyEdge(pendingEdges, existingCalls, roles.turbineServer, roles.hystrixDashboard,
+                            p, "DFD_TURBINE_DASHBOARD_STREAM", "DERIVED_DFD_POLICY",
+                            "DFD_POLICY", true, ProtocolOrientationRole.OBSERVABILITY_PIPELINE, false);
                 }
             }
 
@@ -1751,8 +1829,9 @@ public final class DeclarativeTopologyProjection {
                             || roles.hasRole(target, "DISCOVERY_CLIENT")
                             || startersByService.getOrDefault(target.nodeId(), Map.of()).containsKey("eureka-client");
                     if (registered) {
-                        emitTopologyEdge(addedEdges, evidence, existingCalls, root, gw, target,
-                                gwProof, "ZUUL_EUREKA_AUTO_PROXY", "DERIVED_DFD_POLICY");
+                        recordTopologyEdge(pendingEdges, existingCalls, gw, target,
+                                gwProof, "ZUUL_EUREKA_AUTO_PROXY", "DERIVED_DFD_POLICY",
+                                "DFD_POLICY", true, ProtocolOrientationRole.DFD_POLICY_SYNTHESIS, false);
                     }
                 }
             }
@@ -1767,8 +1846,9 @@ public final class DeclarativeTopologyProjection {
                 for (var target : composeContainerServices.values()) {
                     if (target.nodeId().equals(mon.nodeId())) continue;
                     if (roles.isGitRepo(target)) continue;
-                    emitTopologyEdge(addedEdges, evidence, existingCalls, root, target, mon,
-                            monitor.proof(), "DFD_DOCKER_SOCKET_MONITOR", "DERIVED_DFD_POLICY");
+                    recordTopologyEdge(pendingEdges, existingCalls, target, mon,
+                            monitor.proof(), "DFD_DOCKER_SOCKET_MONITOR", "DERIVED_DFD_POLICY",
+                            "DFD_POLICY", true, ProtocolOrientationRole.OBSERVABILITY_PIPELINE, false);
                 }
             }
 
@@ -1804,17 +1884,22 @@ public final class DeclarativeTopologyProjection {
             if (!selectedEntries.isEmpty()) {
                 String actorId = KnowledgeGraph.derivedIdentity("external-actor", List.of(PROVIDER, root, "user"));
                 var actorProof = GraphEvidence.capture("architecture.external-actor", Map.of(
-                        "provider", PROVIDER, "name", "user", "trust", "DERIVED_DFD_POLICY",
+                        "provider", PROVIDER, "name", "user",
+                        "concordance", ServiceArchitectureProjection.EvidenceConcordance.DERIVED_DFD_ORIENTATION.name(),
+                        "orientationRole", ProtocolOrientationRole.DFD_POLICY_SYNTHESIS.name(),
+                        "trust", "DERIVED_DFD_POLICY",
                         "rule", "DFD_EXTERNAL_ENTRY_POINT", "runtimeObserved", false));
                 evidence.putIfAbsent(actorProof.identity().value(), actorProof);
                 additions.put(root + "|" + actorId, new KnowledgeGraph.Node(actorId, root, "EXTERNAL_ACTOR",
                         List.of(actorProof.identity())));
                 var actorEntry = new ServiceEntry(actorId, "user", "", false, false);
                 for (ServiceEntry entry : selectedEntries.values()) {
-                    emitTopologyEdge(addedEdges, evidence, existingCalls, root, actorEntry, entry,
-                            actorProof.identity(), "DFD_EXTERNAL_ENTRY_POINT", "DERIVED_DFD_POLICY");
-                    emitTopologyEdge(addedEdges, evidence, existingCalls, root, entry, actorEntry,
-                            actorProof.identity(), "DFD_EXTERNAL_ENTRY_RESPONSE", "DERIVED_DFD_POLICY");
+                    recordTopologyEdge(pendingEdges, existingCalls, actorEntry, entry,
+                            actorProof.identity(), "DFD_EXTERNAL_ENTRY_POINT", "DERIVED_DFD_POLICY",
+                            "DFD_POLICY", true, ProtocolOrientationRole.DFD_POLICY_SYNTHESIS, false);
+                    recordTopologyEdge(pendingEdges, existingCalls, entry, actorEntry,
+                            actorProof.identity(), "DFD_EXTERNAL_ENTRY_RESPONSE", "DERIVED_DFD_POLICY",
+                            "DFD_POLICY", true, ProtocolOrientationRole.DFD_POLICY_SYNTHESIS, false);
                 }
             }
         }
@@ -1843,6 +1928,7 @@ public final class DeclarativeTopologyProjection {
                         "directory", bc.rawDir(),
                         "packaging", packagingByDir.getOrDefault(bc.normDir(), ""),
                         "evidenceLayers", List.of("BUILD"),
+                        "concordance", ServiceArchitectureProjection.EvidenceConcordance.SINGLE_LAYER_CONFIRMED.name(),
                         "trust", "DECLARATIVE_CONFIG",
                         "runtimeObserved", false));
                 evidence.putIfAbsent(classProof.identity().value(), classProof);
@@ -1877,27 +1963,10 @@ public final class DeclarativeTopologyProjection {
                             totalLeafBuildCount, repoHasDeployableServices, repoHasContainerServices));
             List<String> layers = resolver.evidenceLayers(nodeId);
             if (layers.isEmpty()) layers = List.of("BUILD");
+            var nodeConcordance = classifyConcordance(layers, false);
 
             var baseNode = additions.getOrDefault(nodeKey, bc.node());
-            if (role == CanonicalServiceIdentityResolver.ComponentRole.SERVICE_COMPONENT) {
-                var idProof = GraphEvidence.capture("architecture.service-identity", Map.ofEntries(
-                        Map.entry("provider", PROVIDER),
-                        Map.entry("serviceName", svcName),
-                        Map.entry("name", svcName),
-                        Map.entry("directory", bc.rawDir()),
-                        Map.entry("spec", "cross-layer-reconciliation"),
-                        Map.entry("hasDockerfile", hasDf),
-                        Map.entry("componentRole", role.name()),
-                        Map.entry("isTestOnlyModule", false),
-                        Map.entry("evidenceLayers", layers),
-                        Map.entry("trust", "DECLARATIVE_CONFIG"),
-                        Map.entry("runtimeObserved", false)));
-                evidence.putIfAbsent(idProof.identity().value(), idProof);
-                var combined = new TreeSet<>(baseNode.evidence());
-                combined.add(idProof.identity());
-                additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
-                        "SERVICE_COMPONENT", List.copyOf(combined)));
-            } else if (role == CanonicalServiceIdentityResolver.ComponentRole.SHARED_LIBRARY_MODULE) {
+            if (role == CanonicalServiceIdentityResolver.ComponentRole.SHARED_LIBRARY_MODULE) {
                 var classProof = GraphEvidence.capture("architecture.component-classification", Map.of(
                         "provider", PROVIDER,
                         "role", role.name(),
@@ -1905,6 +1974,7 @@ public final class DeclarativeTopologyProjection {
                         "directory", bc.rawDir(),
                         "packaging", pkg,
                         "evidenceLayers", layers,
+                        "concordance", nodeConcordance.name(),
                         "trust", "DECLARATIVE_CONFIG",
                         "runtimeObserved", false));
                 evidence.putIfAbsent(classProof.identity().value(), classProof);
@@ -1912,161 +1982,271 @@ public final class DeclarativeTopologyProjection {
                 combined.add(classProof.identity());
                 additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
                         "SHARED_LIBRARY_MODULE", List.copyOf(combined)));
-            } else if (layers.size() >= 2) {
-                var idProof = GraphEvidence.capture("architecture.service-identity", Map.ofEntries(
-                        Map.entry("provider", PROVIDER),
-                        Map.entry("serviceName", svcName),
-                        Map.entry("name", svcName),
-                        Map.entry("directory", bc.rawDir()),
-                        Map.entry("spec", "cross-layer-reconciliation"),
-                        Map.entry("hasDockerfile", hasDf),
-                        Map.entry("componentRole", role.name()),
-                        Map.entry("isTestOnlyModule", false),
-                        Map.entry("evidenceLayers", layers),
-                        Map.entry("trust", "DECLARATIVE_CONFIG"),
-                        Map.entry("runtimeObserved", false)));
+            } else {
+                IdentityOrigin origin = identityOriginByNodeId.get(nodeId);
+                String displayServiceName = origin != null ? origin.serviceName() : svcName;
+                String spec = origin != null ? origin.spec() : "cross-layer-reconciliation";
+                var idFields = new LinkedHashMap<String, Object>();
+                idFields.put("provider", PROVIDER);
+                idFields.put("serviceName", displayServiceName);
+                idFields.put("name", svcName);
+                idFields.put("directory", bc.rawDir());
+                if (origin != null && origin.sourceEvidence() != null) {
+                    idFields.put("sourceEvidence", origin.sourceEvidence());
+                }
+                idFields.put("spec", spec);
+                idFields.put("hasDockerfile", hasDf);
+                idFields.put("componentRole", role.name());
+                idFields.put("isTestOnlyModule", false);
+                idFields.put("evidenceLayers", layers);
+                idFields.put("concordance", nodeConcordance.name());
+                idFields.put("trust", "DECLARATIVE_CONFIG");
+                idFields.put("runtimeObserved", false);
+                var idProof = GraphEvidence.capture("architecture.service-identity", idFields);
                 evidence.putIfAbsent(idProof.identity().value(), idProof);
                 var combined = new TreeSet<>(baseNode.evidence());
                 combined.add(idProof.identity());
+                String targetKind = role == CanonicalServiceIdentityResolver.ComponentRole.SERVICE_COMPONENT
+                        ? "SERVICE_COMPONENT" : baseNode.kind();
                 additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
-                        baseNode.kind(), List.copyOf(combined)));
+                        targetKind, List.copyOf(combined)));
             }
         }
 
-        // Attach final multi-layer evidenceLayers onto promoted INFRA_COMPONENTs while preserving
-        // the invariant that INFRA_COMPONENT carries only architecture.infra-component evidence.
+        // Attach final multi-layer evidenceLayers and explicit concordance onto EVERY promoted INFRA_COMPONENT
+        // while preserving the invariant that INFRA_COMPONENT carries only architecture.infra-component evidence.
         for (var entry : infraOriginMeta.entrySet()) {
             String infraId = entry.getKey();
-            List<String> layers = resolver.evidenceLayers(infraId);
-            if (layers.size() < 2) continue;
+            var mergedLayers = new TreeSet<String>(resolver.evidenceLayers(infraId));
+            mergedLayers.addAll(infraAppLayersByNodeId.getOrDefault(infraId, Set.of()));
+            List<String> finalLayers = List.copyOf(mergedLayers);
+            var infraConcordance = classifyConcordance(finalLayers, false);
             var meta = entry.getValue();
-            var updatedProof = GraphEvidence.capture("architecture.infra-component", Map.of(
-                    "provider", PROVIDER,
-                    "name", meta.name(),
-                    "image", meta.image(),
-                    "spec", meta.spec(),
-                    "sourceEvidence", meta.sourceProof(),
-                    "evidenceLayers", layers,
-                    "trust", "DECLARATIVE_CONFIG",
-                    "runtimeObserved", false));
+            var infraFields = new LinkedHashMap<String, Object>();
+            infraFields.put("provider", PROVIDER);
+            infraFields.put("name", meta.name());
+            infraFields.put("image", meta.image());
+            infraFields.put("spec", meta.spec());
+            if (meta.sourceProof() != null) {
+                infraFields.put("sourceEvidence", meta.sourceProof());
+            }
+            if (!finalLayers.isEmpty()) {
+                infraFields.put("evidenceLayers", finalLayers);
+            }
+            infraFields.put("concordance", infraConcordance.name());
+            infraFields.put("trust", "DECLARATIVE_CONFIG");
+            infraFields.put("runtimeObserved", false);
+            var updatedProof = GraphEvidence.capture("architecture.infra-component", infraFields);
             evidence.putIfAbsent(updatedProof.identity().value(), updatedProof);
             additions.put(root + "|" + infraId, new KnowledgeGraph.Node(infraId, root, "INFRA_COMPONENT",
                     List.of(updatedProof.identity())));
         }
 
+        materializePendingEdges(pendingEdges, addedEdges, evidence, root);
+
         nodes.putAll(additions);
         edges.putAll(addedEdges);
     }
 
-    private static void emitOrientedEdge(
+    /**
+     * Computes explicit 3-tier multi-layer evidence concordance (AND/OR):
+     * <ul>
+     *   <li>{@code DERIVED_DFD_ORIENTATION}: emitted strictly for {@code DFD_EXPORT} policy/orientation edges and actors.</li>
+     *   <li>{@code HIGH_CONFIDENCE_CONCORDANT} ({@code AND}): corroborated simultaneously by deployment layer
+     *       ({@code COMPOSE}/{@code K8S}) AND application source/config/build layer.</li>
+     *   <li>{@code SINGLE_LAYER_CONFIRMED} ({@code OR}): evidenced by a single concrete layer family.</li>
+     * </ul>
+     */
+    static ServiceArchitectureProjection.EvidenceConcordance classifyConcordance(
+            Collection<String> layers, boolean dfdDerived) {
+        if (dfdDerived) {
+            return ServiceArchitectureProjection.EvidenceConcordance.DERIVED_DFD_ORIENTATION;
+        }
+        boolean hasDeployment = false;
+        boolean hasApplication = false;
+        if (layers != null) {
+            for (String layer : layers) {
+                if (DEPLOYMENT_LAYERS.contains(layer)) {
+                    hasDeployment = true;
+                } else if (APPLICATION_LAYERS.contains(layer)) {
+                    hasApplication = true;
+                }
+            }
+        }
+        return (hasDeployment && hasApplication)
+                ? ServiceArchitectureProjection.EvidenceConcordance.HIGH_CONFIDENCE_CONCORDANT
+                : ServiceArchitectureProjection.EvidenceConcordance.SINGLE_LAYER_CONFIRMED;
+    }
+
+    private static void recordOrientedEdge(
             ServiceArchitectureProjection.ProjectionProfile profile,
-            Map<String, KnowledgeGraph.Edge> edges, Map<String, GraphEvidence> evidence,
-            Set<String> existingCalls, String root,
+            Map<String, PendingEdge> pendingEdges,
+            Set<String> existingCalls,
+            Map<String, Set<String>> infraAppLayersByNodeId,
             ServiceEntry caller, ServiceEntry callee,
             ContentDigest support, String mechanism, String baseTrust,
+            String sourceLayer, boolean dfdPolicyEdge,
+            ProtocolOrientationRole defaultDfdRole,
             RoleContext roles) {
-        if (profile == ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT
-                && shouldReverseForDfd(caller, callee, mechanism, roles)) {
-            emitTopologyEdge(edges, evidence, existingCalls, root, callee, caller,
-                    support, mechanism, "DERIVED_DFD_POLICY");
-            return;
+        boolean directEvidence = !dfdPolicyEdge;
+        if (directEvidence && APPLICATION_LAYERS.contains(sourceLayer)) {
+            if (roles.infraNodeIds.contains(caller.nodeId())) {
+                infraAppLayersByNodeId.computeIfAbsent(caller.nodeId(), k -> new TreeSet<>()).add(sourceLayer);
+            }
+            if (roles.infraNodeIds.contains(callee.nodeId())) {
+                infraAppLayersByNodeId.computeIfAbsent(callee.nodeId(), k -> new TreeSet<>()).add(sourceLayer);
+            }
         }
-        emitTopologyEdge(edges, evidence, existingCalls, root, caller, callee, support, mechanism, baseTrust);
+        if (profile == ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT) {
+            Optional<ProtocolOrientationRole> reversedRole = resolveDfdOrientationRole(caller, callee, mechanism, roles);
+            if (reversedRole.isPresent()) {
+                recordTopologyEdge(pendingEdges, existingCalls, callee, caller,
+                        support, mechanism, "DERIVED_DFD_POLICY", sourceLayer, true, reversedRole.get(), directEvidence);
+                return;
+            }
+        }
+        recordTopologyEdge(pendingEdges, existingCalls, caller, callee,
+                support, mechanism, baseTrust, sourceLayer, dfdPolicyEdge,
+                dfdPolicyEdge ? (defaultDfdRole != null ? defaultDfdRole : ProtocolOrientationRole.DFD_POLICY_SYNTHESIS) : null,
+                directEvidence);
     }
 
     /**
-     * Generic architectural role-based DFD data-flow orientation (invoked ONLY under {@code DFD_EXPORT}).
-     * Never alters {@code STRICT} caller-&gt;callee dependency orientation.
+     * Generic architectural protocol-role DFD data-flow orientation (invoked ONLY under {@code DFD_EXPORT}).
+     * Driven strictly by standardized {@link ProtocolOrientationRole} semantics ({@code DATA_STORE},
+     * {@code CONFIG_SERVER}, {@code DISCOVERY_REGISTRY}, {@code BROKER_CONSUMER}, etc.) with zero
+     * application-specific exceptions. Never alters {@code STRICT} caller-&gt;callee dependency orientation.
      */
-    private static boolean shouldReverseForDfd(ServiceEntry caller, ServiceEntry callee, String mechanism,
-            RoleContext roles) {
+    private static Optional<ProtocolOrientationRole> resolveDfdOrientationRole(
+            ServiceEntry caller, ServiceEntry callee, String mechanism, RoleContext roles) {
         if (Set.of("GATEWAY_ROUTE", "ZUUL_EUREKA_AUTO_PROXY", "JAVA_SERVICE_HOST_CALL",
                 "DFD_EXTERNAL_ENTRY_POINT", "DFD_EXTERNAL_ENTRY_RESPONSE",
                 "DFD_DOCKER_SOCKET_MONITOR", "DFD_EXTERNAL_HTTPS_API",
                 "DFD_HTTP_TURBINE_CIRCUIT_BREAKER").contains(mechanism)) {
-            return false;
+            return Optional.empty();
         }
-        // 1. config -> client
+        // 1. CONFIG_SERVER: config server -> client
         if ("SPRING_CONFIG_CONFIG-CLIENT".equals(mechanism) || "STARTER_CONFIG_CLIENT".equals(mechanism)
                 || (roles.isConfigServer(callee) && !roles.isGitRepo(caller))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.CONFIG_SERVER);
         }
-        // 2. git-repo -> config
+        // 2. CONFIG_SOURCE_REPO: git-repo -> config server
         if ("SPRING_CONFIG_CONFIG-GIT".equals(mechanism) || "SPRING_CONFIG_CONFIG-GIT-REPO".equals(mechanism)
                 || (roles.isGitRepo(callee) && roles.isConfigServer(caller))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.CONFIG_SOURCE_REPO);
         }
-        // 3. consul -> client (non-consul) and discovery -> gateway / fetch-only client (while service/monitor/admin -> eureka)
+        // 3. DISCOVERY_REGISTRY: consul -> non-consul client; discovery -> gateway / fetch-only client
         if (roles.isConsul(callee) && !roles.isConsul(caller)) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.DISCOVERY_REGISTRY);
         }
         if (roles.isDiscovery(callee) && (roles.isGateway(caller) || roles.fetchesOnlyDiscovery(caller))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.DISCOVERY_REGISTRY);
         }
-        // 4. db -> service (DFD data supply)
+        // 4. DATA_STORE: datastore -> service (DFD persisted state supply)
         if (roles.isDatastore(callee) && !roles.isDatastore(caller)) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.DATA_STORE);
         }
-        // 5. broker -> stream consumer or pure event consumer (no producer for that broker protocol)
+        // 5. BROKER_CONSUMER: message broker -> stream consumer or pure event consumer
         if (roles.isBroker(callee) && (roles.isStreamConsumer(caller) || roles.isPureBrokerConsumer(caller, callee))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.BROKER_CONSUMER);
         }
-        // 6. service -> prometheus -> grafana
+        // 6. OBSERVABILITY_PIPELINE: subject -> prometheus -> grafana; elasticsearch -> kibana; service -> hystrix/turbine
         if ("PROMETHEUS_SCRAPE".equals(mechanism) || (roles.isPrometheus(caller) && !roles.isGrafana(callee))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.OBSERVABILITY_PIPELINE);
         }
         if ("SPRING_CONFIG_GRAFANA-DATASOURCE".equals(mechanism)
                 || (roles.isGrafana(caller) && (roles.isPrometheus(callee) || roles.isElasticsearch(callee) || roles.isDatastore(callee)))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.OBSERVABILITY_PIPELINE);
         }
-        // 7. elasticsearch -> kibana
         if (roles.isKibana(caller) && roles.isElasticsearch(callee)) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.OBSERVABILITY_PIPELINE);
         }
-        // 8. zookeeper -> kafka
-        if (roles.isKafka(caller) && roles.isZookeeper(callee)) {
-            return true;
-        }
-        // 9. service -> hystrix / turbine (ONLY for explicit turbine-monitor or non-control-plane code services)
         if ("SPRING_CONFIG_TURBINE-MONITOR".equals(mechanism)
                 || (roles.isHystrixOrTurbine(caller) && callee.hasCodeBuild() && !roles.isControlPlane(callee))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.OBSERVABILITY_PIPELINE);
         }
-        // 10. admin -> service
+        // 7. COORDINATION_SERVICE: zookeeper -> kafka
+        if (roles.isKafka(caller) && roles.isZookeeper(callee)) {
+            return Optional.of(ProtocolOrientationRole.COORDINATION_SERVICE);
+        }
+        // 8. CONTROL_PLANE_ADMIN: admin server -> managed service
         if ("SPRING_CONFIG_ADMIN-CLIENT".equals(mechanism) || "STARTER_BOOT_ADMIN_CLIENT".equals(mechanism)
                 || (roles.isAdminServer(callee) && !roles.isDiscovery(caller) && !roles.isConfigServer(caller))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.CONTROL_PLANE_ADMIN);
         }
-        // 11. auth -> resource-service (never reverse gateway -> auth unless OAUTH2_SSO without explicit route to auth)
+        // 9. AUTH_PROVIDER: auth server -> resource-service (never reverse gateway -> auth unless OAUTH2_SSO without explicit route)
         boolean oauthCallerEligible = !roles.isGateway(caller)
                 || (roles.hasRole(caller, "OAUTH2_SSO") && !roles.gatewayRouteToAuthNodeIds.contains(caller.nodeId()));
         if (oauthCallerEligible
                 && ("SPRING_CONFIG_OAUTH2-AUTH".equals(mechanism) || "STARTER_OAUTH2_RESOURCE".equals(mechanism)
                 || (roles.isAuthServer(callee) && roles.isOAuth2Resource(caller)))) {
-            return true;
+            return Optional.of(ProtocolOrientationRole.AUTH_PROVIDER);
         }
-        return false;
+        return Optional.empty();
     }
 
-    private static void emitTopologyEdge(Map<String, KnowledgeGraph.Edge> edges, Map<String, GraphEvidence> evidence,
-            Set<String> existingCalls, String root, ServiceEntry src, ServiceEntry dst,
-            ContentDigest support, String mechanism, String trust) {
-        if (!existingCalls.add(src.nodeId() + "->" + dst.nodeId())) return;
-        var proof = GraphEvidence.capture("architecture.declarative-topology", Map.ofEntries(
-                Map.entry("provider", PROVIDER),
-                Map.entry("kind", "CALLS_SERVICE"),
-                Map.entry("mechanism", mechanism),
-                Map.entry("source", src.canonicalName()),
-                Map.entry("target", dst.canonicalName()),
-                Map.entry("support", List.of(support)),
-                Map.entry("trust", trust),
-                Map.entry("runtimeObserved", false)));
-        evidence.putIfAbsent(proof.identity().value(), proof);
-        var target = new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(dst.nodeId()), Optional.empty());
-        String id = KnowledgeGraph.derivedIdentity("declarative-service-edge",
-                List.of(PROVIDER, root, src.nodeId(), target, mechanism, trust));
-        edges.put(root + "|" + id, new KnowledgeGraph.Edge(id, root, "CALLS_SERVICE", src.nodeId(),
-                target, List.of(support, proof.identity()), Optional.empty()));
+    private static void recordTopologyEdge(
+            Map<String, PendingEdge> pendingEdges,
+            Set<String> existingCalls,
+            ServiceEntry src, ServiceEntry dst,
+            ContentDigest support, String mechanism, String trust,
+            String sourceLayer, boolean dfdDerived,
+            ProtocolOrientationRole orientationRole,
+            boolean directEvidence) {
+        String key = src.nodeId() + "->" + dst.nodeId();
+        if (existingCalls.contains(key)) {
+            return;
+        }
+        PendingEdge existing = pendingEdges.get(key);
+        if (existing == null) {
+            pendingEdges.put(key, new PendingEdge(src, dst, mechanism, trust, dfdDerived,
+                    orientationRole, directEvidence, support, sourceLayer));
+            return;
+        }
+        // Merge corroborating direct evidence across deployment and application layers (AND concordance);
+        // never let a DFD_EXPORT policy synthesis edge overwrite or pollute an already-evidenced direct edge.
+        if (directEvidence || !existing.hasDirectEvidence) {
+            existing.mergeCorroboration(mechanism, support, sourceLayer, directEvidence);
+        }
+    }
+
+    private static void materializePendingEdges(
+            Map<String, PendingEdge> pendingEdges,
+            Map<String, KnowledgeGraph.Edge> edges,
+            Map<String, GraphEvidence> evidence,
+            String root) {
+        for (var pending : pendingEdges.values()) {
+            var concordance = classifyConcordance(pending.layers, pending.dfdDerived);
+            var proofFields = new LinkedHashMap<String, Object>();
+            proofFields.put("provider", PROVIDER);
+            proofFields.put("kind", "CALLS_SERVICE");
+            proofFields.put("mechanism", pending.primaryMechanism);
+            proofFields.put("mechanisms", List.copyOf(pending.mechanisms));
+            proofFields.put("source", pending.src.canonicalName());
+            proofFields.put("target", pending.dst.canonicalName());
+            proofFields.put("support", List.copyOf(pending.supports));
+            proofFields.put("evidenceLayers", List.copyOf(pending.layers));
+            proofFields.put("concordance", concordance.name());
+            if (pending.orientationRole != null) {
+                proofFields.put("orientationRole", pending.orientationRole.name());
+                if (pending.hasDirectEvidence) {
+                    proofFields.put("underlyingConcordance",
+                            classifyConcordance(pending.layers, false).name());
+                }
+            }
+            proofFields.put("trust", pending.trust);
+            proofFields.put("runtimeObserved", false);
+            var proof = GraphEvidence.capture("architecture.declarative-topology", proofFields);
+            evidence.putIfAbsent(proof.identity().value(), proof);
+            var target = new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED,
+                    List.of(pending.dst.nodeId()), Optional.empty());
+            String id = KnowledgeGraph.derivedIdentity("declarative-service-edge",
+                    List.of(PROVIDER, root, pending.src.nodeId(), target, pending.primaryMechanism, pending.trust));
+            var edgeEvidence = new TreeSet<ContentDigest>(pending.supports);
+            edgeEvidence.add(proof.identity());
+            edges.put(root + "|" + id, new KnowledgeGraph.Edge(id, root, "CALLS_SERVICE", pending.src.nodeId(),
+                    target, List.copyOf(edgeEvidence), Optional.empty()));
+        }
     }
 
     private static void refreshRoleOwners(RoleContext roles, Collection<ServiceEntry> buildServices,

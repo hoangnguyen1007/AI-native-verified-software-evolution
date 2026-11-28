@@ -11,6 +11,23 @@ import java.util.function.BooleanSupplier;
 public final class ServiceArchitectureProjection {
     public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("architecture.service-edges","m8.4-v1");
     public enum ProjectionProfile { STRICT, DFD_EXPORT }
+
+    /**
+     * Explicit 3-tier multi-layer evidence concordance taxonomy (AND/OR cross-layer corroboration).
+     * <ul>
+     *   <li>{@link #HIGH_CONFIDENCE_CONCORDANT} ({@code AND}): corroborated simultaneously by a deployment
+     *       layer ({@code COMPOSE}/{@code K8S}) and an application source/config/build layer.</li>
+     *   <li>{@link #SINGLE_LAYER_CONFIRMED} ({@code OR}): evidenced by a single concrete layer
+     *       (e.g., code/config client or deploy-only datastore).</li>
+     *   <li>{@link #DERIVED_DFD_ORIENTATION}: emitted ONLY under {@link ProjectionProfile#DFD_EXPORT},
+     *       driven strictly by generic protocol component role orientation.</li>
+     * </ul>
+     */
+    public enum EvidenceConcordance {
+        HIGH_CONFIDENCE_CONCORDANT,
+        SINGLE_LAYER_CONFIRMED,
+        DERIVED_DFD_ORIENTATION
+    }
     private record Endpoint(String context,String identity,String role) {
         Map<String,String> fields(){return Map.of("context",context,"identity",identity,"role",role);}
     }
@@ -40,7 +57,7 @@ public final class ServiceArchitectureProjection {
             if(destinations.isEmpty())continue;
             String from=rooted(source,root,nodes,newNodes,evidence);var targets=new TreeSet<String>();for(var destination:destinations.values())targets.add(rooted(destination,root,nodes,newNodes,evidence));
             var proof=GraphEvidence.capture("architecture.service-call",Map.ofEntries(Map.entry("provider",PROVIDER),Map.entry("kind",kind),Map.entry("source",source.fields()),Map.entry("destinations",destinations.values().stream().map(Endpoint::fields).toList()),Map.entry("candidateEdge",candidate.identity()),
-                    Map.entry("support",candidate.evidence()),Map.entry("certainty","CANDIDATE"),Map.entry("routingEstablished",false),Map.entry("runtimeObserved",false)));
+                    Map.entry("support",candidate.evidence()),Map.entry("certainty","CANDIDATE"),Map.entry("concordance",EvidenceConcordance.SINGLE_LAYER_CONFIRMED.name()),Map.entry("evidenceLayers",List.of("SOURCE_SYNTAX")),Map.entry("routingEstablished",false),Map.entry("runtimeObserved",false)));
             evidence.putIfAbsent(proof.identity().value(),proof);var support=new TreeSet<>(candidate.evidence());support.add(proof.identity());
             var target=new KnowledgeGraph.Target(targets.size()==1?KnowledgeGraph.TargetState.RESOLVED:KnowledgeGraph.TargetState.CANDIDATES,List.copyOf(targets),Optional.empty());
             String id=KnowledgeGraph.derivedIdentity("architecture-service-edge",List.of(PROVIDER,root,kind,from,target,proof.identity()));
@@ -79,7 +96,7 @@ public final class ServiceArchitectureProjection {
     private static String rooted(Endpoint endpoint,String root,Map<String,KnowledgeGraph.Node> nodes,Map<String,KnowledgeGraph.Node> additions,Map<String,GraphEvidence> evidence) {
         if(endpoint.context().equals(root))return endpoint.identity();
         var original=nodes.get(endpoint.context()+"|"+endpoint.identity());if(original==null)throw new IllegalArgumentException("SERVICE_DECLARATION_MISSING");
-        var proof=GraphEvidence.capture("architecture.service-endpoint-reference",Map.of("sourceContext",endpoint.context(),"sourceIdentity",endpoint.identity(),"sourceKind",original.kind(),"role",endpoint.role(),"sourceEvidence",original.evidence()));
+        var proof=GraphEvidence.capture("architecture.service-endpoint-reference",Map.of("sourceContext",endpoint.context(),"sourceIdentity",endpoint.identity(),"sourceKind",original.kind(),"role",endpoint.role(),"sourceEvidence",original.evidence(),"concordance",EvidenceConcordance.SINGLE_LAYER_CONFIRMED.name(),"evidenceLayers",List.of("SOURCE_SYNTAX")));
         evidence.putIfAbsent(proof.identity().value(),proof);String id=KnowledgeGraph.derivedIdentity("service-endpoint-reference",List.of(endpoint.context(),endpoint.identity()));
         var support=new TreeSet<>(original.evidence());var previous=additions.get(root+"|"+id);if(previous==null)previous=nodes.get(root+"|"+id);if(previous!=null)support.addAll(previous.evidence());
         support.add(proof.identity());additions.put(root+"|"+id,new KnowledgeGraph.Node(id,root,"SERVICE_ENDPOINT_REFERENCE",List.copyOf(support)));return id;

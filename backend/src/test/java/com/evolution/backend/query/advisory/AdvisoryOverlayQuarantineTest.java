@@ -579,6 +579,41 @@ class AdvisoryOverlayQuarantineTest {
         }
     }
 
+    @Test
+    void runtimeDriftOverlayIsStrictlyQuarantinedInRuntimeObservedTierWithZeroCanonicalLeakage() {
+        var graph = buildCanonicalGraph(Map.of(
+                "docs/ADR-001.md", "# ADR 001\nUses `OrderService`.\n"));
+        var digestBefore = graph.identity();
+        var queriesBefore = new ArchitectureMetricsService(graph, ArchitectureMetric.Limits.defaults(),
+                () -> StopReason.NONE, Optional.empty(), List.of()).queries();
+        String ctx = graph.contexts().stream().filter(c -> c.analysis().isPresent()).findFirst().orElseThrow().identity();
+        var scorer = new ArchitectureAssessmentV2Service();
+        var scoreBefore = scorer.assess(queriesBefore, ctx, Optional.empty(), Optional.empty(), ArchitectureScoreModelV2.standard());
+
+        var docAdvisory = AdvisoryOverlayService.forGraph(graph);
+        var csvDrift = RuntimeDriftOverlayExtractor.extractFromCsv(graph,
+                "src,dst,weight\napi-gateway,order-service,42\norder-service,payment-service,7\n");
+        var jsonDrift = RuntimeDriftOverlayExtractor.extractFromJson(graph,
+                "{\"edges\":[{\"source\":\"api-gateway\",\"target\":\"order-service\",\"callCount\":42}]}");
+
+        assertEquals(AdvisoryOverlay.TRUST, docAdvisory.trust());
+        assertEquals("RUNTIME_OBSERVED", csvDrift.trust());
+        assertEquals("RUNTIME_OBSERVED", jsonDrift.trust());
+        assertTrue(csvDrift.quarantined());
+        assertTrue(jsonDrift.quarantined());
+        assertEquals(2, csvDrift.shadowDependencies().size());
+        assertEquals(1, jsonDrift.shadowDependencies().size());
+        assertTrue(csvDrift.findings().stream().allMatch(f -> "RUNTIME_OBSERVED".equals(f.trust()) && f.quarantined()));
+
+        // Zero mutation to canonical KnowledgeGraph digest or Architecture Score v2 (canonicalLeakage = 0)
+        assertEquals(digestBefore, graph.identity());
+        var queriesAfter = new ArchitectureMetricsService(graph, ArchitectureMetric.Limits.defaults(),
+                () -> StopReason.NONE, Optional.empty(), List.of()).queries();
+        var scoreAfter = scorer.assess(queriesAfter, ctx, Optional.empty(), Optional.empty(), ArchitectureScoreModelV2.standard());
+        assertEquals(scoreBefore.score(), scoreAfter.score());
+        assertEquals(scoreBefore.healthBand(), scoreAfter.healthBand());
+    }
+
     private static KnowledgeGraph buildCanonicalGraph(Map<String, String> extraNonCodeFiles) {
         var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/quarantine.git");
         var snap = SnapshotIdentity.from(repo, ContentDigest.sha256Utf8("quarantine-snap-" + extraNonCodeFiles.size()));

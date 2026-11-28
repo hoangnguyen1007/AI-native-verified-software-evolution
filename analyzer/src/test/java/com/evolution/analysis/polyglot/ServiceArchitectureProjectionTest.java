@@ -1232,4 +1232,219 @@ class ServiceArchitectureProjectionTest {
         assertTrue(infraNames.isEmpty(),
                 "basket, auth, and shop-auth must unify with BUILD_COMPONENTs without spawning duplicate INFRA_COMPONENTs: " + infraNames);
     }
+
+    @Test void explicitThreeTierConcordanceTagsNodesAndEdgesDeterministicallyAndReplaysIdempotently() throws Exception {
+        java.util.function.Consumer<GraphProjectionStore> seed = s -> {
+            // 1. Corroborated services (BUILD + COMPOSE): api-gateway, order-service, inventory-service, config-server, eureka-server, consumer-service
+            putNode(s, root, id("bc-gw"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "api-gateway", "directory", "api-gateway")));
+            putNode(s, root, id("bc-ord"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "order-service", "directory", "order-service")));
+            putNode(s, root, id("bc-inv"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "inventory-service", "directory", "inventory-service")));
+            putNode(s, root, id("bc-cfg"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "config-server", "directory", "config-server")));
+            putNode(s, root, id("bc-euk"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "eureka-server", "directory", "eureka-server")));
+            putNode(s, root, id("bc-cons"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "consumer-service", "directory", "consumer-service")));
+            // 2. Code-only service (BUILD only, absent from Compose/K8s -> SINGLE_LAYER_CONFIRMED)
+            putNode(s, root, id("bc-audit"), "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component", Map.of("id", "audit-service", "directory", "audit-service")));
+
+            // Spring Cloud roles
+            putNode(s, root, id("r-gw"), "SOURCE_SPRING_CLOUD_ROLE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("api-gateway/src/Gw.java"), "fact", Map.of("name", "API_GATEWAY", "attributes", Map.of("role", "API_GATEWAY"))))));
+            putNode(s, root, id("r-cfg"), "SOURCE_SPRING_CLOUD_ROLE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("config-server/src/Cfg.java"), "fact", Map.of("name", "CONFIG_SERVER", "attributes", Map.of("role", "CONFIG_SERVER"))))));
+            putNode(s, root, id("r-euk"), "SOURCE_SPRING_CLOUD_ROLE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("eureka-server/src/Euk.java"), "fact", Map.of("name", "EUREKA_SERVER", "attributes", Map.of("role", "EUREKA_SERVER"))))));
+
+            // Compose layer: order-service, inventory-service, orders-db (corroborated by app config),
+            // analytics-db (deploy-only datastore), kafka (broker), consumer-service
+            putNode(s, root, id("dc-ord"), "SOURCE_DECLARATION", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_service", "name", "order-service", "span", Map.of("start", 1, "end", 5), "attributes", Map.of())))));
+            putNode(s, root, id("dc-inv"), "SOURCE_DECLARATION", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_service", "name", "inventory-service", "span", Map.of("start", 6, "end", 10), "attributes", Map.of())))));
+            putNode(s, root, id("dc-odb"), "SOURCE_DECLARATION", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_service", "name", "orders-db", "span", Map.of("start", 11, "end", 15), "attributes", Map.of())))));
+            putNode(s, root, id("dc-odb-img"), "SOURCE_INFRA_BASE_IMAGE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_image", "name", "postgres:16", "owner", "11:15", "attributes", Map.of("image", "postgres:16"))))));
+            putNode(s, root, id("dc-adb"), "SOURCE_DECLARATION", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_service", "name", "analytics-db", "span", Map.of("start", 16, "end", 20), "attributes", Map.of())))));
+            putNode(s, root, id("dc-adb-img"), "SOURCE_INFRA_BASE_IMAGE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_image", "name", "postgres:16", "owner", "16:20", "attributes", Map.of("image", "postgres:16"))))));
+            putNode(s, root, id("dc-kafka"), "SOURCE_DECLARATION", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_service", "name", "kafka", "span", Map.of("start", 21, "end", 25), "attributes", Map.of())))));
+            putNode(s, root, id("dc-cons"), "SOURCE_DECLARATION", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_service", "name", "consumer-service", "span", Map.of("start", 26, "end", 30), "attributes", Map.of())))));
+
+            // Edge corroborated by BOTH deployment (Compose depends_on) AND code (Java HTTP call): order-service -> inventory-service
+            putNode(s, root, id("dc-ord-inv"), "SOURCE_INFRA_DEPENDENCY", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_depends_on", "name", "inventory-service", "owner", "1:5", "attributes", Map.of("target", "inventory-service"))))));
+            putNode(s, root, id("java-ord-inv"), "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("order-service/src/main/java/InventoryClient.java"),
+                    "fact", Map.of("nodeKind", "method_call", "name", "\"http://inventory-service/stock\"", "attributes", Map.of("method", "GET", "targetService", "inventory-service"))))));
+
+            // Edge corroborated by BOTH deployment (Compose depends_on) AND Spring config (application.yml): order-service -> orders-db
+            putNode(s, root, id("dc-ord-db"), "SOURCE_INFRA_DEPENDENCY", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_depends_on", "name", "orders-db", "owner", "1:5", "attributes", Map.of("target", "orders-db"))))));
+            putNode(s, root, id("cfg-ord-db"), "SOURCE_INFRA_CONFIG_REF", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("order-service/src/main/resources/application.yml"),
+                    "fact", Map.of("name", "orders-db", "attributes", Map.of("role", "datasource", "target", "orders-db"))))));
+
+            // Single-layer code-only edge: order-service -> audit-service
+            putNode(s, root, id("java-ord-audit"), "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("order-service/src/main/java/AuditClient.java"),
+                    "fact", Map.of("nodeKind", "method_call", "name", "\"http://audit-service/events\"", "attributes", Map.of("method", "POST", "targetService", "audit-service"))))));
+
+            // Protocol-role edges for DFD_EXPORT verification: CONFIG_SERVER, DISCOVERY_REGISTRY, BROKER_CONSUMER
+            putNode(s, root, id("cfg-ord-cfg"), "SOURCE_INFRA_CONFIG_REF", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("order-service/src/main/resources/bootstrap.yml"),
+                    "fact", Map.of("name", "config-server", "attributes", Map.of("role", "config-client", "target", "config-server"))))));
+            putNode(s, root, id("cfg-gw-euk"), "SOURCE_INFRA_CONFIG_REF", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("api-gateway/src/main/resources/application.yml"),
+                    "fact", Map.of("name", "eureka-server", "attributes", Map.of("role", "eureka-client", "target", "eureka-server"))))));
+            putNode(s, root, id("dc-cons-kafka"), "SOURCE_INFRA_DEPENDENCY", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "document", "dc", "path", b64("docker-compose.yml"),
+                    "fact", Map.of("nodeKind", "compose_depends_on", "name", "kafka", "owner", "26:30", "attributes", Map.of("target", "kafka"))))));
+            putNode(s, root, id("ev-cons"), "SOURCE_EVENT_CONSUMER_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax", Map.of("fields", Map.of(
+                    "path", b64("consumer-service/src/main/java/Listener.java"),
+                    "fact", Map.of("name", "\"orders.topic\"", "recovered", false, "attributes", Map.of("protocol", "KAFKA"))))));
+        };
+
+        // --- STRICT profile ---
+        var strictStore = newMemoryStore();
+        seed.accept(strictStore);
+        DeclarativeTopologyProjection.project(strictStore, root, ServiceArchitectureProjection.ProjectionProfile.STRICT, () -> false);
+
+        var strictNodes = strictStore.records("nodes", GraphSnapshotCodec::node);
+        var strictEvs = strictStore.records("evidence", GraphSnapshotCodec::evidence);
+
+        // Zero DERIVED_DFD_ORIENTATION anywhere under STRICT
+        assertTrue(strictEvs.values().stream().noneMatch(e -> e.canonicalJson().contains("DERIVED_DFD_ORIENTATION")),
+                "STRICT profile must emit zero DERIVED_DFD_ORIENTATION tags");
+
+        // Nodes: order-service (BUILD+COMPOSE) -> HIGH_CONFIDENCE_CONCORDANT; audit-service (BUILD only) -> SINGLE_LAYER_CONFIRMED
+        assertEquals("HIGH_CONFIDENCE_CONCORDANT", nodeConcordance(strictNodes.get(root + "|" + id("bc-ord")), strictEvs));
+        assertEquals("SINGLE_LAYER_CONFIRMED", nodeConcordance(strictNodes.get(root + "|" + id("bc-audit")), strictEvs));
+        // Infra nodes: orders-db (COMPOSE+SPRING_CONFIG) -> HIGH_CONFIDENCE_CONCORDANT; analytics-db (COMPOSE only) -> SINGLE_LAYER_CONFIRMED
+        assertEquals("HIGH_CONFIDENCE_CONCORDANT", infraConcordanceByName(strictStore, "orders-db"));
+        assertEquals("SINGLE_LAYER_CONFIRMED", infraConcordanceByName(strictStore, "analytics-db"));
+
+        // Edges: order-service->inventory-service (COMPOSE+SOURCE_SYNTAX) & order-service->orders-db (COMPOSE+SPRING_CONFIG) => HIGH_CONFIDENCE_CONCORDANT
+        var ordInvStrict = declarativeEdgePayload(strictStore, "order-service", "inventory-service");
+        assertNotNull(ordInvStrict);
+        assertEquals("HIGH_CONFIDENCE_CONCORDANT", ordInvStrict.get("concordance"));
+        assertEquals(List.of("COMPOSE", "SOURCE_SYNTAX"), ordInvStrict.get("evidenceLayers"));
+
+        var ordDbStrict = declarativeEdgePayload(strictStore, "order-service", "orders-db");
+        assertNotNull(ordDbStrict);
+        assertEquals("HIGH_CONFIDENCE_CONCORDANT", ordDbStrict.get("concordance"));
+        assertEquals(List.of("COMPOSE", "SPRING_CONFIG"), ordDbStrict.get("evidenceLayers"));
+
+        // Single-layer edge: order-service->audit-service (SOURCE_SYNTAX only) => SINGLE_LAYER_CONFIRMED
+        var ordAuditStrict = declarativeEdgePayload(strictStore, "order-service", "audit-service");
+        assertNotNull(ordAuditStrict);
+        assertEquals("SINGLE_LAYER_CONFIRMED", ordAuditStrict.get("concordance"));
+        assertEquals(List.of("SOURCE_SYNTAX"), ordAuditStrict.get("evidenceLayers"));
+
+        // Pass-2 idempotency under STRICT (I2)
+        var strictNodesBefore = new TreeMap<>(strictNodes);
+        var strictEdgesBefore = new TreeMap<>(strictStore.records("edges", GraphSnapshotCodec::edge));
+        DeclarativeTopologyProjection.project(strictStore, root, ServiceArchitectureProjection.ProjectionProfile.STRICT, () -> false);
+        assertEquals(strictNodesBefore, strictStore.records("nodes", GraphSnapshotCodec::node));
+        assertEquals(strictEdgesBefore, strictStore.records("edges", GraphSnapshotCodec::edge));
+
+        // --- DFD_EXPORT profile ---
+        var dfdStore = newMemoryStore();
+        seed.accept(dfdStore);
+        DeclarativeTopologyProjection.project(dfdStore, root, ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT, () -> false);
+
+        // Non-reversed AND-corroborated edge stays HIGH_CONFIDENCE_CONCORDANT even under DFD_EXPORT
+        var ordInvDfd = declarativeEdgePayload(dfdStore, "order-service", "inventory-service");
+        assertNotNull(ordInvDfd);
+        assertEquals("HIGH_CONFIDENCE_CONCORDANT", ordInvDfd.get("concordance"));
+
+        // Generic protocol-role reversals carry DERIVED_DFD_ORIENTATION + explicit orientationRole + underlyingConcordance
+        var dbToOrd = declarativeEdgePayload(dfdStore, "orders-db", "order-service");
+        assertNotNull(dbToOrd);
+        assertEquals("DERIVED_DFD_ORIENTATION", dbToOrd.get("concordance"));
+        assertEquals("DATA_STORE", dbToOrd.get("orientationRole"));
+        assertEquals("HIGH_CONFIDENCE_CONCORDANT", dbToOrd.get("underlyingConcordance"));
+
+        var cfgToOrd = declarativeEdgePayload(dfdStore, "config-server", "order-service");
+        assertNotNull(cfgToOrd);
+        assertEquals("DERIVED_DFD_ORIENTATION", cfgToOrd.get("concordance"));
+        assertEquals("CONFIG_SERVER", cfgToOrd.get("orientationRole"));
+        assertEquals("SINGLE_LAYER_CONFIRMED", cfgToOrd.get("underlyingConcordance"));
+
+        var eukToGw = declarativeEdgePayload(dfdStore, "eureka-server", "api-gateway");
+        assertNotNull(eukToGw);
+        assertEquals("DERIVED_DFD_ORIENTATION", eukToGw.get("concordance"));
+        assertEquals("DISCOVERY_REGISTRY", eukToGw.get("orientationRole"));
+
+        var kafkaToCons = declarativeEdgePayload(dfdStore, "kafka", "consumer-service");
+        assertNotNull(kafkaToCons);
+        assertEquals("DERIVED_DFD_ORIENTATION", kafkaToCons.get("concordance"));
+        assertEquals("BROKER_CONSUMER", kafkaToCons.get("orientationRole"));
+
+        // Pass-2 idempotency under DFD_EXPORT (I2)
+        var dfdNodesBefore = new TreeMap<>(dfdStore.records("nodes", GraphSnapshotCodec::node));
+        var dfdEdgesBefore = new TreeMap<>(dfdStore.records("edges", GraphSnapshotCodec::edge));
+        DeclarativeTopologyProjection.project(dfdStore, root, ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT, () -> false);
+        assertEquals(dfdNodesBefore, dfdStore.records("nodes", GraphSnapshotCodec::node));
+        assertEquals(dfdEdgesBefore, dfdStore.records("edges", GraphSnapshotCodec::edge));
+    }
+
+    private static String nodeConcordance(KnowledgeGraph.Node node, Map<String, GraphEvidence> evs) {
+        assertNotNull(node);
+        for (var ref : node.evidence()) {
+            var ev = evs.get(ref.value());
+            if (ev != null && ("architecture.service-identity".equals(ev.family())
+                    || "architecture.component-classification".equals(ev.family())
+                    || "architecture.infra-component".equals(ev.family()))) {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                if (obj.get("concordance") instanceof String s) return s;
+            }
+        }
+        return "";
+    }
+
+    private static String infraConcordanceByName(GraphProjectionStore s, String name) {
+        var evs = s.records("evidence", GraphSnapshotCodec::evidence);
+        for (var n : s.records("nodes", GraphSnapshotCodec::node).values()) {
+            if (!"INFRA_COMPONENT".equals(n.kind())) continue;
+            for (var ref : n.evidence()) {
+                var ev = evs.get(ref.value());
+                if (ev != null && "architecture.infra-component".equals(ev.family())) {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                    if (name.equals(obj.get("name")) && obj.get("concordance") instanceof String c) {
+                        return c;
+                    }
+                }
+            }
+        }
+        return "";
+    }
+
+    private static Map<String, Object> declarativeEdgePayload(GraphProjectionStore s, String src, String dst) {
+        var evs = s.records("evidence", GraphSnapshotCodec::evidence);
+        for (var edge : s.records("edges", GraphSnapshotCodec::edge).values()) {
+            if (!"CALLS_SERVICE".equals(edge.kind())) continue;
+            for (var ref : edge.evidence()) {
+                var ev = evs.get(ref.value());
+                if (ev != null && "architecture.declarative-topology".equals(ev.family())) {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                    if (src.equals(obj.get("source")) && dst.equals(obj.get("target"))) {
+                        return obj;
+                    }
+                }
+            }
+        }
+        return null;
+    }
 }
