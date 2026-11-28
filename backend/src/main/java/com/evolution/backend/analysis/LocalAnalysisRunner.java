@@ -76,6 +76,13 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         return size() > 64;
                     }
                 });
+        private final Map<RepositoryIdentity, ContentDigest> lastMerkleGraphByRepo = Collections
+                .synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(Map.Entry<RepositoryIdentity, ContentDigest> eldest) {
+                        return size() > 64;
+                    }
+                });
 
         public SharedCaches(Path intakeDirectory) {
             Objects.requireNonNull(intakeDirectory);
@@ -105,6 +112,16 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 String jobId) {
             if (repository != null && snapshot != null && graphId != null && jobId != null) {
                 lastPublishedByRepo.put(repository, new LastPublication(snapshot.value(), graphId, jobId));
+            }
+        }
+
+        public Optional<ContentDigest> lastMerkleGraph(RepositoryIdentity repository) {
+            return Optional.ofNullable(lastMerkleGraphByRepo.get(repository));
+        }
+
+        public void recordMerklePublished(RepositoryIdentity repository, ContentDigest merkleGraphId) {
+            if (repository != null && merkleGraphId != null) {
+                lastMerkleGraphByRepo.put(repository, merkleGraphId);
             }
         }
     }
@@ -1220,6 +1237,111 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 ? acquiredBytesTotal >= Long.parseLong(customSpill.strip())
                 : UniversalArchitecturePipeline.shouldUseDiskSpill(
                         acquiredBytesTotal, acquisition.files().size(), dependencies.resolutions().size());
+        boolean useTwoPassAbi = useDiskSpill && graphStoreDirectory.isPresent()
+                && UniversalArchitecturePipeline.shouldUseTwoPassAbiStreaming(
+                        acquiredBytesTotal, acquisition.files().size(), dependencies.resolutions().size());
+
+        if (useTwoPassAbi) {
+            var storeDir = graphStoreDirectory.orElseThrow();
+            var pagesStore = new PartitionedGraphStore(storeDir.resolve("graph-pages"));
+            var baseMerkleId = incrementalEnabled
+                    ? sharedCaches.lastMerkleGraph(input.repository())
+                    : Optional.<ContentDigest>empty();
+            int maxInFlight = UniversalArchitecturePipeline.configuredMaxInFlightModules();
+            var beforeSpringStatsAbi = sharedCaches.springCache().stats();
+            UniversalArchitecturePipeline.StreamingResult streamingResult;
+            PolyglotScan.Result polyglotAbi;
+            PartitionedGraphStore.MerklePublication merklePub;
+            try (FileAnalysisWorkspace diskWorkspace = new FileAnalysisWorkspace(
+                    intakeDirectory.resolve("analysis-work-" + control.id()));
+                 var abiIntake = new RepositoryIntake(intakeDirectory)) {
+                int aggregationWorkers = diskWorkspace.concurrentTables()
+                        ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers()
+                        : 1;
+                var sink = pagesStore.openAbiStreamingSink(snapshotId, baseMerkleId, fast, control);
+                UniversalArchitecturePipeline.AbiSignatureStore abiStore =
+                        (abiIntake.inventory() instanceof UniversalArchitecturePipeline.AbiSignatureStore store)
+                                ? store
+                                : UniversalArchitecturePipeline.AbiSignatureStore.inMemory();
+                try {
+                    java.util.function.Function<String, ContentDigest> polyglotSyntaxDigestForModule = modulePath ->
+                            polyglotFuture.join().moduleSyntaxDigest(modulePath);
+                    streamingResult = new UniversalArchitecturePipeline(
+                            diskWorkspace,
+                            aggregationWorkers,
+                            incrementalEnabled ? sharedCaches.springCache() : null,
+                            polyglotSyntaxDigestForModule)
+                            .runTwoPassAbiStreaming(
+                                    decoded, finalPolicy, control.id(),
+                                    abiStore, sink, maxInFlight);
+                    control.checkpoint();
+                    polyglotAbi = polyglotFuture.join();
+                } catch (CompletionException asyncFailure) {
+                    failedFlag.set(true);
+                    Throwable cause = asyncFailure.getCause();
+                    if (cause instanceof Exception ex) throw ex;
+                    if (cause instanceof Error err) throw err;
+                    throw asyncFailure;
+                } catch (Throwable primaryFailure) {
+                    failedFlag.set(true);
+                    polyglotFuture.cancel(true);
+                    throw primaryFailure;
+                }
+                merklePub = sink.publication()
+                        .orElseThrow(() -> new IOException("EVOGBIN2_STREAMING_PUBLICATION_MISSING"));
+            }
+            if (incrementalEnabled) {
+                sharedCaches.recordMerklePublished(input.repository(), merklePub.merkleGraphIdentity());
+                sharedCaches.recordPublished(input.repository(), snapshotId, merklePub.merkleGraphIdentity(), control.id());
+            }
+            if (Boolean.getBoolean("evo.graph.materializeJsonOnStreaming")) {
+                pagesStore.materializeCanonicalJson(
+                        merklePub.merkleGraphIdentity(),
+                        storeDir.resolve(merklePub.merkleGraphIdentity().value().substring(7) + ".graph.json"),
+                        control);
+            }
+            var afterSpringStatsAbi = sharedCaches.springCache().stats();
+            int deltaReusedSpringAbi = Math.max(0,
+                    afterSpringStatsAbi.reusedContexts() - beforeSpringStatsAbi.reusedContexts());
+            var sStats = streamingResult.stats();
+            control.recordCacheMetrics(Map.ofEntries(
+                    Map.entry("javaCacheHits", javaCacheHits.get()),
+                    Map.entry("javaCacheMisses", javaCacheMisses.get()),
+                    Map.entry("polyglotCacheHits", polyglotAbi.syntax().cacheHits()),
+                    Map.entry("polyglotCacheMisses", polyglotAbi.syntax().cacheMisses()),
+                    Map.entry("springCacheReused", (long) deltaReusedSpringAbi),
+                    Map.entry("abiStreamingPass1Modules", (long) sStats.pass1ExtractedModules()),
+                    Map.entry("abiStreamingPass2Modules", (long) sStats.pass2ResolvedModules()),
+                    Map.entry("abiPeakInFlightModules", (long) sStats.peakInFlightModules()),
+                    Map.entry("abiSignatures", sStats.abiSignatureCount()),
+                    Map.entry("merkleDirtyLeaves", (long) merklePub.dirtyLeavesWritten()),
+                    Map.entry("merkleReusedLeaves", (long) merklePub.reusedLeaves())));
+            var abiGaps = new TreeSet<>(streamingResult.report().gaps());
+            abiGaps.addAll(dependencies.gaps());
+            abiGaps.addAll(polyglotAbi.gaps());
+            platformLedgers.forEach(ledger -> abiGaps.addAll(ledger.gaps()));
+            abiGaps.addAll(CapabilityGapNormalizer
+                    .normalize(EvidenceContext.forSnapshot(snapshotId),
+                            EvidenceNormalizationInput.builder().repositoryAcquisitions(List.of(acquisition))
+                                    .platformResults(allPlatforms).build())
+                    .gaps());
+            var completion = switch (streamingResult.report().status()) {
+                case COMPLETE -> abiGaps.isEmpty() ? AnalysisJobs.Completion.COMPLETE : AnalysisJobs.Completion.PARTIAL;
+                case EMPTY_OR_NON_JAVA -> AnalysisJobs.Completion.EMPTY;
+                case TERMINAL_FAILURE, CANCELLED -> AnalysisJobs.Completion.FAILED;
+                case PARTIAL -> AnalysisJobs.Completion.PARTIAL;
+            };
+            return new AnalysisJobs.Outcome(
+                    completion,
+                    Optional.empty(),
+                    List.of(),
+                    List.copyOf(abiGaps),
+                    Optional.of(acquisition.identity()),
+                    Optional.of(streamingResult.report().identity()),
+                    inputProblems(acquisition),
+                    Optional.of(merklePub.merkleGraphIdentity()),
+                    (int) Math.min(Integer.MAX_VALUE, merklePub.capabilitySummary().uniqueGapNodes()));
+        }
 
         UniversalArchitecturePipeline.DetailedResult detailed;
         PolyglotScan.Result polyglot;

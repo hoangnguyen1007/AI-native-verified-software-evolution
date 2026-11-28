@@ -2,8 +2,11 @@ package com.evolution.analysis.filesystem;
 
 import com.evolution.analysis.acquisition.streaming.ContentHandle;
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.identity.SnapshotIdentity;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.graph.*;
+import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.evolution.EvolutionSnapshot;
 import com.evolution.analysis.concurrent.BoundedTasks;
 import java.io.*;
@@ -2104,5 +2107,814 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     private static void check(BooleanSupplier cancelled) {
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
             throw new java.util.concurrent.CancellationException();
+    }
+
+    // =========================================================================
+    // EVOGBIN2 — Incremental Merkle-Leaf Delta Persistence & Pass-2 Streaming Sink
+    // =========================================================================
+
+    private static final String MERKLE_V2_DIR_NAME = "merkle-v2";
+    private static final byte[] MERKLE_MANIFEST_MAGIC = "EVOMRK2\0".getBytes(StandardCharsets.US_ASCII);
+    private static final int MERKLE_MANIFEST_VERSION = 2;
+
+    /** Pointer to one compressed EVOGBIN2 Merkle leaf stored in CAS with compact gap summary metadata. */
+    private record StoredLeafRef(
+            String partitionKey,
+            ContentDigest leafHash,
+            ContentHandle blobHandle,
+            int uncompressedBytes,
+            int nodeCount,
+            int edgeCount,
+            int evidenceCount,
+            List<GraphBinaryCache.GapOccurrence> gapOccurrences) {
+    }
+
+    /** Authenticated on-disk Merkle manifest referencing CAS-deduplicated compressed EVOGBIN2 leaves. */
+    private record MerkleManifest(
+            SnapshotIdentity snapshot,
+            ContentDigest merkleGraphIdentity,
+            Optional<ContentDigest> canonicalGraphIdentity,
+            GraphBinaryCache.CapabilitySummary capabilitySummary,
+            Map<String, StoredLeafRef> contextLeaves,
+            StoredLeafRef crossContextLeaf) {
+    }
+
+    /** Publication receipt for an EVOGBIN2 Merkle-subtree snapshot or incremental delta update. */
+    public record MerklePublication(
+            ContentDigest merkleGraphIdentity,
+            Optional<ContentDigest> canonicalGraphIdentity,
+            SnapshotIdentity snapshot,
+            Map<String, ContentDigest> contextPartitionHashes,
+            ContentDigest crossContextEdgesHash,
+            GraphBinaryCache.CapabilitySummary capabilitySummary,
+            int totalLeaves,
+            int dirtyLeavesWritten,
+            int reusedLeaves,
+            long newBytesWritten,
+            long totalCompressedBytes,
+            long totalUncompressedBytes,
+            Path manifestPath) {
+        public MerklePublication {
+            Objects.requireNonNull(merkleGraphIdentity, "merkleGraphIdentity");
+            Objects.requireNonNull(canonicalGraphIdentity, "canonicalGraphIdentity");
+            Objects.requireNonNull(snapshot, "snapshot");
+            contextPartitionHashes = Collections.unmodifiableMap(new TreeMap<>(Objects.requireNonNull(contextPartitionHashes)));
+            Objects.requireNonNull(crossContextEdgesHash, "crossContextEdgesHash");
+            Objects.requireNonNull(capabilitySummary, "capabilitySummary");
+            Objects.requireNonNull(manifestPath, "manifestPath");
+        }
+    }
+
+    /** Cold or content-deduplicated EVOGBIN2 Merkle persistence without building monolithic {@code .graph.json}. */
+    public MerklePublication saveMerkleV2(KnowledgeGraph graph, BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(graph, "graph");
+        check(cancelled);
+        GraphBinaryCache.MerkleDecomposition decomp = GraphBinaryCache.decomposeMerkle(graph);
+        return persistMerkleDecomposition(decomp, Optional.of(graph.identity()), null, cancelled);
+    }
+
+    /**
+     * Incremental EVOGBIN2 Merkle delta update from an already-constructed updated KnowledgeGraph:
+     * unchanged context leaves and cross-context leaf are reused by content hash with zero CAS write.
+     */
+    public MerklePublication saveMerkleDeltaV2(
+            ContentDigest baseMerkleIdentity,
+            KnowledgeGraph updatedGraph,
+            BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(updatedGraph, "updatedGraph");
+        check(cancelled);
+        MerkleManifest base = baseMerkleIdentity != null && hasMerkleManifest(baseMerkleIdentity)
+                ? readMerkleManifest(baseMerkleIdentity, cancelled)
+                : null;
+        GraphBinaryCache.MerkleDecomposition decomp = GraphBinaryCache.decomposeMerkle(updatedGraph);
+        return persistMerkleDecomposition(decomp, Optional.of(updatedGraph.identity()), base, cancelled);
+    }
+
+    /**
+     * True partition-level Warm 1-File Edit delta persistence:
+     * loads ONLY the tiny base manifest, reuses all untouched context Merkle leaves in O(1) without
+     * touching their CAS blobs, encodes and writes ONLY the dirty partition leaves (typically {@code <= 2}),
+     * recomputes exact capability-gap {@code occurrenceCount} sums (I2/I3), and produces bit-identical
+     * EVOGBIN2 Merkle root & payload to a Cold full build (zero {@code .graph.json} rebuild/fsync).
+     */
+    public MerklePublication saveMerkleDeltaPartitionsV2(
+            ContentDigest baseMerkleIdentity,
+            SnapshotIdentity newSnapshot,
+            Map<String, GraphBinaryCache.ContextPartitionData> updatedPartitions,
+            Set<String> removedContexts,
+            Optional<List<KnowledgeGraph.Edge>> updatedCrossContextEdges,
+            Optional<List<GraphEvidence>> updatedOrphanEvidence,
+            BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(baseMerkleIdentity, "baseMerkleIdentity");
+        Objects.requireNonNull(newSnapshot, "newSnapshot");
+        Objects.requireNonNull(updatedPartitions, "updatedPartitions");
+        Objects.requireNonNull(removedContexts, "removedContexts");
+        Objects.requireNonNull(updatedCrossContextEdges, "updatedCrossContextEdges");
+        Objects.requireNonNull(updatedOrphanEvidence, "updatedOrphanEvidence");
+        check(cancelled);
+
+        MerkleManifest base = readMerkleManifest(baseMerkleIdentity, cancelled);
+        var nextContextRefs = new TreeMap<String, StoredLeafRef>();
+        int dirtyWritten = 0;
+        int reused = 0;
+        long newBytes = 0L;
+
+        // 1. Copy untouched context leaf references in O(1) after fast CAS presence check.
+        for (var entry : base.contextLeaves().entrySet()) {
+            String ctxId = entry.getKey();
+            if (removedContexts.contains(ctxId) || updatedPartitions.containsKey(ctxId)) {
+                continue;
+            }
+            StoredLeafRef ref = entry.getValue();
+            if (!content.hasObjectFast(ref.blobHandle())) {
+                throw new IOException("EVOGBIN2_BASE_LEAF_MISSING:" + ctxId);
+            }
+            nextContextRefs.put(ctxId, ref);
+            reused++;
+        }
+
+        // 2. Encode and persist ONLY dirty/added context partitions.
+        for (var entry : new TreeMap<>(updatedPartitions).entrySet()) {
+            check(cancelled);
+            String ctxId = entry.getKey();
+            GraphBinaryCache.MerkleLeaf encoded = GraphBinaryCache.encodeContextLeaf(entry.getValue());
+            StoredLeafRef baseRef = base.contextLeaves().get(ctxId);
+            if (baseRef != null && baseRef.leafHash().equals(encoded.leafHash())
+                    && content.hasObjectFast(baseRef.blobHandle())) {
+                nextContextRefs.put(ctxId, baseRef);
+                reused++;
+            } else {
+                LeafWriteResult written = persistLeafBlob(encoded, cancelled);
+                nextContextRefs.put(ctxId, written.ref());
+                if (written.wroteNewBlob()) {
+                    dirtyWritten++;
+                    newBytes += written.ref().blobHandle().size();
+                } else {
+                    reused++;
+                }
+            }
+        }
+
+        // 3. Cross-context leaf: reuse base directly if unchanged, else re-encode & write only if changed.
+        StoredLeafRef nextCrossRef;
+        if (updatedCrossContextEdges.isEmpty() && updatedOrphanEvidence.isEmpty()) {
+            StoredLeafRef baseCross = base.crossContextLeaf();
+            if (!content.hasObjectFast(baseCross.blobHandle())) {
+                throw new IOException("EVOGBIN2_BASE_CROSS_LEAF_MISSING");
+            }
+            nextCrossRef = baseCross;
+            reused++;
+        } else {
+            List<KnowledgeGraph.Edge> edges = updatedCrossContextEdges.orElseGet(() -> {
+                try {
+                    return GraphBinaryCache.decodeCrossContextLeaf(loadLeaf(base.crossContextLeaf())).crossContextEdges();
+                } catch (IOException failure) {
+                    throw new UncheckedIOException(failure);
+                }
+            });
+            List<GraphEvidence> ev = updatedOrphanEvidence.orElseGet(() -> {
+                try {
+                    return GraphBinaryCache.decodeCrossContextLeaf(loadLeaf(base.crossContextLeaf())).evidence();
+                } catch (IOException failure) {
+                    throw new UncheckedIOException(failure);
+                }
+            });
+            GraphBinaryCache.MerkleLeaf encodedCross = GraphBinaryCache.encodeCrossContextLeaf(
+                    new GraphBinaryCache.CrossContextPartitionData(edges, ev));
+            if (base.crossContextLeaf().leafHash().equals(encodedCross.leafHash())
+                    && content.hasObjectFast(base.crossContextLeaf().blobHandle())) {
+                nextCrossRef = base.crossContextLeaf();
+                reused++;
+            } else {
+                LeafWriteResult written = persistLeafBlob(encodedCross, cancelled);
+                nextCrossRef = written.ref();
+                if (written.wroteNewBlob()) {
+                    dirtyWritten++;
+                    newBytes += written.ref().blobHandle().size();
+                } else {
+                    reused++;
+                }
+            }
+        }
+
+        return finalizeMerkleManifest(newSnapshot, Optional.empty(), nextContextRefs, nextCrossRef,
+                dirtyWritten, reused, newBytes, cancelled);
+    }
+
+    /** Returns true if an EVOGBIN2 Merkle manifest exists for {@code merkleGraphIdentity}. */
+    public boolean hasMerkleManifest(ContentDigest merkleGraphIdentity) {
+        try {
+            return Files.isRegularFile(merkleManifestPath(Objects.requireNonNull(merkleGraphIdentity)),
+                    LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
+    /** Loads, verifies, and decodes an authenticated EVOGBIN2 Merkle snapshot back into a KnowledgeGraph. */
+    public GraphBinaryCache.DecodedEvogbin2 loadMerkleV2(
+            ContentDigest merkleGraphIdentity, BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(merkleGraphIdentity, "merkleGraphIdentity");
+        check(cancelled);
+        byte[] evogbin2Bytes = exportEvogbin2Bytes(merkleGraphIdentity, cancelled);
+        return GraphBinaryCache.decodeEvogbin2(evogbin2Bytes);
+    }
+
+    /**
+     * Assembles the exact self-contained deterministic EVOGBIN2 byte representation from the
+     * deduplicated CAS Merkle leaves and manifest (bit-for-bit identical to Cold {@code encodeEvogbin2}).
+     */
+    public byte[] exportEvogbin2Bytes(ContentDigest merkleGraphIdentity, BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(merkleGraphIdentity, "merkleGraphIdentity");
+        check(cancelled);
+        MerkleManifest manifest = readMerkleManifest(merkleGraphIdentity, cancelled);
+        var contextLeaves = new TreeMap<String, GraphBinaryCache.MerkleLeaf>();
+        for (var entry : manifest.contextLeaves().entrySet()) {
+            check(cancelled);
+            contextLeaves.put(entry.getKey(), loadLeaf(entry.getValue()));
+        }
+        GraphBinaryCache.MerkleLeaf crossLeaf = loadLeaf(manifest.crossContextLeaf());
+        var decomp = new GraphBinaryCache.MerkleDecomposition(
+                manifest.snapshot(),
+                manifest.merkleGraphIdentity(),
+                contextLeaves,
+                crossLeaf,
+                manifest.capabilitySummary());
+        return GraphBinaryCache.encodeEvogbin2(decomp);
+    }
+
+    /**
+     * Lazily materializes the exact canonical {@code .graph.json} file from EVOGBIN2 Merkle leaves
+     * on demand for audit without storing monolithic JSON on every incremental edit.
+     */
+    public Path materializeCanonicalJson(
+            ContentDigest merkleGraphIdentity, Path targetJsonPath, BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(merkleGraphIdentity, "merkleGraphIdentity");
+        Objects.requireNonNull(targetJsonPath, "targetJsonPath");
+        check(cancelled);
+        GraphBinaryCache.DecodedEvogbin2 decoded = loadMerkleV2(merkleGraphIdentity, cancelled);
+        Path normalized = targetJsonPath.toAbsolutePath().normalize();
+        StreamingContentStore.safe(normalized);
+        Files.createDirectories(normalized.getParent());
+        Path pending = Files.createTempFile(normalized.getParent(), "graph-materialize-", ".part");
+        try {
+            try (var channel = java.nio.channels.FileChannel.open(pending, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+                 var writer = new BufferedWriter(new OutputStreamWriter(
+                         java.nio.channels.Channels.newOutputStream(channel), StandardCharsets.UTF_8), 65536)) {
+                new GraphSnapshotCodec().encodeTo(decoded.graph(), writer);
+                writer.flush();
+                channel.force(true);
+            }
+            StreamingContentStore.moveAtomicWithRetry(pending, normalized);
+            return normalized;
+        } finally {
+            StreamingContentStore.deleteIfExistsQuietly(pending);
+        }
+    }
+
+    /** Returns total physical bytes on disk occupied by EVOGBIN2 manifests and deduplicated CAS leaf blobs. */
+    public long totalMerkleStorageBytes() throws IOException {
+        long total = 0L;
+        for (Path sub : List.of(directory.resolve(MERKLE_V2_DIR_NAME), directory.resolve("content"))) {
+            if (!Files.isDirectory(sub, LinkOption.NOFOLLOW_LINKS)) continue;
+            try (var walk = Files.walk(sub)) {
+                var it = walk.iterator();
+                while (it.hasNext()) {
+                    Path p = it.next();
+                    if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
+                        total += Files.size(p);
+                    }
+                }
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Opens a streaming Merkle partition session for Pass-2 module-by-module flushing:
+     * each partition is immediately compressed, written/deduplicated into CAS, and released from heap.
+     */
+    public MerkleStreamSession openMerkleStreamSession(
+            SnapshotIdentity snapshot,
+            Optional<ContentDigest> baseMerkleIdentity,
+            BooleanSupplier cancelled) throws IOException {
+        Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(baseMerkleIdentity, "baseMerkleIdentity");
+        Objects.requireNonNull(cancelled, "cancelled");
+        check(cancelled);
+        MerkleManifest base = baseMerkleIdentity.isPresent() && hasMerkleManifest(baseMerkleIdentity.orElseThrow())
+                ? readMerkleManifest(baseMerkleIdentity.orElseThrow(), cancelled)
+                : null;
+        return new MerkleStreamSession(snapshot, base, cancelled);
+    }
+
+    /** Streaming Merkle leaf writer that flushes one context partition at a time and bounds heap. */
+    public final class MerkleStreamSession {
+        private final SnapshotIdentity snapshot;
+        private final MerkleManifest base;
+        private final BooleanSupplier cancelled;
+        private final TreeMap<String, StoredLeafRef> contextRefs = new TreeMap<>();
+        private int dirtyWritten;
+        private int reused;
+        private long newBytes;
+        private boolean finished;
+
+        private MerkleStreamSession(SnapshotIdentity snapshot, MerkleManifest base, BooleanSupplier cancelled) {
+            this.snapshot = snapshot;
+            this.base = base;
+            this.cancelled = cancelled;
+        }
+
+        /** Encodes and immediately flushes one context partition leaf to CAS, releasing partition rows from heap. */
+        public ContentDigest writeContextPartition(GraphBinaryCache.ContextPartitionData partition) throws IOException {
+            if (finished) throw new IllegalStateException("MerkleStreamSession already finished");
+            check(cancelled);
+            GraphBinaryCache.MerkleLeaf encoded = GraphBinaryCache.encodeContextLeaf(partition);
+            String ctxId = partition.context().identity();
+            StoredLeafRef baseRef = base == null ? null : base.contextLeaves().get(ctxId);
+            if (baseRef != null && baseRef.leafHash().equals(encoded.leafHash())
+                    && content.hasObjectFast(baseRef.blobHandle())) {
+                contextRefs.put(ctxId, baseRef);
+                reused++;
+                return baseRef.leafHash();
+            }
+            LeafWriteResult written = persistLeafBlob(encoded, cancelled);
+            contextRefs.put(ctxId, written.ref());
+            if (written.wroteNewBlob()) {
+                dirtyWritten++;
+                newBytes += written.ref().blobHandle().size();
+            } else {
+                reused++;
+            }
+            return written.ref().leafHash();
+        }
+
+        /** Reuses an unchanged context leaf directly from the base manifest without reading or re-encoding it. */
+        public boolean reuseContextFromBase(String contextId) throws IOException {
+            if (finished) throw new IllegalStateException("MerkleStreamSession already finished");
+            check(cancelled);
+            if (base == null) return false;
+            StoredLeafRef baseRef = base.contextLeaves().get(contextId);
+            if (baseRef == null || !content.hasObjectFast(baseRef.blobHandle())) return false;
+            contextRefs.put(contextId, baseRef);
+            reused++;
+            return true;
+        }
+
+        /** Finishes the streaming session by writing/reusing the cross-context leaf and publishing the manifest. */
+        public MerklePublication finish(
+                List<KnowledgeGraph.Edge> crossContextEdges,
+                List<GraphEvidence> orphanEvidence) throws IOException {
+            if (finished) throw new IllegalStateException("MerkleStreamSession already finished");
+            finished = true;
+            check(cancelled);
+            GraphBinaryCache.MerkleLeaf crossLeaf = GraphBinaryCache.encodeCrossContextLeaf(
+                    new GraphBinaryCache.CrossContextPartitionData(crossContextEdges, orphanEvidence));
+            StoredLeafRef crossRef;
+            if (base != null && base.crossContextLeaf().leafHash().equals(crossLeaf.leafHash())
+                    && content.hasObjectFast(base.crossContextLeaf().blobHandle())) {
+                crossRef = base.crossContextLeaf();
+                reused++;
+            } else {
+                LeafWriteResult written = persistLeafBlob(crossLeaf, cancelled);
+                crossRef = written.ref();
+                if (written.wroteNewBlob()) {
+                    dirtyWritten++;
+                    newBytes += written.ref().blobHandle().size();
+                } else {
+                    reused++;
+                }
+            }
+            return finalizeMerkleManifest(snapshot, Optional.empty(), contextRefs, crossRef,
+                    dirtyWritten, reused, newBytes, cancelled);
+        }
+    }
+
+    /**
+     * Opens a Pass-2 streaming sink implementing {@link UniversalArchitecturePipeline.StreamingPartitionSink}.
+     * Each module's nodes/edges/evidence are projected and flushed immediately to a compressed EVOGBIN2
+     * Merkle leaf before the module's FrontendResult is released from heap.
+     */
+    public AbiStreamingPartitionSink openAbiStreamingSink(
+            SnapshotIdentity snapshot,
+            Optional<ContentDigest> baseMerkleIdentity,
+            boolean fastArchitecture,
+            BooleanSupplier cancelled) throws IOException {
+        return new AbiStreamingPartitionSink(
+                openMerkleStreamSession(snapshot, baseMerkleIdentity, cancelled),
+                fastArchitecture,
+                cancelled);
+    }
+
+    /** Streaming Pass-2 sink that flushes each module directly to PartitionedGraphStore Merkle leaves. */
+    public final class AbiStreamingPartitionSink implements UniversalArchitecturePipeline.StreamingPartitionSink {
+        private final MerkleStreamSession session;
+        private final boolean fastArchitecture;
+        private final BooleanSupplier cancelled;
+        private final List<KnowledgeGraph.Edge> crossContextEdges = new ArrayList<>();
+        private final Map<ContentDigest, GraphEvidence> crossOrOrphanEvidence = new TreeMap<>();
+        private final List<CapabilityGapRecord> accumulatedGaps = new ArrayList<>();
+        private final Map<String, KnowledgeGraph.Node> mergedRootNodes = new TreeMap<>();
+        private final Map<String, KnowledgeGraph.Edge> mergedRootEdges = new TreeMap<>();
+        private final Map<ContentDigest, GraphEvidence> mergedRootEvidence = new TreeMap<>();
+        private KnowledgeGraph.Context mergedRootContext;
+        private MerklePublication publication;
+
+        private AbiStreamingPartitionSink(
+                MerkleStreamSession session, boolean fastArchitecture, BooleanSupplier cancelled) {
+            this.session = session;
+            this.fastArchitecture = fastArchitecture;
+            this.cancelled = cancelled;
+        }
+
+        @Override
+        public void flushModulePartition(
+                UniversalSourceIngestion.Outcome outcome,
+                UniversalIngestionPipeline.Unit unit,
+                List<CanonicalGraphInput.SpringSlice> springSlices,
+                List<CapabilityGapRecord> moduleGaps,
+                ContentDigest abiIndexDigest) throws IOException {
+            check(cancelled);
+            if (moduleGaps != null && !moduleGaps.isEmpty()) {
+                accumulatedGaps.addAll(moduleGaps);
+            }
+            if (outcome.request().isEmpty() || unit.frontend().isEmpty()) {
+                return;
+            }
+            var manifest = outcome.request().orElseThrow().manifest();
+            KnowledgeGraph moduleGraph = new CanonicalGraphBuilder().build(
+                    manifest, unit.frontend().orElseThrow(),
+                    springSlices == null ? List.of() : springSlices,
+                    List.of(), fastArchitecture);
+            flushSubgraphPartitions(moduleGraph);
+        }
+
+        @Override
+        public void completeRepositorySlice(
+                RepositoryInputs inputs,
+                com.evolution.analysis.buildmodel.UniversalBuildModel buildModel,
+                UniversalSourceIngestion.Result sourceIngestion,
+                List<IngestionEvidence.Issue> issues,
+                List<CapabilityGapRecord> gaps) throws IOException {
+            check(cancelled);
+            var combinedGaps = new TreeSet<CapabilityGapRecord>(accumulatedGaps);
+            if (gaps != null) combinedGaps.addAll(gaps);
+            var repoInput = new CanonicalGraphInput(
+                    inputs,
+                    Optional.ofNullable(buildModel),
+                    Optional.empty(),
+                    List.of(),
+                    issues == null ? List.of() : issues,
+                    List.copyOf(combinedGaps));
+            KnowledgeGraph repoGraph = new CanonicalGraphBuilder().build(repoInput, List.of(), fastArchitecture);
+            flushSubgraphPartitions(repoGraph);
+            if (mergedRootContext != null) {
+                session.writeContextPartition(new GraphBinaryCache.ContextPartitionData(
+                        mergedRootContext,
+                        List.copyOf(mergedRootNodes.values()),
+                        List.copyOf(mergedRootEdges.values()),
+                        List.copyOf(mergedRootEvidence.values())));
+                mergedRootNodes.clear();
+                mergedRootEdges.clear();
+                mergedRootEvidence.clear();
+            }
+            this.publication = session.finish(crossContextEdges, List.copyOf(crossOrOrphanEvidence.values()));
+        }
+
+        private void flushSubgraphPartitions(KnowledgeGraph subgraph) throws IOException {
+            var evById = new HashMap<ContentDigest, GraphEvidence>(Math.max(16, subgraph.evidence().size() * 2));
+            for (var ev : subgraph.evidence()) evById.put(ev.identity(), ev);
+            var nodesByCtx = new HashMap<String, List<KnowledgeGraph.Node>>();
+            for (var n : subgraph.nodes()) {
+                nodesByCtx.computeIfAbsent(n.context(), ignored -> new ArrayList<>()).add(n);
+            }
+            var intraEdgesByCtx = new HashMap<String, List<KnowledgeGraph.Edge>>();
+            var referenced = new HashSet<ContentDigest>();
+            for (var e : subgraph.edges()) {
+                if (GraphBinaryCache.isCrossContextEdge(e)) {
+                    crossContextEdges.add(e);
+                    for (var evId : e.evidence()) {
+                        referenced.add(evId);
+                        GraphEvidence ev = evById.get(evId);
+                        if (ev != null) crossOrOrphanEvidence.putIfAbsent(evId, ev);
+                    }
+                } else {
+                    intraEdgesByCtx.computeIfAbsent(e.context(), ignored -> new ArrayList<>()).add(e);
+                }
+            }
+            for (var ctx : subgraph.contexts()) {
+                var ctxNodes = nodesByCtx.getOrDefault(ctx.identity(), List.of());
+                var ctxEdges = intraEdgesByCtx.getOrDefault(ctx.identity(), List.of());
+                var localEvIds = new TreeSet<ContentDigest>();
+                localEvIds.add(ctx.evidence());
+                for (var n : ctxNodes) localEvIds.addAll(n.evidence());
+                for (var e : ctxEdges) localEvIds.addAll(e.evidence());
+                referenced.addAll(localEvIds);
+                var localEv = new ArrayList<GraphEvidence>(localEvIds.size());
+                for (var evId : localEvIds) {
+                    GraphEvidence ev = evById.get(evId);
+                    if (ev != null) localEv.add(ev);
+                }
+                if (ctx.analysis().isEmpty()) {
+                    mergedRootContext = ctx;
+                    for (var n : ctxNodes) mergedRootNodes.put(n.identity(), n);
+                    for (var e : ctxEdges) mergedRootEdges.put(e.identity(), e);
+                    for (var ev : localEv) mergedRootEvidence.putIfAbsent(ev.identity(), ev);
+                } else {
+                    session.writeContextPartition(new GraphBinaryCache.ContextPartitionData(
+                            ctx, ctxNodes, ctxEdges, localEv));
+                }
+            }
+            for (var ev : subgraph.evidence()) {
+                if (!referenced.contains(ev.identity())) {
+                    crossOrOrphanEvidence.putIfAbsent(ev.identity(), ev);
+                }
+            }
+        }
+
+        public Optional<MerklePublication> publication() {
+            return Optional.ofNullable(publication);
+        }
+    }
+
+    private record LeafWriteResult(StoredLeafRef ref, boolean wroteNewBlob) {}
+
+    private MerklePublication persistMerkleDecomposition(
+            GraphBinaryCache.MerkleDecomposition decomp,
+            Optional<ContentDigest> canonicalGraphIdentity,
+            MerkleManifest base,
+            BooleanSupplier cancelled) throws IOException {
+        var contextRefs = new TreeMap<String, StoredLeafRef>();
+        int dirtyWritten = 0;
+        int reused = 0;
+        long newBytes = 0L;
+
+        for (var entry : decomp.contextLeaves().entrySet()) {
+            check(cancelled);
+            String ctxId = entry.getKey();
+            GraphBinaryCache.MerkleLeaf leaf = entry.getValue();
+            StoredLeafRef baseRef = base == null ? null : base.contextLeaves().get(ctxId);
+            if (baseRef != null && baseRef.leafHash().equals(leaf.leafHash())
+                    && content.hasObjectFast(baseRef.blobHandle())) {
+                contextRefs.put(ctxId, baseRef);
+                reused++;
+                continue;
+            }
+            LeafWriteResult written = persistLeafBlob(leaf, cancelled);
+            contextRefs.put(ctxId, written.ref());
+            if (written.wroteNewBlob()) {
+                dirtyWritten++;
+                newBytes += written.ref().blobHandle().size();
+            } else {
+                reused++;
+            }
+        }
+
+        GraphBinaryCache.MerkleLeaf crossLeaf = decomp.crossContextLeaf();
+        StoredLeafRef crossRef;
+        if (base != null && base.crossContextLeaf().leafHash().equals(crossLeaf.leafHash())
+                && content.hasObjectFast(base.crossContextLeaf().blobHandle())) {
+            crossRef = base.crossContextLeaf();
+            reused++;
+        } else {
+            LeafWriteResult written = persistLeafBlob(crossLeaf, cancelled);
+            crossRef = written.ref();
+            if (written.wroteNewBlob()) {
+                dirtyWritten++;
+                newBytes += written.ref().blobHandle().size();
+            } else {
+                reused++;
+            }
+        }
+
+        return finalizeMerkleManifest(decomp.snapshot(), canonicalGraphIdentity, contextRefs, crossRef,
+                dirtyWritten, reused, newBytes, cancelled);
+    }
+
+    private LeafWriteResult persistLeafBlob(GraphBinaryCache.MerkleLeaf leaf, BooleanSupplier cancelled)
+            throws IOException {
+        byte[] payload = leaf.compressedPayload();
+        ContentHandle candidate = new ContentHandle(ContentDigest.sha256(payload), payload.length);
+        boolean existed = content.hasObjectFast(candidate);
+        ContentHandle stored;
+        if (existed) {
+            stored = candidate;
+        } else {
+            stored = content.write(out -> out.write(payload), cancelled);
+        }
+        var ref = new StoredLeafRef(
+                leaf.partitionKey(),
+                leaf.leafHash(),
+                stored,
+                leaf.uncompressedBytes(),
+                leaf.nodeCount(),
+                leaf.edgeCount(),
+                leaf.evidenceCount(),
+                leaf.gapOccurrences());
+        return new LeafWriteResult(ref, !existed);
+    }
+
+    private MerklePublication finalizeMerkleManifest(
+            SnapshotIdentity snapshot,
+            Optional<ContentDigest> canonicalGraphIdentity,
+            TreeMap<String, StoredLeafRef> contextRefs,
+            StoredLeafRef crossRef,
+            int dirtyWritten,
+            int reused,
+            long newBytes,
+            BooleanSupplier cancelled) throws IOException {
+        var allGaps = new ArrayList<GraphBinaryCache.GapOccurrence>();
+        var contextHashes = new TreeMap<String, ContentDigest>();
+        long totalComp = crossRef.blobHandle().size();
+        long totalUncomp = crossRef.uncompressedBytes();
+        for (var entry : contextRefs.entrySet()) {
+            StoredLeafRef ref = entry.getValue();
+            contextHashes.put(entry.getKey(), ref.leafHash());
+            allGaps.addAll(ref.gapOccurrences());
+            totalComp += ref.blobHandle().size();
+            totalUncomp += ref.uncompressedBytes();
+        }
+        GraphBinaryCache.CapabilitySummary summary = GraphBinaryCache.computeCapabilitySummary(allGaps);
+        ContentDigest merkleRoot = GraphBinaryCache.computeMerkleRoot(
+                contextHashes, crossRef.leafHash(), summary.digest());
+        var manifest = new MerkleManifest(snapshot, merkleRoot, canonicalGraphIdentity, summary,
+                Collections.unmodifiableMap(contextRefs), crossRef);
+        Path manifestPath = writeMerkleManifest(manifest, cancelled);
+        return new MerklePublication(
+                merkleRoot,
+                canonicalGraphIdentity,
+                snapshot,
+                contextHashes,
+                crossRef.leafHash(),
+                summary,
+                contextRefs.size() + 1,
+                dirtyWritten,
+                reused,
+                newBytes,
+                totalComp,
+                totalUncomp,
+                manifestPath);
+    }
+
+    private GraphBinaryCache.MerkleLeaf loadLeaf(StoredLeafRef ref) throws IOException {
+        byte[] compressed = content.readVerifiedBytes(ref.blobHandle());
+        return new GraphBinaryCache.MerkleLeaf(
+                ref.partitionKey(),
+                ref.leafHash(),
+                ref.uncompressedBytes(),
+                compressed.length,
+                compressed,
+                ref.nodeCount(),
+                ref.edgeCount(),
+                ref.evidenceCount(),
+                ref.gapOccurrences());
+    }
+
+    private Path merkleManifestPath(ContentDigest merkleGraphIdentity) throws IOException {
+        Path dir = directory.resolve(MERKLE_V2_DIR_NAME);
+        StreamingContentStore.safeWithin(directory, dir);
+        Path file = dir.resolve(merkleGraphIdentity.value().substring(7) + ".evogbin2.manifest");
+        StreamingContentStore.safeWithin(directory, file);
+        return file;
+    }
+
+    private Path writeMerkleManifest(MerkleManifest manifest, BooleanSupplier cancelled) throws IOException {
+        check(cancelled);
+        Path dir = directory.resolve(MERKLE_V2_DIR_NAME);
+        StreamingContentStore.ensureSubdirectory(directory, dir);
+        Path target = merkleManifestPath(manifest.merkleGraphIdentity());
+        if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+            return target;
+        }
+        byte[] encoded = encodeMerkleManifest(manifest);
+        Path pending = Files.createTempFile(dir, "evogbin2-manifest-", ".part");
+        try (var cleanup = new TemporaryFiles(pending)) {
+            try (var channel = java.nio.channels.FileChannel.open(pending, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+                var buf = ByteBuffer.wrap(encoded);
+                while (buf.hasRemaining()) channel.write(buf);
+                channel.force(true);
+            }
+            check(cancelled);
+            try {
+                StreamingContentStore.createLinkWithRetry(target, pending);
+            } catch (FileAlreadyExistsException raced) {
+                return target;
+            }
+            return target;
+        }
+    }
+
+    private static byte[] encodeMerkleManifest(MerkleManifest manifest) throws IOException {
+        var baos = new ByteArrayOutputStream(512 + manifest.contextLeaves().size() * 96);
+        HexFormat hex = HexFormat.of();
+        baos.write(MERKLE_MANIFEST_MAGIC);
+        GraphBinaryCache.writeVarInt(baos, MERKLE_MANIFEST_VERSION);
+        GraphBinaryCache.writeVarUtf(baos, manifest.snapshot().value());
+        baos.write(hex.parseHex(manifest.merkleGraphIdentity().value(), 7, 71));
+        if (manifest.canonicalGraphIdentity().isPresent()) {
+            baos.write(1);
+            baos.write(hex.parseHex(manifest.canonicalGraphIdentity().orElseThrow().value(), 7, 71));
+        } else {
+            baos.write(0);
+        }
+        GraphBinaryCache.writeCapabilitySummary(baos, manifest.capabilitySummary(), hex);
+        GraphBinaryCache.writeVarInt(baos, manifest.contextLeaves().size());
+        for (var ref : manifest.contextLeaves().values()) {
+            writeStoredLeafRef(baos, ref, hex);
+        }
+        writeStoredLeafRef(baos, manifest.crossContextLeaf(), hex);
+        byte[] body = baos.toByteArray();
+        byte[] trailer = StreamingContentStore.sha256().digest(body);
+        byte[] full = Arrays.copyOf(body, body.length + 32);
+        System.arraycopy(trailer, 0, full, body.length, 32);
+        return full;
+    }
+
+    private MerkleManifest readMerkleManifest(ContentDigest merkleGraphIdentity, BooleanSupplier cancelled)
+            throws IOException {
+        check(cancelled);
+        Path path = merkleManifestPath(merkleGraphIdentity);
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("EVOGBIN2_MANIFEST_NOT_FOUND:" + merkleGraphIdentity.value());
+        }
+        byte[] bytes = Files.readAllBytes(path);
+        if (bytes.length < MERKLE_MANIFEST_MAGIC.length + 32) {
+            throw new IOException("EVOGBIN2_MANIFEST_CORRUPT");
+        }
+        byte[] expectedTrailer = Arrays.copyOfRange(bytes, bytes.length - 32, bytes.length);
+        byte[] actualTrailer = StreamingContentStore.sha256().digest(Arrays.copyOf(bytes, bytes.length - 32));
+        if (!MessageDigest.isEqual(expectedTrailer, actualTrailer)) {
+            throw new IOException("EVOGBIN2_MANIFEST_CHECKSUM_MISMATCH");
+        }
+        var in = new ByteArrayInputStream(bytes, 0, bytes.length - 32);
+        byte[] magic = in.readNBytes(MERKLE_MANIFEST_MAGIC.length);
+        if (!Arrays.equals(MERKLE_MANIFEST_MAGIC, magic)) {
+            throw new IOException("EVOGBIN2_MANIFEST_INVALID_MAGIC");
+        }
+        int version = GraphBinaryCache.readVarInt(in);
+        if (version != MERKLE_MANIFEST_VERSION) {
+            throw new IOException("EVOGBIN2_MANIFEST_UNSUPPORTED_VERSION:" + version);
+        }
+        HexFormat hex = HexFormat.of();
+        var snapshot = new SnapshotIdentity(GraphBinaryCache.readVarUtf(in));
+        ContentDigest rootId = GraphBinaryCache.readRawDigest(in, hex);
+        if (!rootId.equals(merkleGraphIdentity)) {
+            throw new IOException("EVOGBIN2_MANIFEST_SCOPE_MISMATCH");
+        }
+        int hasCanonical = in.read();
+        Optional<ContentDigest> canonicalId = hasCanonical == 1
+                ? Optional.of(GraphBinaryCache.readRawDigest(in, hex))
+                : Optional.empty();
+        GraphBinaryCache.CapabilitySummary summary = GraphBinaryCache.readCapabilitySummary(in, hex);
+        int ctxCount = GraphBinaryCache.readVarInt(in);
+        var contextRefs = new TreeMap<String, StoredLeafRef>();
+        for (int i = 0; i < ctxCount; i++) {
+            StoredLeafRef ref = readStoredLeafRef(in, hex);
+            contextRefs.put(ref.partitionKey(), ref);
+        }
+        StoredLeafRef crossRef = readStoredLeafRef(in, hex);
+        if (in.read() != -1) {
+            throw new IOException("EVOGBIN2_MANIFEST_TRAILING_BYTES");
+        }
+        return new MerkleManifest(snapshot, rootId, canonicalId, summary,
+                Collections.unmodifiableMap(contextRefs), crossRef);
+    }
+
+    private static void writeStoredLeafRef(OutputStream out, StoredLeafRef ref, HexFormat hex) throws IOException {
+        GraphBinaryCache.writeVarUtf(out, ref.partitionKey());
+        out.write(hex.parseHex(ref.leafHash().value(), 7, 71));
+        out.write(hex.parseHex(ref.blobHandle().digest().value(), 7, 71));
+        GraphBinaryCache.writeVarLong(out, ref.blobHandle().size());
+        GraphBinaryCache.writeVarInt(out, ref.uncompressedBytes());
+        GraphBinaryCache.writeVarInt(out, ref.nodeCount());
+        GraphBinaryCache.writeVarInt(out, ref.edgeCount());
+        GraphBinaryCache.writeVarInt(out, ref.evidenceCount());
+        GraphBinaryCache.writeVarInt(out, ref.gapOccurrences().size());
+        for (var gap : ref.gapOccurrences()) {
+            GraphBinaryCache.writeVarUtf(out, gap.gapNodeId());
+            GraphBinaryCache.writeVarUtf(out, gap.reasonCode());
+            GraphBinaryCache.writeVarLong(out, gap.occurrenceCount());
+        }
+    }
+
+    private static StoredLeafRef readStoredLeafRef(InputStream in, HexFormat hex) throws IOException {
+        String key = GraphBinaryCache.readVarUtf(in);
+        ContentDigest leafHash = GraphBinaryCache.readRawDigest(in, hex);
+        ContentDigest blobDigest = GraphBinaryCache.readRawDigest(in, hex);
+        long blobSize = GraphBinaryCache.readVarLong(in);
+        int uncompressedBytes = GraphBinaryCache.readVarInt(in);
+        int nodeCount = GraphBinaryCache.readVarInt(in);
+        int edgeCount = GraphBinaryCache.readVarInt(in);
+        int evidenceCount = GraphBinaryCache.readVarInt(in);
+        int gapCount = GraphBinaryCache.readVarInt(in);
+        var gaps = gapCount == 0 ? List.<GraphBinaryCache.GapOccurrence>of() : new ArrayList<GraphBinaryCache.GapOccurrence>(gapCount);
+        for (int i = 0; i < gapCount; i++) {
+            String gapId = GraphBinaryCache.readVarUtf(in);
+            String reason = GraphBinaryCache.readVarUtf(in);
+            long occ = GraphBinaryCache.readVarLong(in);
+            gaps.add(new GraphBinaryCache.GapOccurrence(gapId, reason, occ));
+        }
+        return new StoredLeafRef(key, leafHash, new ContentHandle(blobDigest, blobSize),
+                uncompressedBytes, nodeCount, edgeCount, evidenceCount, gaps);
     }
 }

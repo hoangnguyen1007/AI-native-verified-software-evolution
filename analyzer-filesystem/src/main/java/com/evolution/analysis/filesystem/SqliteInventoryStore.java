@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.contract.identity.*;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.contract.source.SnapshotFile;
+import com.evolution.analysis.ingestion.UniversalArchitecturePipeline;
 import java.io.*;
 import java.nio.channels.*;
 import java.nio.file.*;
@@ -14,7 +15,8 @@ import java.util.*;
 
 /** Single-writer local index. An fsynced hash-chained operation log is authoritative and rebuildable.
  * No SQL type crosses the acquisition ports. Never place this store on a network filesystem. */
-public final class SqliteInventoryStore implements InventoryReader, JobJournal, AutoCloseable {
+public final class SqliteInventoryStore implements InventoryReader, JobJournal,
+        UniversalArchitecturePipeline.AbiSignatureStore, AutoCloseable {
     static final int MAX_ENTRY_BATCH = 2048;
     private static final ContentDigest INITIAL_HEAD = ContentDigest.sha256Utf8("inventory-journal:m8.4-v2");
 
@@ -44,6 +46,13 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
     private PreparedStatement upsertRepoHeadStmt;
     private PreparedStatement upsertGitOidStmt;
     private PreparedStatement upsertMetaStmt;
+    private PreparedStatement upsertAbiStmt;
+    private PreparedStatement deleteAbiModuleStmt;
+    private PreparedStatement deleteAbiRevisionStmt;
+    private PreparedStatement selectAbiModuleStmt;
+    private PreparedStatement selectAbiFqnStmt;
+    private PreparedStatement selectAbiAllStmt;
+    private PreparedStatement countAbiRevisionStmt;
 
     public record SealedHead(
             String revision,
@@ -113,6 +122,8 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                 sql.execute("CREATE TABLE IF NOT EXISTS repo_heads(revision TEXT PRIMARY KEY,repository TEXT NOT NULL,selection TEXT NOT NULL,sealed_seq INTEGER NOT NULL,sealed_at_ms INTEGER NOT NULL,digest TEXT NOT NULL,v1snapshot TEXT)");
                 sql.execute("CREATE INDEX IF NOT EXISTS repo_heads_lookup ON repo_heads(repository,selection,sealed_seq DESC)");
                 sql.execute("CREATE TABLE IF NOT EXISTS git_oid_map(git_oid TEXT PRIMARY KEY,digest TEXT NOT NULL,size INTEGER NOT NULL)");
+                sql.execute("CREATE TABLE IF NOT EXISTS abi_signatures(revision TEXT NOT NULL,module_key TEXT NOT NULL,qualified_name TEXT NOT NULL,kind TEXT NOT NULL,supertypes TEXT NOT NULL,members TEXT NOT NULL,annotations TEXT NOT NULL,abi_digest TEXT NOT NULL,PRIMARY KEY(revision,module_key,qualified_name)) WITHOUT ROWID");
+                sql.execute("CREATE INDEX IF NOT EXISTS abi_signatures_fqn ON abi_signatures(revision,qualified_name)");
                 sql.execute("CREATE TABLE IF NOT EXISTS journal_meta(id INTEGER PRIMARY KEY CHECK(id=1),sequence INTEGER NOT NULL,head TEXT NOT NULL)");
                 // Upgrade backfill for existing v2 derived databases opened cleanly without replay (monotonic ROWID breaks ties).
                 sql.execute("INSERT OR IGNORE INTO repo_heads(revision,repository,selection,sealed_seq,sealed_at_ms,digest,v1snapshot) SELECT revision,repository,selection,rowid,0,digest,v1snapshot FROM seals");
@@ -151,6 +162,13 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
             upsertRepoHeadStmt = db.prepareStatement("INSERT INTO repo_heads VALUES(?,?,?,?,?,?,?) ON CONFLICT(revision) DO UPDATE SET repository=excluded.repository,selection=excluded.selection,sealed_seq=excluded.sealed_seq,sealed_at_ms=excluded.sealed_at_ms,digest=excluded.digest,v1snapshot=excluded.v1snapshot");
             upsertGitOidStmt = db.prepareStatement("INSERT INTO git_oid_map VALUES(?,?,?) ON CONFLICT(git_oid) DO UPDATE SET digest=excluded.digest,size=excluded.size");
             upsertMetaStmt = db.prepareStatement("INSERT INTO journal_meta(id,sequence,head) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET sequence=excluded.sequence,head=excluded.head");
+            upsertAbiStmt = db.prepareStatement("INSERT INTO abi_signatures(revision,module_key,qualified_name,kind,supertypes,members,annotations,abi_digest) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(revision,module_key,qualified_name) DO UPDATE SET kind=excluded.kind,supertypes=excluded.supertypes,members=excluded.members,annotations=excluded.annotations,abi_digest=excluded.abi_digest");
+            deleteAbiModuleStmt = db.prepareStatement("DELETE FROM abi_signatures WHERE revision=? AND module_key=?");
+            deleteAbiRevisionStmt = db.prepareStatement("DELETE FROM abi_signatures WHERE revision=?");
+            selectAbiModuleStmt = db.prepareStatement("SELECT module_key,qualified_name,kind,supertypes,members,annotations,abi_digest FROM abi_signatures WHERE revision=? AND module_key=? ORDER BY qualified_name");
+            selectAbiFqnStmt = db.prepareStatement("SELECT module_key,qualified_name,kind,supertypes,members,annotations,abi_digest FROM abi_signatures WHERE revision=? AND qualified_name=? ORDER BY module_key LIMIT 1");
+            selectAbiAllStmt = db.prepareStatement("SELECT module_key,qualified_name,kind,supertypes,members,annotations,abi_digest FROM abi_signatures WHERE revision=? ORDER BY qualified_name,module_key");
+            countAbiRevisionStmt = db.prepareStatement("SELECT COUNT(*) FROM abi_signatures WHERE revision=?");
         }
     }
 
@@ -158,7 +176,9 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
         for (PreparedStatement stmt : Arrays.asList(
                 observationStmt, hasUncapturedStmt, pageStmt, observationPageStmt, getSealStmt, getJobStmt, getJobRequestStmt,
                 upsertInventoryStmt, deleteInventoryStmt, cloneBaseInventoryStmt, upsertJobStmt, insertSealStmt,
-                upsertRepoHeadStmt, upsertGitOidStmt, upsertMetaStmt)) {
+                upsertRepoHeadStmt, upsertGitOidStmt, upsertMetaStmt,
+                upsertAbiStmt, deleteAbiModuleStmt, deleteAbiRevisionStmt,
+                selectAbiModuleStmt, selectAbiFqnStmt, selectAbiAllStmt, countAbiRevisionStmt)) {
             if (stmt != null) {
                 try { stmt.close(); } catch (SQLException ignored) {}
             }
@@ -166,6 +186,8 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
         observationStmt = hasUncapturedStmt = pageStmt = observationPageStmt = getSealStmt = getJobStmt = getJobRequestStmt = null;
         upsertInventoryStmt = deleteInventoryStmt = cloneBaseInventoryStmt = upsertJobStmt = insertSealStmt = null;
         upsertRepoHeadStmt = upsertGitOidStmt = upsertMetaStmt = null;
+        upsertAbiStmt = deleteAbiModuleStmt = deleteAbiRevisionStmt = null;
+        selectAbiModuleStmt = selectAbiFqnStmt = selectAbiAllStmt = countAbiRevisionStmt = null;
     }
 
     private void resetTables() throws SQLException {
@@ -175,6 +197,7 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
             sql.execute("DELETE FROM seals");
             sql.execute("DELETE FROM repo_heads");
             sql.execute("DELETE FROM git_oid_map");
+            sql.execute("DELETE FROM abi_signatures");
             sql.execute("DELETE FROM journal_meta");
         }
     }
@@ -874,6 +897,199 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
             try (var r = p.executeQuery()) { while (r.next()) rows.add(job(r)); }
             return List.copyOf(rows);
         } catch (SQLException failure) { throw new IOException("JOURNAL_UNAVAILABLE", failure); }
+    }
+
+    // =========================================================================
+    // WP3.5 Pass-1 Compact Public-Signature ABI Index (Derived SQLite Index)
+    // =========================================================================
+
+    @Override
+    public synchronized void putModuleSignatures(
+            String revision,
+            String moduleKey,
+            List<UniversalArchitecturePipeline.AbiSignatureEntry> entries) throws IOException {
+        Objects.requireNonNull(revision, "revision");
+        Objects.requireNonNull(moduleKey, "moduleKey");
+        Objects.requireNonNull(entries, "entries");
+        if (readOnly) throw new IOException("READ_ONLY_JOURNAL");
+        try {
+            db.setAutoCommit(false);
+            try {
+                deleteAbiModuleStmt.setString(1, revision);
+                deleteAbiModuleStmt.setString(2, moduleKey);
+                deleteAbiModuleStmt.executeUpdate();
+                if (!entries.isEmpty()) {
+                    upsertAbiStmt.clearBatch();
+                    int batched = 0;
+                    for (var entry : entries) {
+                        upsertAbiStmt.setString(1, revision);
+                        upsertAbiStmt.setString(2, moduleKey);
+                        upsertAbiStmt.setString(3, entry.qualifiedName());
+                        upsertAbiStmt.setString(4, entry.kind());
+                        upsertAbiStmt.setString(5, encodeAbiStringList(entry.supertypes()));
+                        upsertAbiStmt.setString(6, encodeAbiStringList(entry.memberSignatures()));
+                        upsertAbiStmt.setString(7, encodeAbiStringList(entry.annotations()));
+                        upsertAbiStmt.setString(8, entry.abiDigest().value());
+                        upsertAbiStmt.addBatch();
+                        if (++batched == 512) {
+                            upsertAbiStmt.executeBatch();
+                            batched = 0;
+                        }
+                    }
+                    if (batched > 0) upsertAbiStmt.executeBatch();
+                }
+                db.commit();
+            } catch (SQLException failure) {
+                try { db.rollback(); } catch (SQLException ignored) {}
+                throw failure;
+            } finally {
+                db.setAutoCommit(true);
+            }
+        } catch (SQLException failure) {
+            throw new IOException("ABI_INDEX_UNAVAILABLE", failure);
+        }
+    }
+
+    @Override
+    public synchronized List<UniversalArchitecturePipeline.AbiSignatureEntry> moduleSignatures(
+            String revision, String moduleKey) throws IOException {
+        Objects.requireNonNull(revision, "revision");
+        Objects.requireNonNull(moduleKey, "moduleKey");
+        try {
+            if (readOnly) {
+                try (var p = db.prepareStatement(
+                        "SELECT module_key,qualified_name,kind,supertypes,members,annotations,abi_digest FROM abi_signatures WHERE revision=? AND module_key=? ORDER BY qualified_name")) {
+                    p.setString(1, revision);
+                    p.setString(2, moduleKey);
+                    return readAbiRows(p);
+                }
+            }
+            selectAbiModuleStmt.setString(1, revision);
+            selectAbiModuleStmt.setString(2, moduleKey);
+            return readAbiRows(selectAbiModuleStmt);
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return List.of();
+            throw new IOException("ABI_INDEX_UNAVAILABLE", failure);
+        }
+    }
+
+    @Override
+    public synchronized Optional<UniversalArchitecturePipeline.AbiSignatureEntry> lookupByQualifiedName(
+            String revision, String qualifiedName) throws IOException {
+        Objects.requireNonNull(revision, "revision");
+        Objects.requireNonNull(qualifiedName, "qualifiedName");
+        try {
+            if (readOnly) {
+                try (var p = db.prepareStatement(
+                        "SELECT module_key,qualified_name,kind,supertypes,members,annotations,abi_digest FROM abi_signatures WHERE revision=? AND qualified_name=? ORDER BY module_key LIMIT 1")) {
+                    p.setString(1, revision);
+                    p.setString(2, qualifiedName);
+                    var rows = readAbiRows(p);
+                    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.getFirst());
+                }
+            }
+            selectAbiFqnStmt.setString(1, revision);
+            selectAbiFqnStmt.setString(2, qualifiedName);
+            var rows = readAbiRows(selectAbiFqnStmt);
+            return rows.isEmpty() ? Optional.empty() : Optional.of(rows.getFirst());
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return Optional.empty();
+            throw new IOException("ABI_INDEX_UNAVAILABLE", failure);
+        }
+    }
+
+    @Override
+    public synchronized Map<String, UniversalArchitecturePipeline.AbiSignatureEntry> lookupAll(String revision)
+            throws IOException {
+        Objects.requireNonNull(revision, "revision");
+        try {
+            List<UniversalArchitecturePipeline.AbiSignatureEntry> rows;
+            if (readOnly) {
+                try (var p = db.prepareStatement(
+                        "SELECT module_key,qualified_name,kind,supertypes,members,annotations,abi_digest FROM abi_signatures WHERE revision=? ORDER BY qualified_name,module_key")) {
+                    p.setString(1, revision);
+                    rows = readAbiRows(p);
+                }
+            } else {
+                selectAbiAllStmt.setString(1, revision);
+                rows = readAbiRows(selectAbiAllStmt);
+            }
+            var result = new LinkedHashMap<String, UniversalArchitecturePipeline.AbiSignatureEntry>(rows.size() * 2);
+            for (var entry : rows) {
+                result.putIfAbsent(entry.qualifiedName(), entry);
+            }
+            return Collections.unmodifiableMap(result);
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return Map.of();
+            throw new IOException("ABI_INDEX_UNAVAILABLE", failure);
+        }
+    }
+
+    @Override
+    public synchronized long countSignatures(String revision) throws IOException {
+        Objects.requireNonNull(revision, "revision");
+        try {
+            if (readOnly) {
+                try (var p = db.prepareStatement("SELECT COUNT(*) FROM abi_signatures WHERE revision=?")) {
+                    p.setString(1, revision);
+                    try (var r = p.executeQuery()) {
+                        return r.next() ? r.getLong(1) : 0L;
+                    }
+                }
+            }
+            countAbiRevisionStmt.setString(1, revision);
+            try (var r = countAbiRevisionStmt.executeQuery()) {
+                return r.next() ? r.getLong(1) : 0L;
+            }
+        } catch (SQLException failure) {
+            if (readOnly && String.valueOf(failure.getMessage()).contains("no such table")) return 0L;
+            throw new IOException("ABI_INDEX_UNAVAILABLE", failure);
+        }
+    }
+
+    @Override
+    public synchronized void clearRevisionSignatures(String revision) throws IOException {
+        Objects.requireNonNull(revision, "revision");
+        if (readOnly) throw new IOException("READ_ONLY_JOURNAL");
+        try {
+            deleteAbiRevisionStmt.setString(1, revision);
+            deleteAbiRevisionStmt.executeUpdate();
+        } catch (SQLException failure) {
+            throw new IOException("ABI_INDEX_UNAVAILABLE", failure);
+        }
+    }
+
+    private static List<UniversalArchitecturePipeline.AbiSignatureEntry> readAbiRows(PreparedStatement stmt)
+            throws SQLException {
+        var rows = new ArrayList<UniversalArchitecturePipeline.AbiSignatureEntry>();
+        try (var r = stmt.executeQuery()) {
+            while (r.next()) {
+                rows.add(new UniversalArchitecturePipeline.AbiSignatureEntry(
+                        r.getString(1),
+                        r.getString(2),
+                        r.getString(3),
+                        decodeAbiStringList(r.getString(4)),
+                        decodeAbiStringList(r.getString(5)),
+                        decodeAbiStringList(r.getString(6)),
+                        new ContentDigest(r.getString(7))));
+            }
+        }
+        return List.copyOf(rows);
+    }
+
+    private static String encodeAbiStringList(List<String> values) {
+        if (values == null || values.isEmpty()) return "";
+        var sb = new StringBuilder(values.size() * 24);
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) sb.append('\u001F');
+            sb.append(values.get(i).replace("\u001F", " "));
+        }
+        return sb.toString();
+    }
+
+    private static List<String> decodeAbiStringList(String encoded) {
+        if (encoded == null || encoded.isEmpty()) return List.of();
+        return List.of(encoded.split("\u001F", -1));
     }
 
     @Override public synchronized void close() throws IOException {
