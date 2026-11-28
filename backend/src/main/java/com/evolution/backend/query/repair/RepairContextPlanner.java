@@ -27,8 +27,13 @@ import java.util.function.Supplier;
  */
 public final class RepairContextPlanner {
     public static final int MAX_EXPANDED_FILES = 20;
+    public static final int MAX_STATIC_HINT_TOKENS = 30;
+    public static final String SPRING_TRUTH_HINT_PREFIX = "# SpringTruth: ";
+    public static final String SLICE_HINT_PREFIX = "# SliceHint: ";
 
     public enum FileRole { CITED, CONTEXT_EXPANDED, SIBLING_TEST, LINKED_DOC }
+
+    public enum ContextRenderMode { FULL_BODY, SIGNATURE_ONLY }
 
     public record PlannedFile(String path, FileRole role, String reason) {}
 
@@ -45,20 +50,92 @@ public final class RepairContextPlanner {
     public record LeidenContextBadge(String communityId, String communityLabel, String dominantPackage,
                                      int memberCount, boolean misplaced, int bridgeCount) {}
 
+    /**
+     * SALT {@code CalleeCtx(n)} representation: out-of-edit-scope callees with resolved SKG signatures
+     * render ONLY compact {@code Signature(n)} + 1-line Javadoc summary ({@link ContextRenderMode#SIGNATURE_ONLY}),
+     * while directly edited/failing or unresolved {@code UNKNOWN} entities render {@link ContextRenderMode#FULL_BODY}.
+     */
+    public record CalleeContext(
+            String entityId,
+            String symbolName,
+            String path,
+            ContextRenderMode renderMode,
+            String signature,
+            String javadocSummary,
+            String renderedContent,
+            boolean resolvedInSkg,
+            boolean unknownOrUnresolved,
+            int estimatedTokens,
+            int fullBodyTokens) {
+        public CalleeContext {
+            entityId = entityId == null ? "" : entityId;
+            symbolName = symbolName == null ? "" : symbolName;
+            path = path == null ? "" : path;
+            renderMode = renderMode == null ? ContextRenderMode.SIGNATURE_ONLY : renderMode;
+            signature = signature == null ? "" : signature;
+            javadocSummary = javadocSummary == null ? "" : javadocSummary;
+            renderedContent = renderedContent == null ? "" : renderedContent;
+        }
+    }
+
+    /**
+     * Compact {@code <= 30}-token static evidence hint per entity ({@code # SpringTruth:} and {@code # SliceHint:}),
+     * strictly pre-redacted via {@code llm-redact:v2} and sentinel-neutralized.
+     */
+    public record StaticEvidenceHint(
+            String entityId,
+            String symbolName,
+            String springTruthHint,
+            String sliceHint,
+            List<String> lines,
+            int estimatedTokens) {
+        public StaticEvidenceHint {
+            entityId = entityId == null ? "" : entityId;
+            symbolName = symbolName == null ? "" : symbolName;
+            springTruthHint = springTruthHint == null ? "" : springTruthHint;
+            sliceHint = sliceHint == null ? "" : sliceHint;
+            lines = List.copyOf(lines == null ? List.of() : lines);
+        }
+    }
+
+    public record SignatureExtraction(String signature, String javadocSummary, String rendered) {}
+
+    public record CompressedContext(
+            List<CalleeContext> contexts,
+            List<StaticEvidenceHint> hints,
+            int fullBodyBaselineTokens,
+            int compressedTokens,
+            double tokenReductionPercent) {
+        public static final CompressedContext EMPTY = new CompressedContext(List.of(), List.of(), 0, 0, 0.0);
+
+        public CompressedContext {
+            contexts = List.copyOf(contexts == null ? List.of() : contexts);
+            hints = List.copyOf(hints == null ? List.of() : hints);
+        }
+    }
+
     public record Plan(
             List<PlannedFile> files,
             List<String> allowedCreateDirectories,
             List<String> callerSymbols,
             List<LinkedDocSection> linkedDocs,
             List<AdvisoryContextBadge> advisoryBadges,
-            List<LeidenContextBadge> leidenBadges) {
+            List<LeidenContextBadge> leidenBadges,
+            CompressedContext compressedContext) {
         public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols) {
-            this(files, allowedCreateDirectories, callerSymbols, List.of(), List.of(), List.of());
+            this(files, allowedCreateDirectories, callerSymbols, List.of(), List.of(), List.of(), CompressedContext.EMPTY);
         }
 
         public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols,
                     List<LinkedDocSection> linkedDocs) {
-            this(files, allowedCreateDirectories, callerSymbols, linkedDocs, List.of(), List.of());
+            this(files, allowedCreateDirectories, callerSymbols, linkedDocs, List.of(), List.of(), CompressedContext.EMPTY);
+        }
+
+        public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols,
+                    List<LinkedDocSection> linkedDocs, List<AdvisoryContextBadge> advisoryBadges,
+                    List<LeidenContextBadge> leidenBadges) {
+            this(files, allowedCreateDirectories, callerSymbols, linkedDocs, advisoryBadges, leidenBadges,
+                    CompressedContext.EMPTY);
         }
 
         public Plan {
@@ -68,6 +145,7 @@ public final class RepairContextPlanner {
             linkedDocs = List.copyOf(linkedDocs == null ? List.of() : linkedDocs);
             advisoryBadges = List.copyOf(advisoryBadges == null ? List.of() : advisoryBadges);
             leidenBadges = List.copyOf(leidenBadges == null ? List.of() : leidenBadges);
+            compressedContext = compressedContext == null ? CompressedContext.EMPTY : compressedContext;
         }
     }
 
@@ -275,8 +353,755 @@ public final class RepairContextPlanner {
         // 6. Compute Leiden community context badges for planned entities (opportunistic, bounded)
         var leidenBadges = collectLeidenContextBadges(graph, primaryContext, planned.keySet(), nodePath, docPaths, stop);
 
+        // 7. Compute SALT CalleeCtx(n) Signature(n) compression & <=30-token compact static evidence hints
+        var directEditPaths = new LinkedHashSet<String>();
+        for (var pf : planned.values()) {
+            if (pf.role() == FileRole.CITED) directEditPaths.add(pf.path());
+        }
+        var directEntities = new LinkedHashSet<String>();
+        if (targetEntityId != null && !targetEntityId.isBlank()) directEntities.add(targetEntityId);
+        var candidateSourcePaths = new ArrayList<String>();
+        for (var pf : planned.values()) {
+            if (pf.role() != FileRole.LINKED_DOC) candidateSourcePaths.add(pf.path());
+        }
+        var compressed = compressContext(
+                graph, primaryContext, secondaryContext, directEditPaths, directEntities, candidateSourcePaths, stop);
+
         return new Plan(List.copyOf(planned.values()), List.copyOf(dirs), List.copyOf(callerSymbols),
-                linkedDocs, advisoryBadges, leidenBadges);
+                linkedDocs, advisoryBadges, leidenBadges, compressed);
+    }
+
+    // -------------------------------------------------------------------------
+    // SALT Signature(n) Compression & <= 30-Token Compact Static Evidence Hints
+    // -------------------------------------------------------------------------
+
+    /**
+     * Conservative deterministic token estimator (max of 4-char BPE heuristic and word-run count).
+     */
+    public static int estimateTokens(String text) {
+        if (text == null || text.isBlank()) return 0;
+        int charEst = (text.length() + 3) / 4;
+        int wordEst = 0;
+        boolean inTok = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean wordChar = Character.isLetterOrDigit(c) || c == '_' || c == '.';
+            if (wordChar) {
+                if (!inTok) {
+                    wordEst++;
+                    inTok = true;
+                }
+            } else {
+                inTok = false;
+            }
+        }
+        return Math.max(1, Math.max(charEst, wordEst));
+    }
+
+    /**
+     * Bounds a single static evidence hint line strictly to {@code maxTokens} (default 30) while
+     * preserving {@code llm-redact:v2} redaction and sentinel neutralization.
+     */
+    public static String boundHintLineToMaxTokens(String rawLine, int maxTokens) {
+        if (rawLine == null || rawLine.isBlank()) return "";
+        int cap = Math.max(8, maxTokens);
+        String sanitized = LlmTransport.neutralizeInjectionSentinels(
+                LlmTransport.redactSecrets(rawLine.replace('\r', ' ').replace('\n', ' ')).text()).strip();
+        if (estimateTokens(sanitized) <= cap) return sanitized;
+        int maxChars = Math.max(16, cap * 4 - 3);
+        String truncated = sanitized.length() > maxChars ? sanitized.substring(0, maxChars) : sanitized;
+        while (truncated.length() > 8 && estimateTokens(truncated + "...") > cap) {
+            truncated = truncated.substring(0, truncated.length() - 4);
+        }
+        return truncated.stripTrailing() + "...";
+    }
+
+    /**
+     * Formats a {@code <= 30}-token {@code # SpringTruth:} compact static evidence hint, e.g.:
+     * {@code # SpringTruth: bean=X, status=MAY(75.0%), witness={profile=prod,cache=true}, peers=[Y]}.
+     */
+    public static String formatSpringTruthHint(
+            String beanName,
+            String status,
+            Double probabilityPercent,
+            Map<String, String> witness,
+            List<String> peers) {
+        String safeBean = shortSymbol(beanName);
+        String safeStatus = (status == null || status.isBlank()) ? "UNKNOWN" : status.strip().toUpperCase(Locale.ROOT);
+        var sb = new StringBuilder(SPRING_TRUTH_HINT_PREFIX);
+        sb.append("bean=").append(safeBean.isEmpty() ? "unknown" : safeBean);
+        sb.append(", status=").append(safeStatus);
+        if (probabilityPercent != null && Double.isFinite(probabilityPercent)) {
+            sb.append('(').append(String.format(Locale.ROOT, "%.1f", probabilityPercent)).append("%)");
+        }
+        if (witness != null && !witness.isEmpty()) {
+            var sortedWitness = new TreeMap<String, String>();
+            for (var e : witness.entrySet()) {
+                if (e.getKey() != null && !e.getKey().isBlank() && e.getValue() != null) {
+                    String safeVal = LlmTransport.redactSecrets(e.getValue()).text();
+                    sortedWitness.put(e.getKey().strip(), safeVal.strip());
+                }
+            }
+            if (!sortedWitness.isEmpty()) {
+                sb.append(", witness={");
+                int count = 0;
+                for (var e : sortedWitness.entrySet()) {
+                    if (count >= 3) break;
+                    if (count++ > 0) sb.append(',');
+                    sb.append(e.getKey()).append('=').append(e.getValue());
+                }
+                sb.append('}');
+            }
+        }
+        if (peers != null && !peers.isEmpty()) {
+            var sortedPeers = peers.stream()
+                    .filter(Objects::nonNull)
+                    .map(RepairContextPlanner::shortSymbol)
+                    .filter(s -> !s.isBlank())
+                    .distinct()
+                    .sorted()
+                    .limit(2)
+                    .toList();
+            if (!sortedPeers.isEmpty()) {
+                sb.append(", peers=[").append(String.join(",", sortedPeers)).append(']');
+            }
+        }
+        return boundHintLineToMaxTokens(sb.toString(), MAX_STATIC_HINT_TOKENS);
+    }
+
+    /**
+     * Formats a {@code <= 30}-token {@code # SliceHint:} compact static evidence hint, e.g.:
+     * {@code # SliceHint: callers=[OrderCtrl#create], callees=[PaySvc#charge]}.
+     */
+    public static String formatSliceHint(List<String> callers, List<String> callees) {
+        var cIn = callers == null ? List.<String>of() : callers.stream()
+                .filter(Objects::nonNull)
+                .map(RepairContextPlanner::shortSymbol)
+                .filter(s -> !s.isBlank())
+                .distinct()
+                .sorted()
+                .limit(2)
+                .toList();
+        var cOut = callees == null ? List.<String>of() : callees.stream()
+                .filter(Objects::nonNull)
+                .map(RepairContextPlanner::shortSymbol)
+                .filter(s -> !s.isBlank())
+                .distinct()
+                .sorted()
+                .limit(2)
+                .toList();
+        if (cIn.isEmpty() && cOut.isEmpty()) return "";
+        String raw = SLICE_HINT_PREFIX
+                + "callers=[" + String.join(",", cIn) + "], "
+                + "callees=[" + String.join(",", cOut) + "]";
+        return boundHintLineToMaxTokens(raw, MAX_STATIC_HINT_TOKENS);
+    }
+
+    /**
+     * Extracts compact {@code Signature(n)} + 1-line Javadoc/docstring summary for an out-of-edit-scope
+     * callee source file, strictly pre-redacted via {@code llm-redact:v2} before any slicing.
+     */
+    public static SignatureExtraction extractCompactSignatureAndJavadoc(String path, String language, String rawSource) {
+        if (rawSource == null || rawSource.isBlank()) {
+            return new SignatureExtraction("", "", "");
+        }
+        String safePath = path == null ? "source.txt" : path;
+        String redacted = LlmTransport.redactDocumentForPath(safePath, rawSource).text();
+        redacted = LlmTransport.neutralizeInjectionSentinels(redacted);
+        String lang = (language == null || language.isBlank())
+                ? CapturedFileIndex.inferLanguage(safePath, List.of())
+                : language.toLowerCase(Locale.ROOT);
+
+        String javadoc = extractFirstDocSummary(lang, redacted);
+        String sig = switch (lang) {
+            case "python" -> extractPythonSignatures(redacted);
+            case "typescript", "tsx", "javascript" -> extractBraceLanguageSignatures(redacted, true);
+            case "java", "kotlin", "csharp", "go", "rust" -> extractBraceLanguageSignatures(redacted, false);
+            default -> extractGenericHeaderSignatures(redacted);
+        };
+        if (sig.isBlank()) {
+            sig = extractGenericHeaderSignatures(redacted);
+        }
+        var rendered = new StringBuilder();
+        if (!javadoc.isBlank()) {
+            rendered.append("// ").append(javadoc).append('\n');
+        }
+        rendered.append(sig);
+        return new SignatureExtraction(sig, javadoc, rendered.toString().strip());
+    }
+
+    /**
+     * Builds SALT {@code CalleeCtx(n)} compressed contexts and {@code <= 30}-token static evidence hints
+     * across candidate files/entities in {@code graph}. Directly edited/failing entities and unresolved
+     * {@code UNKNOWN} entities retain {@link ContextRenderMode#FULL_BODY}; resolved out-of-edit-scope
+     * callees emit ONLY compact {@code Signature(n)} + 1-line Javadoc summary ({@link ContextRenderMode#SIGNATURE_ONLY}).
+     */
+    public static CompressedContext compressContext(
+            KnowledgeGraph graph,
+            String primaryContext,
+            String secondaryContext,
+            Set<String> directEditPaths,
+            Set<String> directEditOrFailingEntityIds,
+            Collection<String> candidatePaths,
+            Supplier<StopReason> stop) {
+        if (graph == null || candidatePaths == null || candidatePaths.isEmpty()) {
+            return CompressedContext.EMPTY;
+        }
+        var directPathsNorm = new HashSet<String>();
+        if (directEditPaths != null) {
+            for (String p : directEditPaths) {
+                if (p != null && !p.isBlank()) directPathsNorm.add(CapturedFileIndex.normalizePath(p));
+            }
+        }
+        var directEntities = directEditOrFailingEntityIds == null ? Set.<String>of() : directEditOrFailingEntityIds;
+
+        var contexts = new LinkedHashSet<String>();
+        if (primaryContext != null && !primaryContext.isBlank()) contexts.add(primaryContext);
+        if (secondaryContext != null && !secondaryContext.isBlank()) contexts.add(secondaryContext);
+        contexts.add(graph.snapshot().value());
+        for (var c : graph.contexts()) {
+            var ev = graph.evidence(c.evidence()).orElse(null);
+            if (ev != null && "spring.context".equals(ev.family())) {
+                contexts.add(c.identity());
+            }
+        }
+
+        var docPaths = indexDocumentPaths(graph);
+        var nodePath = new HashMap<String, String>();
+        var nodeLabel = new HashMap<String, String>();
+        var entitiesByPath = new TreeMap<String, List<String>>();
+        var unknownEntities = new HashSet<String>();
+        var unknownPaths = new HashSet<String>();
+        var springInfoByEntity = new HashMap<String, SpringTruthInfo>();
+
+        for (String ctx : contexts) {
+            if (stop != null && stop.get() != StopReason.NONE) break;
+            for (var node : graph.nodes(ctx)) {
+                if ("CAPABILITY_GAP".equals(node.kind()) || "PROVIDER_CONFLICT".equals(node.kind())) {
+                    unknownEntities.add(node.identity());
+                    for (var ref : node.evidence()) {
+                        var ev = graph.evidence(ref).orElse(null);
+                        if (ev == null) continue;
+                        var obj = readSmall(ev);
+                        if (obj.get("sourceSpans") instanceof List<?> spans) {
+                            for (Object sp : spans) {
+                                if (sp instanceof Map<?, ?> m && m.get("document") instanceof String docId) {
+                                    String p = docPaths.get(docId);
+                                    if (p != null) unknownPaths.add(p);
+                                }
+                            }
+                        }
+                        if (obj.get("subject") instanceof Map<?, ?> sub && sub.get("identity") instanceof String sid) {
+                            unknownEntities.add(sid);
+                        }
+                    }
+                    continue;
+                }
+                inspectDeclaration(graph, node, docPaths, nodePath, nodeLabel);
+                String p = nodePath.get(node.identity());
+                if (p != null) {
+                    entitiesByPath.computeIfAbsent(p, k -> new ArrayList<>()).add(node.identity());
+                }
+                extractSpringTruthInfo(graph, node, nodeLabel, springInfoByEntity);
+            }
+        }
+
+        // Index incoming callers and outgoing callees per entity for # SliceHint:
+        var callersByEntity = new HashMap<String, TreeSet<String>>();
+        var calleesByEntity = new HashMap<String, TreeSet<String>>();
+        for (String ctx : contexts) {
+            if (stop != null && stop.get() != StopReason.NONE) break;
+            for (var edge : graph.edges(ctx)) {
+                if ("graph.contains".equals(edge.kind()) || "graph.declares".equals(edge.kind())
+                        || "graph.owns-source".equals(edge.kind())
+                        || "graph.inventory-under-component".equals(edge.kind())) {
+                    continue;
+                }
+                if (edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) {
+                    unknownEntities.add(edge.source());
+                    continue;
+                }
+                String srcLabel = shortSymbol(nodeLabel.getOrDefault(edge.source(), edge.source()));
+                for (String dstId : edge.target().identities()) {
+                    if (dstId.equals(edge.source())) continue;
+                    String dstLabel = shortSymbol(nodeLabel.getOrDefault(dstId, dstId));
+                    callersByEntity.computeIfAbsent(dstId, k -> new TreeSet<>()).add(srcLabel);
+                    calleesByEntity.computeIfAbsent(edge.source(), k -> new TreeSet<>()).add(dstLabel);
+                }
+            }
+        }
+
+        var fileIndex = CapturedFileIndex.forGraph(graph);
+        var sortedPaths = candidatePaths.stream()
+                .filter(Objects::nonNull)
+                .map(CapturedFileIndex::normalizePath)
+                .filter(p -> !p.isBlank())
+                .distinct()
+                .sorted()
+                .toList();
+
+        var calleeContexts = new ArrayList<CalleeContext>();
+        var hints = new ArrayList<StaticEvidenceHint>();
+        int fullBaselineTotal = 0;
+        int compressedTotal = 0;
+
+        for (String path : sortedPaths) {
+            if (stop != null && stop.get() != StopReason.NONE) break;
+            var entryOpt = fileIndex.findExact(path);
+            if (entryOpt.isEmpty() || !entryOpt.orElseThrow().readable()) continue;
+            var entry = entryOpt.orElseThrow();
+            var rawOpt = fileIndex.readText(graph, entry);
+            if (rawOpt.isEmpty()) continue;
+            String rawText = rawOpt.orElseThrow();
+            String redactedFull = LlmTransport.redactDocumentForPath(path, rawText).text();
+            int fullTokens = estimateTokens(redactedFull);
+
+            List<String> declaredIds = entitiesByPath.getOrDefault(path, List.of());
+            String primaryEntityId = declaredIds.isEmpty() ? ("file:" + path) : declaredIds.getFirst();
+            String primaryLabel = declaredIds.isEmpty()
+                    ? fileStem(path)
+                    : nodeLabel.getOrDefault(primaryEntityId, fileStem(path));
+            boolean resolvedInSkg = !declaredIds.isEmpty();
+            boolean isDirect = directPathsNorm.contains(path)
+                    || declaredIds.stream().anyMatch(directEntities::contains);
+            boolean isUnknown = unknownPaths.contains(path)
+                    || declaredIds.stream().anyMatch(unknownEntities::contains)
+                    || !resolvedInSkg;
+
+            // CalleeCtx(n): FULL_BODY only for directly edited/failing OR unresolved UNKNOWN entities;
+            // SIGNATURE_ONLY (Signature(n) + 1-line Javadoc) for resolved out-of-edit-scope callees!
+            ContextRenderMode mode = (isDirect || isUnknown)
+                    ? ContextRenderMode.FULL_BODY
+                    : ContextRenderMode.SIGNATURE_ONLY;
+
+            var extraction = extractCompactSignatureAndJavadoc(path, entry.language(), rawText);
+            String rendered = mode == ContextRenderMode.FULL_BODY ? redactedFull : extraction.rendered();
+            int estTokens = estimateTokens(rendered);
+            fullBaselineTotal += fullTokens;
+            compressedTotal += estTokens;
+
+            calleeContexts.add(new CalleeContext(
+                    primaryEntityId,
+                    shortSymbol(primaryLabel),
+                    path,
+                    mode,
+                    extraction.signature(),
+                    extraction.javadocSummary(),
+                    rendered,
+                    resolvedInSkg,
+                    isUnknown,
+                    estTokens,
+                    fullTokens));
+
+            // Build <=30-token static evidence hints for this file's primary entity
+            var callers = new TreeSet<String>();
+            var callees = new TreeSet<String>();
+            SpringTruthInfo springInfo = null;
+            for (String eid : declaredIds) {
+                callers.addAll(callersByEntity.getOrDefault(eid, new TreeSet<>()));
+                callees.addAll(calleesByEntity.getOrDefault(eid, new TreeSet<>()));
+                if (springInfo == null && springInfoByEntity.containsKey(eid)) {
+                    springInfo = springInfoByEntity.get(eid);
+                }
+            }
+            var hintLines = new ArrayList<String>();
+            String springLine = "";
+            if (springInfo != null) {
+                springLine = formatSpringTruthHint(
+                        springInfo.beanName, springInfo.status, springInfo.probabilityPercent,
+                        springInfo.witness, springInfo.peers);
+                if (!springLine.isEmpty()) hintLines.add(springLine);
+            }
+            String sliceLine = formatSliceHint(List.copyOf(callers), List.copyOf(callees));
+            if (!sliceLine.isEmpty()) hintLines.add(sliceLine);
+
+            if (!hintLines.isEmpty()) {
+                int hintTok = hintLines.stream().mapToInt(RepairContextPlanner::estimateTokens).sum();
+                hints.add(new StaticEvidenceHint(
+                        primaryEntityId, shortSymbol(primaryLabel), springLine, sliceLine, hintLines, hintTok));
+                // Include hint tokens in compressed total when replacing verbose config/caller dumps
+                if (mode == ContextRenderMode.SIGNATURE_ONLY) {
+                    compressedTotal += hintTok;
+                }
+            }
+        }
+
+        double reduction = fullBaselineTotal > 0
+                ? Math.max(0.0, (100.0 * (fullBaselineTotal - compressedTotal)) / fullBaselineTotal)
+                : 0.0;
+        return new CompressedContext(calleeContexts, hints, fullBaselineTotal, compressedTotal, reduction);
+    }
+
+    /**
+     * Builds compact {@code <= 30}-token static evidence hints ({@code # SpringTruth:} and {@code # SliceHint:})
+     * for specific SKG entity identities.
+     */
+    public static List<StaticEvidenceHint> buildStaticEvidenceHints(
+            KnowledgeGraph graph,
+            String primaryContext,
+            String secondaryContext,
+            Collection<String> entityIds,
+            Supplier<StopReason> stop) {
+        if (graph == null || entityIds == null || entityIds.isEmpty()) return List.of();
+        var targetIds = new LinkedHashSet<String>();
+        for (String id : entityIds) {
+            if (id != null && !id.isBlank()) targetIds.add(id);
+        }
+        if (targetIds.isEmpty()) return List.of();
+
+        var contexts = new LinkedHashSet<String>();
+        if (primaryContext != null && !primaryContext.isBlank()) contexts.add(primaryContext);
+        if (secondaryContext != null && !secondaryContext.isBlank()) contexts.add(secondaryContext);
+        contexts.add(graph.snapshot().value());
+        for (var c : graph.contexts()) {
+            var ev = graph.evidence(c.evidence()).orElse(null);
+            if (ev != null && "spring.context".equals(ev.family())) contexts.add(c.identity());
+        }
+
+        var docPaths = indexDocumentPaths(graph);
+        var nodePath = new HashMap<String, String>();
+        var nodeLabel = new HashMap<String, String>();
+        var springInfoByEntity = new HashMap<String, SpringTruthInfo>();
+        for (String ctx : contexts) {
+            if (stop != null && stop.get() != StopReason.NONE) break;
+            for (var node : graph.nodes(ctx)) {
+                inspectDeclaration(graph, node, docPaths, nodePath, nodeLabel);
+                extractSpringTruthInfo(graph, node, nodeLabel, springInfoByEntity);
+            }
+        }
+        var callersByEntity = new HashMap<String, TreeSet<String>>();
+        var calleesByEntity = new HashMap<String, TreeSet<String>>();
+        for (String ctx : contexts) {
+            if (stop != null && stop.get() != StopReason.NONE) break;
+            for (var edge : graph.edges(ctx)) {
+                if ("graph.contains".equals(edge.kind()) || "graph.declares".equals(edge.kind())
+                        || "graph.owns-source".equals(edge.kind())) continue;
+                if (edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) continue;
+                String srcLabel = shortSymbol(nodeLabel.getOrDefault(edge.source(), edge.source()));
+                for (String dstId : edge.target().identities()) {
+                    if (dstId.equals(edge.source())) continue;
+                    String dstLabel = shortSymbol(nodeLabel.getOrDefault(dstId, dstId));
+                    if (targetIds.contains(dstId)) {
+                        callersByEntity.computeIfAbsent(dstId, k -> new TreeSet<>()).add(srcLabel);
+                    }
+                    if (targetIds.contains(edge.source())) {
+                        calleesByEntity.computeIfAbsent(edge.source(), k -> new TreeSet<>()).add(dstLabel);
+                    }
+                }
+            }
+        }
+
+        var out = new ArrayList<StaticEvidenceHint>();
+        var sortedIds = new ArrayList<>(targetIds);
+        Collections.sort(sortedIds);
+        for (String id : sortedIds) {
+            String lbl = shortSymbol(nodeLabel.getOrDefault(id, id));
+            var lines = new ArrayList<String>();
+            String springLine = "";
+            var sInfo = springInfoByEntity.get(id);
+            if (sInfo != null) {
+                springLine = formatSpringTruthHint(
+                        sInfo.beanName, sInfo.status, sInfo.probabilityPercent, sInfo.witness, sInfo.peers);
+                if (!springLine.isEmpty()) lines.add(springLine);
+            }
+            String sliceLine = formatSliceHint(
+                    List.copyOf(callersByEntity.getOrDefault(id, new TreeSet<>())),
+                    List.copyOf(calleesByEntity.getOrDefault(id, new TreeSet<>())));
+            if (!sliceLine.isEmpty()) lines.add(sliceLine);
+            if (!lines.isEmpty()) {
+                int toks = lines.stream().mapToInt(RepairContextPlanner::estimateTokens).sum();
+                out.add(new StaticEvidenceHint(id, lbl, springLine, sliceLine, lines, toks));
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private record SpringTruthInfo(
+            String beanName, String status, Double probabilityPercent,
+            Map<String, String> witness, List<String> peers) {}
+
+    private static void extractSpringTruthInfo(
+            KnowledgeGraph graph,
+            KnowledgeGraph.Node node,
+            Map<String, String> nodeLabel,
+            Map<String, SpringTruthInfo> out) {
+        String beanName = null;
+        String status = null;
+        Double prob = null;
+        var witness = new TreeMap<String, String>();
+        var peers = new ArrayList<String>();
+        boolean foundSpring = false;
+
+        for (var ref : node.evidence()) {
+            var ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if (!Set.of("spring.candidate", "spring.condition", "spring.explicit-region", "spring.symbolic-region")
+                    .contains(ev.family())) {
+                continue;
+            }
+            foundSpring = true;
+            var obj = readSmall(ev);
+            if (obj.get("declaredNameKey") instanceof Map<?, ?> dk && dk.get("primary") instanceof String p && !p.isBlank()) {
+                beanName = p;
+            } else if (obj.get("beanName") instanceof String bn && !bn.isBlank()) {
+                beanName = bn;
+            }
+            if (obj.get("classification") instanceof String cls && !cls.isBlank()) {
+                status = cls;
+            } else if (obj.get("region") instanceof Map<?, ?> reg && reg.get("classification") instanceof String cls) {
+                status = cls;
+            }
+            if (obj.get("probabilityPercent") instanceof Number n) {
+                prob = n.doubleValue();
+            } else if (obj.get("satisfactionRatio") instanceof Number n) {
+                double v = n.doubleValue();
+                prob = v <= 1.0 ? v * 100.0 : v;
+            }
+            if (obj.get("witness") instanceof Map<?, ?> wMap) {
+                for (var we : wMap.entrySet()) {
+                    if (we.getKey() != null && we.getValue() != null) {
+                        witness.put(we.getKey().toString(), we.getValue().toString());
+                    }
+                }
+            }
+            if (obj.get("peers") instanceof List<?> pList) {
+                for (Object po : pList) {
+                    if (po != null && !po.toString().isBlank()) peers.add(po.toString());
+                }
+            }
+        }
+        if (foundSpring) {
+            String effectiveBean = beanName != null ? beanName : nodeLabel.getOrDefault(node.identity(), node.identity());
+            String effectiveStatus = status != null ? status : "MAY";
+            out.putIfAbsent(node.identity(), new SpringTruthInfo(effectiveBean, effectiveStatus, prob, witness, peers));
+        }
+    }
+
+    private static String extractFirstDocSummary(String lang, String text) {
+        if ("python".equals(lang)) {
+            int idx = text.indexOf("\"\"\"");
+            String delim = "\"\"\"";
+            int alt = text.indexOf("'''");
+            if (idx < 0 || (alt >= 0 && alt < idx)) {
+                idx = alt;
+                delim = "'''";
+            }
+            if (idx >= 0) {
+                int end = text.indexOf(delim, idx + 3);
+                if (end > idx + 3) {
+                    return cleanOneLineSummary(text.substring(idx + 3, end));
+                }
+            }
+            return "";
+        }
+        int start = text.indexOf("/**");
+        if (start >= 0) {
+            int end = text.indexOf("*/", start + 3);
+            if (end > start + 3) {
+                String raw = text.substring(start + 3, end).replaceAll("(?m)^\\s*\\*+\\s?", " ");
+                return cleanOneLineSummary(raw);
+            }
+        }
+        return "";
+    }
+
+    private static String cleanOneLineSummary(String raw) {
+        if (raw == null) return "";
+        var lines = raw.split("\\R");
+        var sb = new StringBuilder();
+        for (String line : lines) {
+            String t = line.strip();
+            if (t.isEmpty() || t.startsWith("@")) {
+                if (sb.length() > 0) break;
+                continue;
+            }
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(t);
+            int dot = sb.indexOf(". ");
+            if (dot > 0) {
+                sb.setLength(dot + 1);
+                break;
+            }
+            if (sb.length() >= 96) break;
+        }
+        String collapsed = sb.toString().replaceAll("\\s+", " ").strip();
+        return collapsed.length() > 100 ? collapsed.substring(0, 97) + "..." : collapsed;
+    }
+
+    private static String extractPythonSignatures(String text) {
+        var out = new ArrayList<String>();
+        String[] lines = text.split("\\R");
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].strip();
+            if (trimmed.startsWith("class ") || trimmed.startsWith("def ") || trimmed.startsWith("async def ")) {
+                int indent = lines[i].indexOf(trimmed.charAt(0));
+                String prefix = indent > 0 ? "  " : "";
+                out.add(prefix + trimmed);
+                if (out.size() >= 24) break;
+            }
+        }
+        return String.join("\n", out);
+    }
+
+    private static String extractBraceLanguageSignatures(String text, boolean isTsJs) {
+        var sigLines = new ArrayList<String>();
+        int depth = 0;
+        boolean inLineComment = false;
+        boolean inBlockComment = false;
+        boolean inSingle = false;
+        boolean inDouble = false;
+        boolean inBacktick = false;
+        boolean escaped = false;
+        var currentHeader = new StringBuilder();
+        int len = text.length();
+
+        for (int i = 0; i < len; i++) {
+            char c = text.charAt(i);
+            char next = (i + 1 < len) ? text.charAt(i + 1) : 0;
+
+            if (inLineComment) {
+                if (c == '\n') inLineComment = false;
+                continue;
+            }
+            if (inBlockComment) {
+                if (c == '*' && next == '/') {
+                    inBlockComment = false;
+                    i++;
+                }
+                continue;
+            }
+            if (inSingle || inDouble || inBacktick) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if ((inSingle && c == '\'') || (inDouble && c == '"') || (inBacktick && c == '`')) {
+                    inSingle = false;
+                    inDouble = false;
+                    inBacktick = false;
+                }
+                continue;
+            }
+            if (c == '/' && next == '/') {
+                inLineComment = true;
+                i++;
+                continue;
+            }
+            if (c == '/' && next == '*') {
+                inBlockComment = true;
+                i++;
+                continue;
+            }
+            if (c == '\'') { inSingle = true; continue; }
+            if (c == '"') { inDouble = true; continue; }
+            if (isTsJs && c == '`') { inBacktick = true; continue; }
+
+            if (c == '{') {
+                String hdr = normalizeHeader(currentHeader.toString());
+                currentHeader.setLength(0);
+                if (depth == 0) {
+                    if (!hdr.isEmpty()) {
+                        if (isTopLevelTypeHeader(hdr, isTsJs)) {
+                            sigLines.add(hdr + " {");
+                        } else if (isCallableSignature(hdr, isTsJs)) {
+                            sigLines.add(hdr + ";");
+                        }
+                    }
+                } else if (depth == 1) {
+                    if (!hdr.isEmpty() && isCallableSignature(hdr, isTsJs)) {
+                        sigLines.add("  " + hdr + ";");
+                    }
+                }
+                depth++;
+                continue;
+            }
+            if (c == '}') {
+                currentHeader.setLength(0);
+                if (depth > 0) depth--;
+                continue;
+            }
+            if (c == ';') {
+                String stmt = normalizeHeader(currentHeader.toString());
+                currentHeader.setLength(0);
+                if (depth == 0 && (stmt.startsWith("package ") || stmt.startsWith("export type ") || stmt.startsWith("type "))) {
+                    sigLines.add(stmt + ";");
+                } else if (depth == 1 && isAbstractOrInterfaceMethod(stmt, isTsJs)) {
+                    sigLines.add("  " + stmt + ";");
+                }
+                continue;
+            }
+            if (depth <= 1 && currentHeader.length() < 400) {
+                currentHeader.append(c);
+            }
+        }
+        if (sigLines.size() > 28) {
+            return String.join("\n", sigLines.subList(0, 28));
+        }
+        return String.join("\n", sigLines);
+    }
+
+    private static String normalizeHeader(String raw) {
+        if (raw == null) return "";
+        // Strip leading Java/TS annotations unless short single marker, collapse whitespace
+        String collapsed = raw.replaceAll("\\s+", " ").strip();
+        return collapsed.length() > 160 ? collapsed.substring(0, 157) + "..." : collapsed;
+    }
+
+    private static boolean isTopLevelTypeHeader(String hdr, boolean isTsJs) {
+        return hdr.contains("class ") || hdr.contains("interface ") || hdr.contains("enum ")
+                || hdr.contains("record ") || (isTsJs && (hdr.contains("namespace ") || hdr.startsWith("export type ")));
+    }
+
+    private static boolean isCallableSignature(String hdr, boolean isTsJs) {
+        if (!hdr.contains("(") || !hdr.contains(")")) return false;
+        if (hdr.startsWith("if ") || hdr.startsWith("if(") || hdr.startsWith("for ") || hdr.startsWith("for(")
+                || hdr.startsWith("while ") || hdr.startsWith("while(") || hdr.startsWith("switch ")
+                || hdr.startsWith("catch ") || hdr.startsWith("synchronized ")) {
+            return false;
+        }
+        return !isTsJs || hdr.contains("function ") || hdr.contains("export ") || hdr.contains("=>")
+                || hdr.contains(":") || hdr.indexOf('(') > 0;
+    }
+
+    private static boolean isAbstractOrInterfaceMethod(String stmt, boolean isTsJs) {
+        return stmt.contains("(") && stmt.contains(")") && !stmt.contains("=");
+    }
+
+    private static String extractGenericHeaderSignatures(String text) {
+        var out = new ArrayList<String>();
+        for (String line : text.split("\\R")) {
+            String t = line.strip();
+            if (t.isEmpty() || t.startsWith("//") || t.startsWith("#")) continue;
+            out.add(t.length() > 120 ? t.substring(0, 117) + "..." : t);
+            if (out.size() >= 6) break;
+        }
+        return String.join("\n", out);
+    }
+
+    private static String shortSymbol(String raw) {
+        if (raw == null) return "";
+        String s = raw.strip();
+        if (s.startsWith("java:v1:")) s = com.evolution.backend.query.RepoMapBuilder.readableCanonicalName(s);
+        int colon = s.lastIndexOf("::");
+        if (colon >= 0 && colon < s.length() - 2) s = s.substring(colon + 2);
+        int dot = s.lastIndexOf('.');
+        if (dot >= 0 && dot < s.length() - 1) {
+            int prevDot = s.lastIndexOf('.', dot - 1);
+            // Preserve Class.method when method-level; otherwise simple class name
+            String tail = s.substring(dot + 1);
+            if (prevDot >= 0 && !tail.isEmpty() && Character.isLowerCase(tail.charAt(0))) {
+                s = s.substring(prevDot + 1).replace('.', '#');
+            } else {
+                s = tail;
+            }
+        }
+        return s;
+    }
+
+    private static String fileStem(String path) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
     }
 
     private static Set<String> collectStems(Collection<String> paths) {

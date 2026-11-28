@@ -6,6 +6,7 @@ import com.evolution.analysis.graph.GraphEvidence;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
 import com.evolution.analysis.query.ArchitectureQuery.StopReason;
+import com.evolution.backend.query.repair.RepairContextPlanner;
 import com.evolution.backend.query.search.CapturedSearchIndex;
 
 import java.math.BigDecimal;
@@ -75,11 +76,134 @@ public final class RepoMapBuilder {
         }
     }
 
+    /**
+     * SALT compression options for {@link #buildCompressed}: emits compact {@code Signature(n)} + 1-line
+     * Javadoc summaries for resolved out-of-edit-scope callees and {@code <= 30}-token {@code # SpringTruth:}
+     * / {@code # SliceHint:} static evidence hints per entity.
+     */
+    public record SaltCompressionOptions(
+            Set<String> directEditPaths,
+            Set<String> unresolvedEntityIds,
+            boolean signatureOnlyForCallees,
+            boolean includeStaticHints) {
+        public SaltCompressionOptions {
+            directEditPaths = directEditPaths == null ? Set.of() : Set.copyOf(directEditPaths);
+            unresolvedEntityIds = unresolvedEntityIds == null ? Set.of() : Set.copyOf(unresolvedEntityIds);
+        }
+
+        public static SaltCompressionOptions defaults() {
+            return new SaltCompressionOptions(Set.of(), Set.of(), true, true);
+        }
+    }
+
     private RepoMapBuilder() {}
 
     public static Result build(KnowledgeGraph graph, Optional<String> preferredContext, List<String> rawSeeds,
                         int requestedMaxFiles, int requestedMaxTokens, Supplier<StopReason> stop) {
         return build(graph, preferredContext, rawSeeds, requestedMaxFiles, requestedMaxTokens, stop, null);
+    }
+
+    /**
+     * Builds a SALT-compressed repository map combining deterministic PPR / Hybrid RRF file ranking with
+     * {@code CalleeCtx(n)} {@code Signature(n)} + 1-line Javadoc rendering and {@code <= 30}-token
+     * {@code # SpringTruth:} / {@code # SliceHint:} static evidence hints (pre-redacted via {@code llm-redact:v2}).
+     */
+    public static Result buildCompressed(
+            KnowledgeGraph graph,
+            Optional<String> preferredContext,
+            List<String> rawSeeds,
+            int requestedMaxFiles,
+            int requestedMaxTokens,
+            SaltCompressionOptions options,
+            Supplier<StopReason> stop,
+            CapturedSearchIndex searchIndex) {
+        Result base = build(graph, preferredContext, rawSeeds, requestedMaxFiles, requestedMaxTokens, stop, searchIndex);
+        if (base.files().isEmpty()) return base;
+        SaltCompressionOptions opts = options == null ? SaltCompressionOptions.defaults() : options;
+        var candidatePaths = base.files().stream().map(FileRank::path).toList();
+        var compressed = RepairContextPlanner.compressContext(
+                graph,
+                base.context(),
+                graph.snapshot().value(),
+                opts.directEditPaths(),
+                opts.unresolvedEntityIds(),
+                candidatePaths,
+                stop);
+
+        var ctxByPath = new HashMap<String, RepairContextPlanner.CalleeContext>();
+        for (var c : compressed.contexts()) ctxByPath.put(c.path(), c);
+        var hintsByEntity = new HashMap<String, RepairContextPlanner.StaticEvidenceHint>();
+        for (var h : compressed.hints()) hintsByEntity.put(h.entityId(), h);
+
+        int maxTokens = Math.max(500, Math.min(24_000, requestedMaxTokens));
+        var rendered = new StringBuilder();
+        var keptFiles = new ArrayList<FileRank>(base.files().size());
+        int usedTokens = 0;
+        boolean truncated = base.truncated();
+
+        for (var fr : base.files()) {
+            var block = new StringBuilder();
+            block.append(fr.rank()).append(". ").append(fr.path())
+                    .append(" [score=").append(fr.score())
+                    .append(", in=").append(fr.inDegree())
+                    .append(", out=").append(fr.outDegree())
+                    .append(", ").append(fr.language());
+            if (fr.gapCount() > 0) block.append(", gaps=").append(fr.gapCount());
+            block.append("]\n");
+
+            var cc = ctxByPath.get(fr.path());
+            if (cc != null) {
+                if (opts.includeStaticHints()) {
+                    var hint = hintsByEntity.get(cc.entityId());
+                    if (hint != null) {
+                        for (String line : hint.lines()) {
+                            block.append("   ").append(line).append('\n');
+                        }
+                    }
+                }
+                if (opts.signatureOnlyForCallees() && cc.renderMode() == RepairContextPlanner.ContextRenderMode.SIGNATURE_ONLY) {
+                    if (!cc.javadocSummary().isBlank()) {
+                        block.append("   // ").append(cc.javadocSummary()).append('\n');
+                    }
+                    if (!cc.signature().isBlank()) {
+                        for (String sigLine : cc.signature().split("\\R")) {
+                            block.append("   ").append(sigLine).append('\n');
+                        }
+                    }
+                } else {
+                    for (var d : fr.declarations()) {
+                        block.append("   - ").append(d.kind()).append(' ').append(d.name()).append('\n');
+                    }
+                }
+            } else {
+                for (var d : fr.declarations()) {
+                    block.append("   - ").append(d.kind()).append(' ').append(d.name()).append('\n');
+                }
+            }
+            int blockTokens = RepairContextPlanner.estimateTokens(block.toString());
+            if (!keptFiles.isEmpty() && usedTokens + blockTokens > maxTokens) {
+                truncated = true;
+                break;
+            }
+            usedTokens += blockTokens;
+            rendered.append(block);
+            keptFiles.add(fr);
+        }
+        return new Result(
+                base.graph(), base.context(), base.algorithm() + "+salt-sig-v1",
+                base.damping(), base.iterations(), base.totalNodes(), base.totalEdges(),
+                base.totalFiles(), base.seedCount(), usedTokens, truncated, keptFiles, rendered.toString());
+    }
+
+    public static String renderCompactHintsBlock(List<RepairContextPlanner.StaticEvidenceHint> hints) {
+        if (hints == null || hints.isEmpty()) return "";
+        var sb = new StringBuilder();
+        for (var h : hints) {
+            for (String line : h.lines()) {
+                sb.append(line).append('\n');
+            }
+        }
+        return sb.toString().stripTrailing();
     }
 
     public static Result build(KnowledgeGraph graph, Optional<String> preferredContext, List<String> rawSeeds,

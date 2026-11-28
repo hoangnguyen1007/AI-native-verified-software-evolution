@@ -16,6 +16,7 @@ import com.evolution.analysis.query.trace.MethodSliceResult;
 import com.evolution.analysis.query.trace.VerticalTraceEngine;
 import com.evolution.backend.query.advisory.AdvisoryOverlayService;
 import com.evolution.backend.query.llm.LlmTransport;
+import com.evolution.backend.query.repair.RepairContextPlanner;
 import com.evolution.backend.query.search.CapturedSearchIndex;
 import com.evolution.backend.query.trace.FullStackVerticalTraceService;
 
@@ -57,6 +58,30 @@ final class ArchitectureAgent {
     }
 
     private ArchitectureAgent() {}
+
+    /**
+     * Schedules unresolved multi-file architectural debt, SCC cycle, or polyglot gap targets
+     * deterministically by verified-SKG {@code (Impact_SKG_verified DESC, Richness_concrete_evidence DESC, entityId ASC)}.
+     */
+    static CapturedRepair.ImpactRichnessSchedule scheduleArchitectureTargets(
+            KnowledgeGraph graph,
+            String context,
+            Collection<String> unresolvedEntityIds) {
+        return CapturedRepair.scheduleRepairTargets(graph, context, unresolvedEntityIds);
+    }
+
+    /**
+     * Computes compact {@code <= 30}-token static evidence hints ({@code # SpringTruth:} and {@code # SliceHint:})
+     * for the specified entity IDs in {@code graph}.
+     */
+    static List<RepairContextPlanner.StaticEvidenceHint> compactHintsForEntities(
+            KnowledgeGraph graph,
+            String primaryContext,
+            String secondaryContext,
+            Collection<String> entityIds,
+            Supplier<StopReason> stop) {
+        return RepairContextPlanner.buildStaticEvidenceHints(graph, primaryContext, secondaryContext, entityIds, stop);
+    }
 
     static ArchitectureChat.Result run(
             ArchitectureChatModel model,
@@ -514,6 +539,13 @@ final class ArchitectureAgent {
                         map.put("communities", report.communities().stream().limit(15).toList());
                         map.put("misplacedTypes", report.misplacedTypes().stream().limit(15).toList());
                         map.put("communityBridges", report.communityBridges().stream().limit(15).toList());
+                        var debtTargets = new LinkedHashSet<String>();
+                        for (var h : report.hotspots()) debtTargets.add(h.identity());
+                        for (var t : report.tangles()) debtTargets.addAll(t.members());
+                        if (!debtTargets.isEmpty()) {
+                            var schedule = scheduleArchitectureTargets(queries.graph(), pin.context(), debtTargets);
+                            map.put("scheduledTargets", schedule.rankedTargets().stream().limit(10).toList());
+                        }
                         rawData = Collections.unmodifiableMap(map);
                     }
                     var safeData = neutralizeMapForLlm(rawData);
@@ -530,8 +562,13 @@ final class ArchitectureAgent {
                     var seeds = stringListArg(args, "seeds");
                     int maxFiles = Math.max(1, Math.min(50, intArg(args, "maxFiles", 20)));
                     int maxTokens = Math.max(500, Math.min(12_000, intArg(args, "maxTokens", 4000)));
-                    var mapResult = RepoMapBuilder.build(queries.graph(), Optional.of(pin.context()), seeds, maxFiles, maxTokens,
-                            stop, searchIndex.orElse(null));
+                    boolean compactHints = Boolean.TRUE.equals(args.get("compactHints"));
+                    var mapResult = compactHints
+                            ? RepoMapBuilder.buildCompressed(queries.graph(), Optional.of(pin.context()), seeds,
+                                    maxFiles, maxTokens, RepoMapBuilder.SaltCompressionOptions.defaults(), stop,
+                                    searchIndex.orElse(null))
+                            : RepoMapBuilder.build(queries.graph(), Optional.of(pin.context()), seeds,
+                                    maxFiles, maxTokens, stop, searchIndex.orElse(null));
                     var summaryData = new LinkedHashMap<String, Object>();
                     summaryData.put("algorithm", mapResult.algorithm());
                     summaryData.put("context", mapResult.context());
@@ -662,11 +699,17 @@ final class ArchitectureAgent {
                                     "category", g.mechanismCategory(),
                                     "provider", g.detectingProvider()))
                             .toList();
+                    var gapTargetIds = gapsPage.items().stream().map(EntityView::identity).limit(30).toList();
+                    var scheduledGaps = gapTargetIds.isEmpty()
+                            ? List.<CapturedRepair.ScheduledTarget>of()
+                            : scheduleArchitectureTargets(queries.graph(), pin.context(), gapTargetIds)
+                                    .rankedTargets().stream().limit(15).toList();
                     String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.STRUCTURE,
                             "Capability gaps" + (filter.isEmpty() ? "" : " (" + filter + ")"), pin.context(),
-                            Map.of("items", graphGaps, "queryGaps", queryGaps));
+                            Map.of("items", graphGaps, "queryGaps", queryGaps, "scheduledTargets", scheduledGaps));
                     createdIds.add(eid);
-                    yield Map.of("evidenceId", eid, "count", graphGaps.size() + queryGaps.size(), "items", graphGaps, "queryGaps", queryGaps);
+                    yield Map.of("evidenceId", eid, "count", graphGaps.size() + queryGaps.size(),
+                            "items", graphGaps, "queryGaps", queryGaps, "scheduledTargets", scheduledGaps);
                 }
                 case "list_captured_files" -> {
                     String query = stringArg(args, "query", "");
@@ -1025,6 +1068,10 @@ final class ArchitectureAgent {
         detail.put("incoming", inList);
         detail.put("outgoing", outList);
         detail.put("gaps", relatedGaps);
+        var staticHints = compactHintsForEntities(graph, effectiveCtx, pin.snapshot(), List.of(id), () -> StopReason.NONE);
+        if (!staticHints.isEmpty()) {
+            detail.put("staticEvidenceHints", staticHints.getFirst().lines());
+        }
 
         String eid = ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.DEPENDENCIES,
                 "Detailed symbol view: " + symLabel, id, detail);

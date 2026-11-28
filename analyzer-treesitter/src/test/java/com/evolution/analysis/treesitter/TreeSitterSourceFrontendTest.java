@@ -699,4 +699,25 @@ class TreeSitterSourceFrontendTest {
         assertTrue(routes.contains("\"/cart\""), () -> "Missing Go var_spec concat route /cart in " + routes);
         assertTrue(routes.contains("\"/v1/items\""), () -> "Missing Go short_var concat route /v1/items in " + routes);
     }
+
+    @Test
+    void propagateTypeHintsWiresSaltBidirectionalPropagationPassivelyWithPublicApiGuard() throws Exception {
+        var frontend = new TreeSitterSourceFrontend();
+        var files = Map.of(
+                "src/api.py", "def handle_request(payload):\n    return payload\ndef _run():\n    handle_request(42)\n".getBytes(StandardCharsets.UTF_8),
+                "src/util.ts", "export function formatValue(v) { if (typeof v === 'string') return v; return 'x'; }\n".getBytes(StandardCharsets.UTF_8));
+        var result = frontend.propagateTypeHints(files, () -> false);
+        var pyHint = result.findHint("src/api.py", "handle_request",
+                BidirectionalTypeHintPropagator.SlotKind.PARAMETER, "payload").orElseThrow();
+        assertTrue(pyHint.exportedPublicApi());
+        assertTrue(pyHint.overNarrowingGuarded());
+        assertEquals(com.evolution.analysis.contract.semantic.TrustTier.SOURCE_SYNTAX, pyHint.trustTier());
+        assertEquals(BidirectionalTypeHintPropagator.PROVENANCE_SOURCE_SYNTAX_HINT, pyHint.provenance());
+        assertTrue(pyHint.inferredTypes().contains("int"));
+
+        var tsHint = result.findHint("src/util.ts", "formatValue",
+                BidirectionalTypeHintPropagator.SlotKind.PARAMETER, "v").orElseThrow();
+        assertTrue(tsHint.strongBackwardTypes().contains("string"));
+        assertTrue(tsHint.overNarrowingGuarded());
+    }
 }

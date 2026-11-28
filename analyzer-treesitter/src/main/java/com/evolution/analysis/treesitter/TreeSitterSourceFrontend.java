@@ -285,6 +285,39 @@ public final class TreeSitterSourceFrontend {
         return new PolyglotScopeGraphResolver(this).resolve(filesByPath, factSink, context, cancelled);
     }
 
+    /**
+     * Runs passive SALT bidirectional type hint propagation {@code (F, B_s, B_w)} over Python and
+     * TypeScript/TSX sources ({@code --build=off}, I1), preserving anti-over-narrowing safety on
+     * exported/public APIs (I4) and emitting {@code BIDIRECTIONAL_TYPE_UNKNOWN} capability gaps (I3).
+     */
+    public BidirectionalTypeHintPropagator.Result propagateTypeHints(
+            Map<String, byte[]> filesByPath, BooleanSupplier cancelled) throws IOException {
+        return new BidirectionalTypeHintPropagator(this).propagate(filesByPath, cancelled);
+    }
+
+    /**
+     * Runs passive SALT bidirectional type hint propagation {@code (F, B_s, B_w)} with an explicit
+     * {@link EvidenceContext}.
+     */
+    public BidirectionalTypeHintPropagator.Result propagateTypeHints(
+            Map<String, byte[]> filesByPath,
+            EvidenceContext context,
+            BooleanSupplier cancelled) throws IOException {
+        return new BidirectionalTypeHintPropagator(this).propagate(filesByPath, context, cancelled);
+    }
+
+    /**
+     * Runs passive SALT bidirectional type hint propagation {@code (F, B_s, B_w)} reusing a
+     * precomputed {@link PolyglotScopeGraphResolver.ScopeGraph} (WP1.5).
+     */
+    public BidirectionalTypeHintPropagator.Result propagateTypeHints(
+            Map<String, byte[]> filesByPath,
+            PolyglotScopeGraphResolver.ScopeGraph scopeGraph,
+            EvidenceContext context,
+            BooleanSupplier cancelled) throws IOException {
+        return new BidirectionalTypeHintPropagator(this).propagate(filesByPath, scopeGraph, context, cancelled);
+    }
+
     public Summary parse(String language, byte[] bytes, Sink sink, BooleanSupplier cancelled) throws IOException {
         return parse(language, bytes, sink, cancelled, false);
     }

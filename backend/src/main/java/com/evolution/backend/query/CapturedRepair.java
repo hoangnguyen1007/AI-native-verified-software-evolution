@@ -14,6 +14,8 @@ import com.evolution.backend.query.repair.RepairEditV2;
 import com.evolution.backend.query.repair.RepairSyntaxGate;
 import com.evolution.backend.query.search.CapturedSearchIndex;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Supplier;
@@ -198,7 +200,8 @@ public final class CapturedRepair {
                           List<String> allowedCreateDirs, Map<String, RepairSource.File> contextFiles,
                           List<RepairContextPlanner.LinkedDocSection> linkedDocs,
                           List<RepairContextPlanner.AdvisoryContextBadge> advisoryBadges,
-                          List<RepairContextPlanner.LeidenContextBadge> leidenBadges) {
+                          List<RepairContextPlanner.LeidenContextBadge> leidenBadges,
+                          RepairContextPlanner.CompressedContext compressedContext) {
     }
 
     private record Request(Optional<Offer> offer, byte[] bytes, String userPrompt, List<ContentDigest> offered,
@@ -433,7 +436,7 @@ public final class CapturedRepair {
         }
         var inputs = new Inputs(List.copyOf(files), List.copyOf(sources), List.of(),
                 plan.allowedCreateDirectories(), Collections.unmodifiableMap(contextMap), plan.linkedDocs(),
-                plan.advisoryBadges(), plan.leidenBadges());
+                plan.advisoryBadges(), plan.leidenBadges(), plan.compressedContext());
         var checks = new ArrayList<Syntax>();
         if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT, inputs, checks, 1);
         if (files.isEmpty()) return withheld(Reason.SOURCE_UNAVAILABLE, inputs, checks, 1);
@@ -530,7 +533,7 @@ public final class CapturedRepair {
         }
         var inputs = new Inputs(List.copyOf(files), List.copyOf(sources), List.of(),
                 plan.allowedCreateDirectories(), Collections.unmodifiableMap(contextMap), plan.linkedDocs(),
-                plan.advisoryBadges(), plan.leidenBadges());
+                plan.advisoryBadges(), plan.leidenBadges(), plan.compressedContext());
         if (stop.get() != StopReason.NONE) return withheld(Reason.QUERY_LIMIT, inputs, List.of(), 1);
         if (files.isEmpty()) return withheld(Reason.SOURCE_UNAVAILABLE, inputs, List.of(), 1);
         if (model == null) return withheld(Reason.MODEL_NOT_CONFIGURED, inputs, List.of(), 1);
@@ -1008,6 +1011,7 @@ public final class CapturedRepair {
         var linkedDocs = new ArrayList<RepairContextPlanner.LinkedDocSection>();
         var advisoryBadges = new ArrayList<RepairContextPlanner.AdvisoryContextBadge>();
         var leidenBadges = new ArrayList<RepairContextPlanner.LeidenContextBadge>();
+        RepairContextPlanner.CompressedContext compressedContext = RepairContextPlanner.CompressedContext.EMPTY;
         if (diagnosis.proof().isPresent() && stop.get() == StopReason.NONE) {
             String ctx = diagnosis.pin().analysis().map(a -> a.value()).orElse(diagnosis.pin().context());
             var plan = RepairContextPlanner.plan(graph, ctx, diagnosis.pin().context(),
@@ -1016,6 +1020,7 @@ public final class CapturedRepair {
             linkedDocs.addAll(plan.linkedDocs());
             advisoryBadges.addAll(plan.advisoryBadges());
             leidenBadges.addAll(plan.leidenBadges());
+            compressedContext = plan.compressedContext();
             for (var pf : plan.files()) {
                 if ((pf.role() == RepairContextPlanner.FileRole.CONTEXT_EXPANDED
                         || pf.role() == RepairContextPlanner.FileRole.SIBLING_TEST)
@@ -1027,7 +1032,7 @@ public final class CapturedRepair {
         }
         return new Inputs(List.copyOf(files), List.copyOf(sources), List.copyOf(gaps),
                 List.copyOf(allowedDirs), Collections.unmodifiableMap(contextMap), List.copyOf(linkedDocs),
-                List.copyOf(advisoryBadges), List.copyOf(leidenBadges));
+                List.copyOf(advisoryBadges), List.copyOf(leidenBadges), compressedContext);
     }
 
     private Request offer(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Inputs inputs,
@@ -1106,6 +1111,26 @@ public final class CapturedRepair {
             if (!inputs.allowedCreateDirs().isEmpty()) metadata.put("allowedCreateDirectories", inputs.allowedCreateDirs());
             if (!redactedReadOnlyContext.isEmpty()) metadata.put("readOnlyRedactedContext", redactedReadOnlyContext);
             if (!inputs.leidenBadges().isEmpty()) metadata.put("leidenCommunities", inputs.leidenBadges());
+            if (inputs.compressedContext() != null && !inputs.compressedContext().hints().isEmpty()) {
+                var compactHints = inputs.compressedContext().hints().stream()
+                        .flatMap(h -> h.lines().stream())
+                        .limit(12)
+                        .toList();
+                if (!compactHints.isEmpty()) metadata.put("staticEvidenceHints", compactHints);
+            }
+            if (inputs.compressedContext() != null && !inputs.compressedContext().contexts().isEmpty()) {
+                var sigOnly = inputs.compressedContext().contexts().stream()
+                        .filter(c -> c.renderMode() == RepairContextPlanner.ContextRenderMode.SIGNATURE_ONLY)
+                        .limit(8)
+                        .map(c -> Map.<String, Object>of(
+                                "path", com.evolution.backend.query.llm.LlmTransport.neutralizeInjectionSentinels(c.path()),
+                                "symbol", c.symbolName(),
+                                "renderMode", c.renderMode().name(),
+                                "javadoc", c.javadocSummary(),
+                                "signature", c.signature()))
+                        .toList();
+                if (!sigOnly.isEmpty()) metadata.put("calleeSignatures", sigOnly);
+            }
             if (!inputs.linkedDocs().isEmpty()) {
                 var docsPayload = new ArrayList<Map<String, Object>>();
                 for (var doc : inputs.linkedDocs()) {
@@ -1476,5 +1501,454 @@ public final class CapturedRepair {
                                     List<RepairAgentTools.ToolTraceEntry> toolTrace) {
         return new Outcome(VERSION, "WITHHELD", Optional.of(reason), inputs.sources(), inputs.gaps(),
                 List.copyOf(checks), Optional.empty(), attempts, inputs.advisoryBadges(), inputs.leidenBadges(), toolTrace);
+    }
+
+    // -------------------------------------------------------------------------
+    // SALT Verified-SKG Impact x Richness Target Scheduler (WP2.4, Sec. III-B)
+    // -------------------------------------------------------------------------
+
+    private static final Set<String> NON_DEPENDENCY_EDGE_KINDS = Set.of(
+            "graph.contains", "graph.declares", "graph.owns-source",
+            "graph.inventory-under-component", "spring.declares-injection");
+
+    public record VerifiedSkgEdge(String sourceId, String targetId, String kind, boolean verifiedSkg) {
+        public VerifiedSkgEdge {
+            sourceId = Objects.requireNonNull(sourceId, "sourceId");
+            targetId = Objects.requireNonNull(targetId, "targetId");
+            kind = kind == null ? "graph.depends-on" : kind;
+        }
+    }
+
+    public record TargetEvidenceProfile(
+            String entityId,
+            String label,
+            String path,
+            int concreteEvidenceCount,
+            int unknownEvidenceCount,
+            Set<String> blockingDependencies) {
+        public TargetEvidenceProfile(String entityId, String label, String path,
+                                     int concreteEvidenceCount, int unknownEvidenceCount) {
+            this(entityId, label, path, concreteEvidenceCount, unknownEvidenceCount, Set.of());
+        }
+
+        public TargetEvidenceProfile {
+            entityId = Objects.requireNonNull(entityId, "entityId");
+            label = (label == null || label.isBlank()) ? entityId : label;
+            path = path == null ? "" : path;
+            concreteEvidenceCount = Math.max(0, concreteEvidenceCount);
+            unknownEvidenceCount = Math.max(0, unknownEvidenceCount);
+            blockingDependencies = blockingDependencies == null
+                    ? Set.of()
+                    : Collections.unmodifiableSet(new TreeSet<>(blockingDependencies));
+        }
+
+        public int totalEvidenceCount() {
+            return concreteEvidenceCount + unknownEvidenceCount;
+        }
+
+        public BigDecimal richness() {
+            int total = totalEvidenceCount();
+            if (total <= 0) return BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP);
+            double ratio = Math.max(0.0, Math.min(1.0, (double) concreteEvidenceCount / (double) total));
+            return BigDecimal.valueOf(ratio).setScale(6, RoundingMode.HALF_UP);
+        }
+    }
+
+    /**
+     * Ranked multi-file repair / architectural debt / polyglot gap target sorted strictly by
+     * {@code (Impact_SKG_verified DESC, Richness_concrete_evidence DESC, entityId ASC)} (I2).
+     */
+    public record ScheduledTarget(
+            int rank,
+            String entityId,
+            String label,
+            String path,
+            int impact,
+            BigDecimal richness,
+            List<String> verifiedUnresolvedNeighbors,
+            int concreteEvidenceCount,
+            int totalEvidenceCount) implements Comparable<ScheduledTarget> {
+        public ScheduledTarget {
+            entityId = Objects.requireNonNull(entityId, "entityId");
+            label = label == null ? entityId : label;
+            path = path == null ? "" : path;
+            richness = richness == null ? BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP)
+                    : richness.setScale(6, RoundingMode.HALF_UP);
+            verifiedUnresolvedNeighbors = List.copyOf(verifiedUnresolvedNeighbors == null ? List.of() : verifiedUnresolvedNeighbors);
+        }
+
+        @Override
+        public int compareTo(ScheduledTarget other) {
+            int cmp = Integer.compare(other.impact, this.impact);
+            if (cmp != 0) return cmp;
+            cmp = other.richness.compareTo(this.richness);
+            if (cmp != 0) return cmp;
+            return this.entityId.compareTo(other.entityId);
+        }
+    }
+
+    public record PropagationStep(
+            int stepNumber,
+            String patchedEntityId,
+            List<String> autoResolvedDependents,
+            int remainingCount,
+            List<ScheduledTarget> updatedQueue) {
+        public PropagationStep {
+            patchedEntityId = Objects.requireNonNull(patchedEntityId, "patchedEntityId");
+            autoResolvedDependents = List.copyOf(autoResolvedDependents == null ? List.of() : autoResolvedDependents);
+            updatedQueue = List.copyOf(updatedQueue == null ? List.of() : updatedQueue);
+        }
+    }
+
+    /**
+     * Returns {@code true} strictly when {@code edge} is a verified SKG dependency/call/binding edge,
+     * rejecting containment edges, unresolved/ambiguous targets, and speculative/advisory edges (I4).
+     */
+    public static boolean isVerifiedSkgEdge(KnowledgeGraph graph, KnowledgeGraph.Edge edge) {
+        if (edge == null || edge.kind() == null) return false;
+        String kind = edge.kind();
+        if (NON_DEPENDENCY_EDGE_KINDS.contains(kind)) return false;
+        if (edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) return false;
+        String lowKind = kind.toLowerCase(Locale.ROOT);
+        if (lowKind.endsWith(".candidate") || lowKind.startsWith("advisory.")
+                || lowKind.startsWith("speculative.") || lowKind.contains("speculative")
+                || lowKind.contains("advisory")) {
+            return false;
+        }
+        if (graph != null) {
+            for (var ref : edge.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null) continue;
+                String fam = ev.family().toLowerCase(Locale.ROOT);
+                if (fam.contains("advisory") || fam.contains("speculative") || fam.equals("evidence.gap")) {
+                    return false;
+                }
+                if (ev.canonicalJson().length() <= 65_536) {
+                    try {
+                        var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                        if ("ADVISORY_UNVERIFIED".equals(obj.get("trustTier"))
+                                || "ADVISORY_UNVERIFIED".equals(obj.get("trust"))
+                                || Boolean.TRUE.equals(obj.get("speculative"))
+                                || "UNKNOWN".equals(obj.get("classification"))) {
+                            return false;
+                        }
+                    } catch (RuntimeException ignored) {}
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Builds a deterministic verified-SKG {@code Impact x Richness} schedule directly from a
+     * {@link KnowledgeGraph} and an unresolved target entity set.
+     */
+    public static ImpactRichnessSchedule scheduleRepairTargets(
+            KnowledgeGraph graph,
+            String context,
+            Collection<String> unresolvedEntityIds) {
+        if (graph == null || unresolvedEntityIds == null || unresolvedEntityIds.isEmpty()) {
+            return new ImpactRichnessSchedule(List.of(), List.of());
+        }
+        var unresolved = new TreeSet<String>();
+        for (String id : unresolvedEntityIds) {
+            if (id != null && !id.isBlank()) unresolved.add(id);
+        }
+        if (unresolved.isEmpty()) return new ImpactRichnessSchedule(List.of(), List.of());
+
+        var contexts = new LinkedHashSet<String>();
+        if (context != null && !context.isBlank()) contexts.add(context);
+        contexts.add(graph.snapshot().value());
+
+        var docPaths = new HashMap<String, String>();
+        for (var node : graph.nodes(graph.snapshot().value())) {
+            if (!"SOURCE_DOCUMENT".equals(node.kind())) continue;
+            for (var ref : node.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null || ev.canonicalJson().length() > 131_072) continue;
+                try {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), new GraphJson.Limits(131_072, 32, 8_192)));
+                    if ("source.document".equals(ev.family()) && obj.get("path") instanceof String p) {
+                        docPaths.putIfAbsent(node.identity(), CapturedFileIndex.normalizePath(p));
+                        break;
+                    }
+                    if ("source.bytes".equals(ev.family()) && obj.get("document") instanceof Map<?, ?> d
+                            && d.get("path") instanceof String p) {
+                        docPaths.putIfAbsent(node.identity(), CapturedFileIndex.normalizePath(p));
+                        break;
+                    }
+                } catch (RuntimeException ignored) {}
+            }
+        }
+
+        var concreteCount = new HashMap<String, Integer>();
+        var unknownCount = new HashMap<String, Integer>();
+        var labels = new HashMap<String, String>();
+        var paths = new HashMap<String, String>();
+        var blockingDeps = new HashMap<String, TreeSet<String>>();
+        var verifiedEdges = new ArrayList<VerifiedSkgEdge>();
+
+        for (String ctx : contexts) {
+            for (var node : graph.nodes(ctx)) {
+                if (!unresolved.contains(node.identity())) continue;
+                String lbl = nodeLabel(graph, node);
+                if (lbl != null) labels.putIfAbsent(node.identity(), lbl);
+                int conc = 0;
+                int unk = 0;
+                for (var ref : node.evidence()) {
+                    var ev = graph.evidence(ref).orElse(null);
+                    if (ev == null) continue;
+                    String fam = ev.family();
+                    if ("evidence.gap".equals(fam) || "CAPABILITY_GAP".equals(node.kind())) {
+                        unk++;
+                        continue;
+                    }
+                    if (ev.canonicalJson().length() <= 131_072) {
+                        try {
+                            var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), new GraphJson.Limits(131_072, 32, 8_192)));
+                            if ("java.declaration".equals(fam) && obj.get("entity") instanceof Map<?, ?> ent
+                                    && ent.get("declaration") instanceof Map<?, ?> sp
+                                    && sp.get("document") instanceof String docId) {
+                                String p = docPaths.get(docId);
+                                if (p != null) paths.putIfAbsent(node.identity(), p);
+                            } else if ("polyglot.source-syntax".equals(fam)) {
+                                Map<?, ?> fields = obj.get("fields") instanceof Map<?, ?> f ? f : obj;
+                                if (fields.get("path") instanceof String p) {
+                                    paths.putIfAbsent(node.identity(), CapturedFileIndex.normalizePath(p));
+                                }
+                            }
+                            if ("UNKNOWN".equals(obj.get("classification"))
+                                    || "ADVISORY_UNVERIFIED".equals(obj.get("trustTier"))) {
+                                unk++;
+                            } else {
+                                conc++;
+                            }
+                        } catch (RuntimeException ignored) {
+                            conc++;
+                        }
+                    } else {
+                        conc++;
+                    }
+                }
+                concreteCount.merge(node.identity(), conc, Integer::sum);
+                unknownCount.merge(node.identity(), unk, Integer::sum);
+            }
+
+            for (var edge : graph.edges(ctx)) {
+                boolean verified = isVerifiedSkgEdge(graph, edge);
+                if (edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) {
+                    if (unresolved.contains(edge.source())) {
+                        unknownCount.merge(edge.source(), 1, Integer::sum);
+                    }
+                    continue;
+                }
+                for (String dstId : edge.target().identities()) {
+                    if (dstId.equals(edge.source())) continue;
+                    verifiedEdges.add(new VerifiedSkgEdge(edge.source(), dstId, edge.kind(), verified));
+                    if (verified) {
+                        if (unresolved.contains(edge.source())) {
+                            concreteCount.merge(edge.source(), 1, Integer::sum);
+                            if (unresolved.contains(dstId)) {
+                                blockingDeps.computeIfAbsent(edge.source(), k -> new TreeSet<>()).add(dstId);
+                            }
+                        }
+                        if (unresolved.contains(dstId)) {
+                            concreteCount.merge(dstId, 1, Integer::sum);
+                        }
+                    } else if (unresolved.contains(edge.source())) {
+                        unknownCount.merge(edge.source(), 1, Integer::sum);
+                    }
+                }
+            }
+        }
+
+        var profiles = new ArrayList<TargetEvidenceProfile>(unresolved.size());
+        for (String id : unresolved) {
+            profiles.add(new TargetEvidenceProfile(
+                    id,
+                    labels.getOrDefault(id, id),
+                    paths.getOrDefault(id, ""),
+                    concreteCount.getOrDefault(id, 0),
+                    unknownCount.getOrDefault(id, 0),
+                    blockingDeps.getOrDefault(id, new TreeSet<>())));
+        }
+        return new ImpactRichnessSchedule(profiles, verifiedEdges);
+    }
+
+    /**
+     * Creates a deterministic verified-SKG {@code Impact x Richness} incremental schedule from explicit
+     * target evidence profiles and typed SKG edges (ignoring any edge with {@code verifiedSkg == false}).
+     */
+    public static ImpactRichnessSchedule createImpactRichnessSchedule(
+            Collection<TargetEvidenceProfile> targets,
+            Collection<VerifiedSkgEdge> edges) {
+        return new ImpactRichnessSchedule(targets, edges);
+    }
+
+    /**
+     * Stateful, deterministic SALT {@code Impact x Richness} target scheduler supporting incremental
+     * re-propagation after each verified patch lands ({@code NOFEEDBACK} target shrinkage, I2).
+     */
+    public static final class ImpactRichnessSchedule {
+        private static final class MutableTarget {
+            final String entityId;
+            final String label;
+            final String path;
+            int concreteEvidence;
+            int unknownEvidence;
+            final boolean hadBlockingDepsInitially;
+            final TreeSet<String> remainingBlockers;
+
+            MutableTarget(TargetEvidenceProfile p) {
+                this.entityId = p.entityId();
+                this.label = p.label();
+                this.path = p.path();
+                this.concreteEvidence = p.concreteEvidenceCount();
+                this.unknownEvidence = p.unknownEvidenceCount();
+                this.remainingBlockers = new TreeSet<>(p.blockingDependencies());
+                this.hadBlockingDepsInitially = !this.remainingBlockers.isEmpty();
+            }
+
+            BigDecimal richness() {
+                int total = concreteEvidence + unknownEvidence;
+                if (total <= 0) return BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP);
+                double ratio = Math.max(0.0, Math.min(1.0, (double) concreteEvidence / (double) total));
+                return BigDecimal.valueOf(ratio).setScale(6, RoundingMode.HALF_UP);
+            }
+        }
+
+        private final int initialTargetCount;
+        private final TreeMap<String, MutableTarget> unresolvedById = new TreeMap<>();
+        private final TreeMap<String, TreeSet<String>> verifiedAdjacency = new TreeMap<>();
+        private final List<PropagationStep> history = new ArrayList<>();
+        private int directPatchesApplied = 0;
+        private int autoResolvedCount = 0;
+
+        ImpactRichnessSchedule(Collection<TargetEvidenceProfile> targets, Collection<VerifiedSkgEdge> edges) {
+            if (targets != null) {
+                for (var t : targets) {
+                    if (t != null) unresolvedById.putIfAbsent(t.entityId(), new MutableTarget(t));
+                }
+            }
+            this.initialTargetCount = unresolvedById.size();
+            if (edges != null) {
+                for (var e : edges) {
+                    if (e == null || !e.verifiedSkg()) continue; // Strictly exclude speculative/advisory edges!
+                    if (e.sourceId().equals(e.targetId())) continue;
+                    verifiedAdjacency.computeIfAbsent(e.sourceId(), k -> new TreeSet<>()).add(e.targetId());
+                    verifiedAdjacency.computeIfAbsent(e.targetId(), k -> new TreeSet<>()).add(e.sourceId());
+                }
+            }
+        }
+
+        public List<ScheduledTarget> rankedTargets() {
+            var list = new ArrayList<ScheduledTarget>(unresolvedById.size());
+            for (var entry : unresolvedById.entrySet()) {
+                String id = entry.getKey();
+                MutableTarget mt = entry.getValue();
+                var neighbors = new ArrayList<String>();
+                for (String nb : verifiedAdjacency.getOrDefault(id, new TreeSet<>())) {
+                    if (unresolvedById.containsKey(nb) && !nb.equals(id)) {
+                        neighbors.add(nb);
+                    }
+                }
+                Collections.sort(neighbors);
+                list.add(new ScheduledTarget(
+                        0, id, mt.label, mt.path, neighbors.size(), mt.richness(),
+                        neighbors, mt.concreteEvidence, mt.concreteEvidence + mt.unknownEvidence));
+            }
+            Collections.sort(list);
+            var ranked = new ArrayList<ScheduledTarget>(list.size());
+            for (int i = 0; i < list.size(); i++) {
+                ScheduledTarget st = list.get(i);
+                ranked.add(new ScheduledTarget(
+                        i + 1, st.entityId(), st.label(), st.path(), st.impact(), st.richness(),
+                        st.verifiedUnresolvedNeighbors(), st.concreteEvidenceCount(), st.totalEvidenceCount()));
+            }
+            return List.copyOf(ranked);
+        }
+
+        public Optional<ScheduledTarget> nextTarget() {
+            var q = rankedTargets();
+            return q.isEmpty() ? Optional.empty() : Optional.of(q.getFirst());
+        }
+
+        public PropagationStep applyVerifiedPatch(String patchedEntityId) {
+            return applyVerifiedPatch(patchedEntityId, 1);
+        }
+
+        /**
+         * Records a verified patch landing on {@code patchedEntityId}, deterministically re-propagates
+         * concrete evidence along verified SKG edges, automatically shrinks dependent targets whose
+         * blocking obligations are now fully satisfied ({@code NOFEEDBACK} savings), and recomputes
+         * {@code (Impact, Richness, entityId)} rankings.
+         */
+        public PropagationStep applyVerifiedPatch(String patchedEntityId, int gainedConcreteEvidencePerNeighbor) {
+            Objects.requireNonNull(patchedEntityId, "patchedEntityId");
+            int gain = Math.max(0, gainedConcreteEvidencePerNeighbor);
+            if (unresolvedById.remove(patchedEntityId) != null) {
+                directPatchesApplied++;
+            }
+
+            // Deterministic BFS cascade for dependent targets whose blockers become fully resolved
+            var autoResolved = new ArrayList<String>();
+            var newlyResolvedQueue = new ArrayDeque<String>();
+            newlyResolvedQueue.add(patchedEntityId);
+
+            while (!newlyResolvedQueue.isEmpty()) {
+                String resolvedId = newlyResolvedQueue.poll();
+                var verifiedNeighbors = new ArrayList<>(verifiedAdjacency.getOrDefault(resolvedId, new TreeSet<>()));
+                Collections.sort(verifiedNeighbors);
+                for (String nbId : verifiedNeighbors) {
+                    MutableTarget nb = unresolvedById.get(nbId);
+                    if (nb == null) continue;
+                    nb.concreteEvidence += gain;
+                    if (nb.unknownEvidence > 0) {
+                        nb.unknownEvidence = Math.max(0, nb.unknownEvidence - 1);
+                    }
+                    boolean unblocked = nb.remainingBlockers.remove(resolvedId);
+                    if (unblocked && nb.hadBlockingDepsInitially
+                            && nb.remainingBlockers.isEmpty() && nb.unknownEvidence == 0) {
+                        unresolvedById.remove(nbId);
+                        autoResolved.add(nbId);
+                        autoResolvedCount++;
+                        newlyResolvedQueue.add(nbId);
+                    }
+                }
+            }
+
+            Collections.sort(autoResolved);
+            var updatedQueue = rankedTargets();
+            var step = new PropagationStep(
+                    history.size() + 1, patchedEntityId, autoResolved, unresolvedById.size(), updatedQueue);
+            history.add(step);
+            return step;
+        }
+
+        public int initialTargetCount() { return initialTargetCount; }
+        public int remainingCount() { return unresolvedById.size(); }
+        public int directPatchesApplied() { return directPatchesApplied; }
+        public int autoResolvedCount() { return autoResolvedCount; }
+
+        public double noFeedbackSavingsPercent() {
+            return initialTargetCount <= 0 ? 0.0 : (100.0 * autoResolvedCount) / initialTargetCount;
+        }
+
+        public List<PropagationStep> history() { return List.copyOf(history); }
+
+        public ContentDigest canonicalDigest() {
+            var rows = rankedTargets().stream().map(t -> Map.<String, Object>of(
+                    "rank", t.rank(),
+                    "entityId", t.entityId(),
+                    "impact", t.impact(),
+                    "richness", t.richness().toPlainString(),
+                    "verifiedUnresolvedNeighbors", t.verifiedUnresolvedNeighbors())).toList();
+            return CanonicalJson.sha256(Map.of(
+                    "initialTargetCount", initialTargetCount,
+                    "remainingCount", unresolvedById.size(),
+                    "directPatchesApplied", directPatchesApplied,
+                    "autoResolvedCount", autoResolvedCount,
+                    "queue", rows));
+        }
     }
 }
