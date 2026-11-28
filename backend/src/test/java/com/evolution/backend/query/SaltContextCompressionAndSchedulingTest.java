@@ -309,6 +309,59 @@ class SaltContextCompressionAndSchedulingTest {
         assertEquals(22, ArchitectureAgent.toolSchemas(true).size());
     }
 
+    @Test
+    void extractsMayExposureRatioFromSymbolicTruthRegionsAndFormatsSpringTruthHint() {
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/salt-ddnnf-bridge.git");
+        var snap = SnapshotIdentity.from(repo, ContentDigest.sha256Utf8("salt-ddnnf-snap"));
+        var analysis = AnalysisIdentity.fromCanonicalManifestInputs("salt-ddnnf-mod");
+        String ctx = analysis.value();
+        var mod = ModuleIdentity.from(repo, ".");
+
+        var snapEv = GraphEvidence.capture("repository.snapshot", Map.of("snapshot", snap));
+        var manEv = GraphEvidence.capture("analysis.manifest", Map.of("modules", List.of(Map.of("identity", mod, "path", "."))));
+
+        // 1. Canonical nested WP2.3 SymbolicTruthRegions.FactRegion payload with mayExposureRatio = 0.375 (37.5%)
+        var nestedRegionEv = GraphEvidence.capture("spring.symbolic-region", Map.of(
+                "encoding", "symbolic-dag-m4u.2-v1",
+                "region", Map.of(
+                        "fact", Map.of("beanName", "cacheManager"),
+                        "classification", "MAY",
+                        "mayExposureRatio", new BigDecimal("0.375")),
+                "witness", Map.of("profile", "prod")));
+        // 2. Direct top-level mayExposureRatio = 0.625 (62.5%)
+        var directRegionEv = GraphEvidence.capture("spring.symbolic-region", Map.of(
+                "beanName", "metricsExporter",
+                "classification", "MAY",
+                "mayExposureRatio", new BigDecimal("0.625")));
+
+        String nestedId = KnowledgeGraph.derivedIdentity("spring-bean", List.of("cacheManager"));
+        String directId = KnowledgeGraph.derivedIdentity("spring-bean", List.of("metricsExporter"));
+        var graph = new KnowledgeGraph(
+                snap,
+                List.of(
+                        new KnowledgeGraph.Context(snap.value(), snap, Optional.empty(), snapEv.identity()),
+                        new KnowledgeGraph.Context(ctx, snap, Optional.of(analysis), manEv.identity())),
+                List.of(
+                        new KnowledgeGraph.Node(nestedId, ctx, "SPRING_BEAN", List.of(nestedRegionEv.identity())),
+                        new KnowledgeGraph.Node(directId, ctx, "SPRING_BEAN", List.of(directRegionEv.identity()))),
+                List.of(),
+                List.of(snapEv, manEv, nestedRegionEv, directRegionEv));
+
+        var hints = RepairContextPlanner.buildStaticEvidenceHints(
+                graph, ctx, snap.value(), List.of(nestedId, directId), () -> StopReason.NONE);
+        assertEquals(2, hints.size());
+
+        var nestedHint = hints.stream().filter(h -> h.entityId().equals(nestedId)).findFirst().orElseThrow();
+        assertTrue(nestedHint.springTruthHint().contains("bean=cacheManager"), nestedHint.springTruthHint());
+        assertTrue(nestedHint.springTruthHint().contains("status=MAY(37.5%)"), nestedHint.springTruthHint());
+        assertTrue(RepairContextPlanner.estimateTokens(nestedHint.springTruthHint()) <= RepairContextPlanner.MAX_STATIC_HINT_TOKENS);
+
+        var directHint = hints.stream().filter(h -> h.entityId().equals(directId)).findFirst().orElseThrow();
+        assertTrue(directHint.springTruthHint().contains("bean=metricsExporter"), directHint.springTruthHint());
+        assertTrue(directHint.springTruthHint().contains("status=MAY(62.5%)"), directHint.springTruthHint());
+        assertTrue(RepairContextPlanner.estimateTokens(directHint.springTruthHint()) <= RepairContextPlanner.MAX_STATIC_HINT_TOKENS);
+    }
+
     // -------------------------------------------------------------------------
     // Fixture Builder
     // -------------------------------------------------------------------------

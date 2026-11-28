@@ -2,6 +2,7 @@ package com.evolution.analysis.policy;
 
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
 import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.identity.SnapshotIdentity;
 import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.evidence.*;
@@ -13,6 +14,9 @@ import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.PathVerdict;
 import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.ResilienceReport;
 import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.ResilienceVerdict;
 import com.evolution.analysis.query.*;
+import com.evolution.analysis.spring.universal.SpringAopMetadataExtractor;
+import com.evolution.analysis.spring.universal.SpringProxyTrapDetector;
+import com.evolution.analysis.spring.universal.SpringSourceEvidence;
 import java.io.StringReader;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -793,5 +797,153 @@ public final class PolicyEvaluator {
         var compiled = new PolicyCompiler().compileBuiltInMetadataPack(
                 MetadataConsistencyRulePack.PACK_ID, evCtx);
         return evaluateMetadataPolicy(compiled, service, context, classpathLookup, options);
+    }
+
+    // ─── WP2.1 -> WP2.2: Native Spring AOP / CGLIB Proxy Trap Evaluation ───
+
+    public static final VersionedIdentifier SPRING_PROXY_TRAP_POLICY_VERSION =
+            new VersionedIdentifier("policy.spring-proxy-trap", "wp2.1-v1");
+
+    public static final Set<String> SPRING_PROXY_TRAP_RULE_IDS = Collections.unmodifiableSet(new TreeSet<>(Set.of(
+            SpringProxyTrapDetector.RULE_SELF_INVOCATION_BYPASS,
+            SpringProxyTrapDetector.RULE_CGLIB_PRIVATE_FINAL_TRAP
+    )));
+
+    /**
+     * Evaluates both static Spring proxy trap rules ({@code spring-aop-self-invocation-bypass} and
+     * {@code spring-cglib-private-final-trap}) natively via {@link SpringProxyTrapDetector#detect}.
+     */
+    public MetadataConsistencyRulePack.EvaluationReport evaluateSpringProxyTraps(
+            SpringSourceEvidence source,
+            SpringAopMetadataExtractor.Result aopResult
+    ) {
+        return evaluateSpringProxyTraps(source, aopResult, Set.of(), SPRING_PROXY_TRAP_RULE_IDS);
+    }
+
+    /**
+     * Evaluates selected static Spring proxy trap rules natively over {@link SpringSourceEvidence},
+     * matched AOP metadata, and optional XML-declared bean class FQNs.
+     */
+    public MetadataConsistencyRulePack.EvaluationReport evaluateSpringProxyTraps(
+            SpringSourceEvidence source,
+            SpringAopMetadataExtractor.Result aopResult,
+            Set<String> extraBeanClassFqns,
+            Set<String> enabledRuleIds
+    ) {
+        Objects.requireNonNull(source, "source");
+        Set<String> activeRules = normalizeProxyTrapRules(enabledRuleIds);
+        var detected = SpringProxyTrapDetector.detect(
+                source, aopResult, extraBeanClassFqns == null ? Set.of() : extraBeanClassFqns);
+        int checkedClasses = (int) source.declarations().values().stream()
+                .filter(d -> d.entity().kind() == com.evolution.analysis.contract.semantic.EntityKind.TYPE)
+                .count();
+        int checkedCalls = (int) source.frontend().occurrences().stream()
+                .filter(o -> "java.calls".equals(o.relationship().kind().value()))
+                .count();
+        return buildProxyTrapReport(
+                source.manifest().snapshot().identity(), detected, activeRules, checkedClasses, checkedCalls);
+    }
+
+    /**
+     * Pure structural entry point evaluating {@code spring-aop-self-invocation-bypass} and
+     * {@code spring-cglib-private-final-trap} natively via {@link SpringProxyTrapDetector#detect}.
+     */
+    public MetadataConsistencyRulePack.EvaluationReport evaluateSpringProxyTraps(
+            SnapshotIdentity snapshot,
+            List<SpringProxyTrapDetector.BeanClassInfo> beanClasses,
+            List<SpringProxyTrapDetector.IntraClassCall> intraClassCalls,
+            SpringAopMetadataExtractor.Result aopResult,
+            Set<String> enabledRuleIds
+    ) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        Set<String> activeRules = normalizeProxyTrapRules(enabledRuleIds);
+        var safeClasses = beanClasses == null ? List.<SpringProxyTrapDetector.BeanClassInfo>of() : beanClasses;
+        var safeCalls = intraClassCalls == null ? List.<SpringProxyTrapDetector.IntraClassCall>of() : intraClassCalls;
+        var detected = SpringProxyTrapDetector.detect(snapshot, safeClasses, safeCalls, aopResult);
+        return buildProxyTrapReport(snapshot, detected, activeRules, safeClasses.size(), safeCalls.size());
+    }
+
+    private static Set<String> normalizeProxyTrapRules(Set<String> enabledRuleIds) {
+        if (enabledRuleIds == null || enabledRuleIds.isEmpty()) {
+            return SPRING_PROXY_TRAP_RULE_IDS;
+        }
+        var active = new TreeSet<String>();
+        for (String id : enabledRuleIds) {
+            if (id == null || !SPRING_PROXY_TRAP_RULE_IDS.contains(id.strip())) {
+                throw new IllegalArgumentException("Unknown Spring proxy trap rule id: " + id);
+            }
+            active.add(id.strip());
+        }
+        return Collections.unmodifiableSet(active);
+    }
+
+    private static MetadataConsistencyRulePack.EvaluationReport buildProxyTrapReport(
+            SnapshotIdentity snapshot,
+            SpringProxyTrapDetector.Result detected,
+            Set<String> activeRules,
+            int checkedClasses,
+            int checkedCalls
+    ) {
+        var policyIdentity = ContentDigest.sha256Utf8(
+                CanonicalJson.write(List.of(SPRING_PROXY_TRAP_POLICY_VERSION, List.copyOf(activeRules))));
+        var findingsByRule = new TreeMap<String, List<MetadataConsistencyRulePack.Finding>>();
+        for (String ruleId : activeRules) {
+            findingsByRule.put(ruleId, new ArrayList<>());
+        }
+        for (SpringProxyTrapDetector.ProxyTrapFinding f : detected.findings()) {
+            if (!activeRules.contains(f.ruleId())) continue;
+            String subCode = SpringProxyTrapDetector.RULE_SELF_INVOCATION_BYPASS.equals(f.ruleId())
+                    ? "AOP_SELF_INVOCATION_BYPASS"
+                    : "CGLIB_PRIVATE_FINAL_TRAP";
+            ArchitecturePolicy.Severity sev = "WARNING".equalsIgnoreCase(f.severity())
+                    ? ArchitecturePolicy.Severity.WARNING
+                    : ("INFO".equalsIgnoreCase(f.severity())
+                            ? ArchitecturePolicy.Severity.INFO
+                            : ArchitecturePolicy.Severity.ERROR);
+            String subject = f.callerMethod().isEmpty()
+                    ? f.beanClassFqn() + "#" + f.targetMethod()
+                    : f.beanClassFqn() + "#" + f.callerMethod() + "->" + f.targetMethod();
+            findingsByRule.get(f.ruleId()).add(new MetadataConsistencyRulePack.Finding(
+                    f.ruleId(),
+                    subCode,
+                    sev,
+                    Classification.MUST,
+                    f.trustTier(),
+                    subject,
+                    f.message(),
+                    f.sourceFile().isEmpty() ? Optional.empty() : Optional.of(f.sourceFile()),
+                    f.line(),
+                    f.triggers().isEmpty() ? Optional.empty() : Optional.of(String.join(",", f.triggers())),
+                    Map.of(),
+                    Optional.empty()));
+        }
+        var gaps = detected.gaps();
+        var outcomes = new ArrayList<MetadataConsistencyRulePack.RuleOutcome>(activeRules.size());
+        var allFindings = new ArrayList<MetadataConsistencyRulePack.Finding>();
+        for (String ruleId : activeRules) {
+            var rf = findingsByRule.getOrDefault(ruleId, List.of());
+            allFindings.addAll(rf);
+            int checked = SpringProxyTrapDetector.RULE_SELF_INVOCATION_BYPASS.equals(ruleId)
+                    ? checkedCalls
+                    : checkedClasses;
+            Classification ruleCls = !rf.isEmpty()
+                    ? Classification.MUST
+                    : (gaps.isEmpty() ? Classification.NEVER : Classification.UNKNOWN);
+            AssessmentStatus ruleStatus = gaps.isEmpty() ? AssessmentStatus.COMPLETE : AssessmentStatus.PARTIAL;
+            outcomes.add(new MetadataConsistencyRulePack.RuleOutcome(ruleId, ruleStatus, ruleCls, checked, rf, gaps));
+        }
+        Classification overall = !allFindings.isEmpty()
+                ? Classification.MUST
+                : (gaps.isEmpty() ? Classification.NEVER : Classification.UNKNOWN);
+        AssessmentStatus status = gaps.isEmpty() ? AssessmentStatus.COMPLETE : AssessmentStatus.PARTIAL;
+        return new MetadataConsistencyRulePack.EvaluationReport(
+                policyIdentity,
+                detected.identity(),
+                snapshot.value(),
+                status,
+                overall,
+                outcomes,
+                allFindings,
+                gaps);
     }
 }

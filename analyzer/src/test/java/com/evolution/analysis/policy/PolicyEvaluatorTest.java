@@ -308,4 +308,58 @@ class PolicyEvaluatorTest {
         assertEquals(Classification.UNKNOWN, invalid.classification());
         assertFalse(invalid.gaps().isEmpty());
     }
+
+    @Test void evaluatesSpringProxyTrapsNativelyForSelfInvocationAndCglibPrivateFinalTraps() {
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/proxy-trap-policy");
+        var snap = SnapshotIdentity.from(repo, ContentDigest.sha256Utf8("proxy-trap-snap"));
+        var bean = new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.BeanClassInfo(
+                "com.acme.OrderService",
+                Set.of("public"),
+                Set.of("org.springframework.stereotype.Service"),
+                true,
+                List.of(
+                        new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.MethodInfo(
+                                "com.acme.OrderService", "placeOrder", Set.of("public"), Set.of(), "OrderService.java", 10),
+                        new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.MethodInfo(
+                                "com.acme.OrderService", "saveTx", Set.of("public"),
+                                Set.of("org.springframework.transaction.annotation.Transactional"), "OrderService.java", 20),
+                        new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.MethodInfo(
+                                "com.acme.OrderService", "hiddenTx", Set.of("private"),
+                                Set.of("org.springframework.transaction.annotation.Transactional"), "OrderService.java", 30),
+                        new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.MethodInfo(
+                                "com.acme.OrderService", "fetchOrders", Set.of("public", "final"),
+                                Set.of("org.springframework.web.bind.annotation.GetMapping"), "OrderService.java", 40)),
+                "OrderService.java",
+                5);
+        var calls = List.of(
+                new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.IntraClassCall(
+                        "com.acme.OrderService", "placeOrder", "saveTx", true, "OrderService.java", 14),
+                new com.evolution.analysis.spring.universal.SpringProxyTrapDetector.IntraClassCall(
+                        "com.acme.OrderService", "placeOrder", "saveTx", false, "OrderService.java", 15));
+
+        var evaluator = new PolicyEvaluator();
+        var report = evaluator.evaluateSpringProxyTraps(
+                snap, List.of(bean), calls,
+                com.evolution.analysis.spring.universal.SpringAopMetadataExtractor.Result.empty(),
+                PolicyEvaluator.SPRING_PROXY_TRAP_RULE_IDS);
+
+        assertEquals(AssessmentStatus.COMPLETE, report.status());
+        assertEquals(Classification.MUST, report.classification());
+        assertEquals(2, report.rules().size());
+        assertEquals(1, report.findingsForRule(com.evolution.analysis.spring.universal.SpringProxyTrapDetector.RULE_SELF_INVOCATION_BYPASS).size());
+        assertEquals(2, report.findingsForRule(com.evolution.analysis.spring.universal.SpringProxyTrapDetector.RULE_CGLIB_PRIVATE_FINAL_TRAP).size());
+        assertEquals(report.identity(), evaluator.evaluateSpringProxyTraps(
+                snap, List.of(bean), calls,
+                com.evolution.analysis.spring.universal.SpringAopMetadataExtractor.Result.empty(),
+                PolicyEvaluator.SPRING_PROXY_TRAP_RULE_IDS).identity());
+
+        // Single-rule filter restricts evaluation deterministically
+        var selfOnly = evaluator.evaluateSpringProxyTraps(
+                snap, List.of(bean), calls,
+                com.evolution.analysis.spring.universal.SpringAopMetadataExtractor.Result.empty(),
+                Set.of(com.evolution.analysis.spring.universal.SpringProxyTrapDetector.RULE_SELF_INVOCATION_BYPASS));
+        assertEquals(1, selfOnly.rules().size());
+        assertEquals(1, selfOnly.findings().size());
+        assertTrue(selfOnly.findingsForRule(com.evolution.analysis.spring.universal.SpringProxyTrapDetector.RULE_CGLIB_PRIVATE_FINAL_TRAP).isEmpty());
+    }
 }

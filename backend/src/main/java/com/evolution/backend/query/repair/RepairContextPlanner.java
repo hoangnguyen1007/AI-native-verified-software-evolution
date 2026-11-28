@@ -841,21 +841,26 @@ public final class RepairContextPlanner {
             }
             foundSpring = true;
             var obj = readSmall(ev);
+            Map<?, ?> regMap = obj.get("region") instanceof Map<?, ?> rm ? rm : null;
             if (obj.get("declaredNameKey") instanceof Map<?, ?> dk && dk.get("primary") instanceof String p && !p.isBlank()) {
                 beanName = p;
             } else if (obj.get("beanName") instanceof String bn && !bn.isBlank()) {
                 beanName = bn;
+            } else if (regMap != null && regMap.get("fact") instanceof Map<?, ?> fm
+                    && fm.get("beanName") instanceof String fbn && !fbn.isBlank()) {
+                beanName = fbn;
             }
             if (obj.get("classification") instanceof String cls && !cls.isBlank()) {
                 status = cls;
-            } else if (obj.get("region") instanceof Map<?, ?> reg && reg.get("classification") instanceof String cls) {
+            } else if (regMap != null && regMap.get("classification") instanceof String cls && !cls.isBlank()) {
                 status = cls;
             }
-            if (obj.get("probabilityPercent") instanceof Number n) {
-                prob = n.doubleValue();
-            } else if (obj.get("satisfactionRatio") instanceof Number n) {
-                double v = n.doubleValue();
-                prob = v <= 1.0 ? v * 100.0 : v;
+            Double extractedProb = extractExposurePercent(obj);
+            if (extractedProb == null && regMap != null) {
+                extractedProb = extractExposurePercent(regMap);
+            }
+            if (extractedProb != null) {
+                prob = extractedProb;
             }
             if (obj.get("witness") instanceof Map<?, ?> wMap) {
                 for (var we : wMap.entrySet()) {
@@ -875,6 +880,34 @@ public final class RepairContextPlanner {
             String effectiveStatus = status != null ? status : "MAY";
             out.putIfAbsent(node.identity(), new SpringTruthInfo(effectiveBean, effectiveStatus, prob, witness, peers));
         }
+    }
+
+    private static Double extractExposurePercent(Map<?, ?> map) {
+        if (map == null) return null;
+        Double pct = parseFiniteDouble(map.get("probabilityPercent"));
+        if (pct != null) return pct;
+        Double sat = parseFiniteDouble(map.get("satisfactionRatio"));
+        if (sat != null) return sat <= 1.0 ? sat * 100.0 : sat;
+        // WP2.3 SymbolicTruthRegions.FactRegion/Row exact d-DNNF mayExposureRatio in [0, 1] -> [0.0, 100.0]
+        Double mayRatio = parseFiniteDouble(map.get("mayExposureRatio"));
+        if (mayRatio != null) return (mayRatio >= 0.0 && mayRatio <= 1.0) ? mayRatio * 100.0 : mayRatio;
+        return null;
+    }
+
+    private static Double parseFiniteDouble(Object value) {
+        if (value instanceof Number n) {
+            double d = n.doubleValue();
+            return Double.isFinite(d) ? d : null;
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                double d = Double.parseDouble(s.strip());
+                return Double.isFinite(d) ? d : null;
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private static String extractFirstDocSummary(String lang, String text) {

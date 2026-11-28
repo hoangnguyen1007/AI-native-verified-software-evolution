@@ -490,6 +490,11 @@ class MetadataConsistencyRulePackTest {
         var dynFinding = findings.stream().filter(x -> x.line() == 30).findFirst().orElseThrow();
         assertEquals(Classification.UNKNOWN, dynFinding.classification());
         assertEquals(Optional.of(GAP_DYNAMIC_BEAN_LOOKUP), dynFinding.gapReason());
+        // Harmonized with WP2.1 SpringXmlBeanExtractor.GAP_DYNAMIC_BEAN_LOOKUP ("DYNAMIC_BEAN_LOOKUP_UNRESOLVED")
+        assertEquals("DYNAMIC_BEAN_LOOKUP_UNRESOLVED", GAP_DYNAMIC_BEAN_LOOKUP);
+        assertEquals(com.evolution.analysis.spring.universal.SpringXmlBeanExtractor.GAP_DYNAMIC_BEAN_LOOKUP, GAP_DYNAMIC_BEAN_LOOKUP);
+        assertTrue(MetadataConsistencyRulePack.isDynamicBeanLookupGap("DYNAMIC_BEAN_LOOKUP_UNRESOLVED"));
+        assertTrue(MetadataConsistencyRulePack.isDynamicBeanLookupGap("DYNAMIC_BEAN_LOOKUP"));
 
         var unmodeledFinding = findings.stream().filter(x -> x.subject().contains("unmodeledBean")).findFirst().orElseThrow();
         assertEquals(Classification.UNKNOWN, unmodeledFinding.classification());

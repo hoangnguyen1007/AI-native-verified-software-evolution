@@ -9,9 +9,11 @@ import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.evidence.EvidenceContext;
 import com.evolution.analysis.graph.KnowledgeGraph;
+import com.evolution.analysis.javaparser.ResolutionEnvironment;
 import com.evolution.analysis.metrics.ArchitectureMetric;
 import com.evolution.analysis.metrics.PolicyMetrics;
 import com.evolution.analysis.metrics.PolicyMetricsService;
+import com.evolution.analysis.policy.MetadataConsistencyRulePack;
 import com.evolution.analysis.policy.PolicyCompiler;
 import com.evolution.analysis.policy.PolicyEvaluation;
 import com.evolution.analysis.policy.PolicyEvaluator;
@@ -71,6 +73,34 @@ final class WorkbenchPolicyAssessment {
         var report = reports.publish(new PublishedReports.Report(evaluation, Optional.of(metrics), Optional.of(score)));
         return new Result(kind, text, compilation.source(), scope, score.status(),
                 Optional.of(report), Optional.of(score), List.of(), score.gaps());
+    }
+
+    /**
+     * Builds an exact ASM-backed {@link MetadataConsistencyRulePack.ClasspathTypeLookup} for passive
+     * dependency JARs via {@link ResolutionEnvironment} (zero package-prefix regexes, {@code I1}/{@code I3}).
+     */
+    static MetadataConsistencyRulePack.ClasspathTypeLookup classpathLookup(
+            java.util.Collection<java.nio.file.Path> jarPaths,
+            int targetRelease,
+            boolean classpathComplete) {
+        return ResolutionEnvironment.classpathTypeLookupFromJars(jarPaths, targetRelease, classpathComplete);
+    }
+
+    /**
+     * Evaluates the WP2.2 built-in 6-rule {@code metadata-consistency-pack} against a published context
+     * backed by passive {@link ResolutionEnvironment}/{@code AsmBytecodeIndex} classpath resolution.
+     */
+    static MetadataConsistencyRulePack.EvaluationReport evaluateMetadataConsistency(
+            ArchitectureQueryService queries,
+            KnowledgeGraph.Context context,
+            java.util.Collection<java.nio.file.Path> jarPaths,
+            int targetRelease,
+            boolean classpathComplete) {
+        var lookup = classpathLookup(jarPaths, targetRelease, classpathComplete);
+        var options = classpathComplete
+                ? MetadataConsistencyRulePack.EvaluationOptions.defaults()
+                : MetadataConsistencyRulePack.EvaluationOptions.offlineIncomplete();
+        return new PolicyEvaluator().evaluateMetadataConsistencyPack(queries, context.identity(), lookup, options);
     }
 
     static SuggestedPolicy suggestPolicy(ArchitectureQueryService queries, KnowledgeGraph.Context context, Scope scope, Runnable checkpoint) {

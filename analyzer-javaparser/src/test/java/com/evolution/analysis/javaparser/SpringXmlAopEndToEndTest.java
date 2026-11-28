@@ -233,6 +233,26 @@ class SpringXmlAopEndToEndTest {
         assertTrue(plan.proxyTraps().cglibPrivateFinalFindings().stream()
                 .anyMatch(f -> f.targetMethod().equals("fetchOrders")),
                 () -> "Expected CGLIB final trap on fetchOrders: " + plan.proxyTraps().findings());
+
+        // 4. Cross-stream wiring: WP2.1 proxy traps evaluated natively via WP2.2 PolicyEvaluator
+        var proxyPolicyReport = new com.evolution.analysis.policy.PolicyEvaluator()
+                .evaluateSpringProxyTraps(sourceEvidence, plan.aopMetadata());
+        assertEquals(2, proxyPolicyReport.rules().size());
+        assertTrue(proxyPolicyReport.findingsForRule(SpringProxyTrapDetector.RULE_SELF_INVOCATION_BYPASS).stream()
+                .anyMatch(f -> f.subject().contains("persistOrder")));
+        assertTrue(proxyPolicyReport.findingsForRule(SpringProxyTrapDetector.RULE_CGLIB_PRIVATE_FINAL_TRAP).stream()
+                .anyMatch(f -> f.subject().contains("hiddenTx")));
+
+        // 5. Cross-stream wiring: ResolutionEnvironment / AsmBytecodeIndex -> WP2.2 ClasspathTypeLookup
+        var asmLookup = ResolutionEnvironment.classpathTypeLookupFromJars(List.of(starterJar), 21, false);
+        var starterOutcome = asmLookup.lookup("com.acme.starter.StarterAutoConfig");
+        assertEquals(com.evolution.analysis.policy.MetadataConsistencyRulePack.LookupStatus.FOUND, starterOutcome.status());
+        var starterDesc = starterOutcome.descriptor().orElseThrow();
+        assertEquals(TrustTier.COMPILER, starterDesc.trustTier());
+        assertTrue(starterDesc.methods().stream().anyMatch(m -> m.name().equals("starterWorker") && m.parameterCount() == 0));
+        var absentOffline = asmLookup.lookup("com.acme.missing.ExternalOnlyClass");
+        assertEquals(com.evolution.analysis.policy.MetadataConsistencyRulePack.LookupStatus.LIBRARY_JAR_ABSENT,
+                absentOffline.status());
     }
 
     private static void putZip(ZipOutputStream zos, String name, byte[] data) throws Exception {

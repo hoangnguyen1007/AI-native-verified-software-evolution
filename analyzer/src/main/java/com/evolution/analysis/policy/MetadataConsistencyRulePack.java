@@ -20,6 +20,7 @@ import com.evolution.analysis.spring.truth.SatConfigurationReasoner;
 import com.evolution.analysis.spring.truth.SymbolicConfiguration;
 import com.evolution.analysis.spring.truth.SymbolicTruthRegions;
 import com.evolution.analysis.spring.universal.BytecodeAutoConfigScanner;
+import com.evolution.analysis.spring.universal.SpringXmlBeanExtractor;
 import java.util.*;
 
 /**
@@ -71,14 +72,22 @@ public final class MetadataConsistencyRulePack {
     public static final String EDGE_RESOLVES_BEAN = "RESOLVES_BEAN";
     public static final String EDGE_CALLS_SERVICE = "CALLS_SERVICE";
 
-    // Typed capability gap reason codes
+    // Typed capability gap reason codes (harmonized with WP2.1 SpringXmlBeanExtractor)
     public static final String GAP_LIBRARY_JAR_ABSENT = "LIBRARY_JAR_ABSENT";
-    public static final String GAP_DYNAMIC_BEAN_LOOKUP = "DYNAMIC_BEAN_LOOKUP";
+    public static final String GAP_DYNAMIC_BEAN_LOOKUP = SpringXmlBeanExtractor.GAP_DYNAMIC_BEAN_LOOKUP;
+    public static final String LEGACY_GAP_DYNAMIC_BEAN_LOOKUP = "DYNAMIC_BEAN_LOOKUP";
+    public static final Set<String> DYNAMIC_BEAN_LOOKUP_GAP_CODES = Collections.unmodifiableSet(
+            new TreeSet<>(Set.of(GAP_DYNAMIC_BEAN_LOOKUP, LEGACY_GAP_DYNAMIC_BEAN_LOOKUP)));
     public static final String GAP_BEAN_TRUTH_UNKNOWN = "BEAN_TRUTH_UNKNOWN";
     public static final String GAP_CONFIG_EVIDENCE_INCOMPLETE = "CONFIG_EVIDENCE_INCOMPLETE";
     public static final String GAP_IMPORT_RESOURCE_UNRESOLVED = "IMPORT_RESOURCE_UNRESOLVED";
     public static final String GAP_FEIGN_TARGET_UNRESOLVED = "FEIGN_TARGET_UNRESOLVED";
     public static final String GAP_EVALUATION_LIMIT = "METADATA_EVALUATION_LIMIT";
+
+    /** Accepts both canonical WP2.1 {@code DYNAMIC_BEAN_LOOKUP_UNRESOLVED} and legacy {@code DYNAMIC_BEAN_LOOKUP}. */
+    public static boolean isDynamicBeanLookupGap(String reasonCode) {
+        return reasonCode != null && DYNAMIC_BEAN_LOOKUP_GAP_CODES.contains(reasonCode.strip());
+    }
 
     private static final Set<String> INCOMPLETE_CLASSPATH_GAP_REASONS = Set.of(
             GAP_LIBRARY_JAR_ABSENT,
@@ -1138,7 +1147,7 @@ public final class MetadataConsistencyRulePack {
                 gaps.add(ctx.createGap(GAP_DYNAMIC_BEAN_LOOKUP, lookup.subjectId(),
                         "Dynamic getBean(...) argument cannot be resolved statically"));
                 findings.add(new Finding(
-                        RULE_GETBEAN_CONDITIONAL_SAFETY, "DYNAMIC_BEAN_LOOKUP",
+                        RULE_GETBEAN_CONDITIONAL_SAFETY, GAP_DYNAMIC_BEAN_LOOKUP,
                         ArchitecturePolicy.Severity.INFO, Classification.UNKNOWN, TrustTier.SOURCE_SYNTAX,
                         lookup.subjectId(), "Dynamic getBean() lookup cannot be statically verified against SymbolicTruthRegions",
                         Optional.ofNullable(lookup.sourceFile()), lookup.line(),
@@ -2331,7 +2340,10 @@ public final class MetadataConsistencyRulePack {
                 var m = ctx.service().parsedEvidence(ev);
                 String beanName = str(m, "beanName");
                 String beanType = str(m, "beanType");
-                boolean dynamic = Boolean.TRUE.equals(m.get("dynamic")) || "true".equalsIgnoreCase(str(m, "dynamic"));
+                boolean dynamic = Boolean.TRUE.equals(m.get("dynamic"))
+                        || "true".equalsIgnoreCase(str(m, "dynamic"))
+                        || isDynamicBeanLookupGap(str(m, "reasonCode"))
+                        || isDynamicBeanLookupGap(str(m, "reason"));
                 String sourceFile = str(m, "sourceFile");
                 int line = parseIntSafe(m.get("line"), 0);
                 String subj = firstNonBlank(str(m, "subject"),
@@ -2354,7 +2366,12 @@ public final class MetadataConsistencyRulePack {
                     var m = ctx.service().parsedEvidence(ev);
                     if (beanName.isBlank()) beanName = str(m, "beanName");
                     if (beanType.isBlank()) beanType = str(m, "beanType");
-                    if (Boolean.TRUE.equals(m.get("dynamic"))) dynamic = true;
+                    if (Boolean.TRUE.equals(m.get("dynamic"))
+                            || "true".equalsIgnoreCase(str(m, "dynamic"))
+                            || isDynamicBeanLookupGap(str(m, "reasonCode"))
+                            || isDynamicBeanLookupGap(str(m, "reason"))) {
+                        dynamic = true;
+                    }
                     if (sourceFile.isBlank()) sourceFile = str(m, "sourceFile");
                     if (line == 0) line = parseIntSafe(m.get("line"), 0);
                 }

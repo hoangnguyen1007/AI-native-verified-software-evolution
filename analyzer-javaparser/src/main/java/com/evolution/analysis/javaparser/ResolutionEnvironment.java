@@ -6,9 +6,12 @@ import com.evolution.analysis.contract.identity.EntityScope;
 import com.evolution.analysis.contract.semantic.Diagnostic;
 import com.evolution.analysis.contract.semantic.DiagnosticSeverity;
 import com.evolution.analysis.contract.semantic.EntityOrigin;
+import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.javaparser.asm.AsmBytecodeIndex;
+import com.evolution.analysis.javaparser.asm.AsmClassStub;
 import com.evolution.analysis.javaparser.asm.AsmTypeSolver;
+import com.evolution.analysis.policy.MetadataConsistencyRulePack;
 import com.github.javaparser.resolution.TypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.*;
 import java.io.*;
@@ -1359,5 +1362,288 @@ public final class ResolutionEnvironment {
 
     private static Origin origin(EntityOrigin kind, ClasspathEntry entry) {
         return new Origin(kind, EntityScope.external(kind, entry.logicalName(), entry.contentDigest()));
+    }
+
+    // ─── WP2.2 Cross-Stream Wiring: Exact AsmBytecodeIndex -> ClasspathTypeLookup Adapter ───
+
+    /**
+     * Exposes this resolved classpath (dependency JARs + verified platform archives/JRT) as a
+     * zero-regex {@link MetadataConsistencyRulePack.ClasspathTypeLookup} backed by {@link AsmBytecodeIndex}.
+     */
+    public MetadataConsistencyRulePack.ClasspathTypeLookup toClasspathTypeLookup() {
+        return toClasspathTypeLookup(!request.sourceRecovery());
+    }
+
+    /**
+     * Exposes this resolved classpath as an exact {@link MetadataConsistencyRulePack.ClasspathTypeLookup}.
+     * When {@code classpathComplete} is {@code false}, absent types return {@code LIBRARY_JAR_ABSENT} ({@code I3}).
+     */
+    public MetadataConsistencyRulePack.ClasspathTypeLookup toClasspathTypeLookup(boolean classpathComplete) {
+        return fqcn -> {
+            if (fqcn == null || fqcn.isBlank()) {
+                return MetadataConsistencyRulePack.TypeLookupOutcome.notFound();
+            }
+            String clean = fqcn.strip();
+            // 1. Exact binary dependency artifacts in deterministic classpath order
+            Artifact art = firstArtifact(clean);
+            if (art != null) {
+                var descriptor = lookupInIndex(art.solver().index(), clean);
+                if (descriptor.isPresent()) {
+                    return MetadataConsistencyRulePack.TypeLookupOutcome.found(descriptor.get());
+                }
+            }
+            // 2. Verified platform archives (JAR/JMOD/ct.sym) or matching bootstrap runtime modules
+            for (var spec : platformGroupSpecs) {
+                if (spec.isRuntimeModules()) {
+                    var loaded = RuntimePlatformTypeSolver.loadPlatformClass(clean);
+                    if (loaded.isPresent()) {
+                        return MetadataConsistencyRulePack.TypeLookupOutcome.found(
+                                toPlatformTypeDescriptor(loaded.get()));
+                    }
+                    continue;
+                }
+                Integer slot = spec.index().firstSlotByClass().get(clean);
+                if (slot != null) {
+                    var descriptor = lookupInIndex(spec.archives().get(slot), clean);
+                    if (descriptor.isPresent()) {
+                        return MetadataConsistencyRulePack.TypeLookupOutcome.found(descriptor.get());
+                    }
+                }
+            }
+            return classpathComplete
+                    ? MetadataConsistencyRulePack.TypeLookupOutcome.notFound()
+                    : MetadataConsistencyRulePack.TypeLookupOutcome.libraryJarAbsent(
+                            "Offline/incomplete classpath cannot prove absence of " + clean);
+        };
+    }
+
+    /** Builds an exact {@link MetadataConsistencyRulePack.ClasspathTypeLookup} directly from a {@link FrontendRequest}. */
+    public static MetadataConsistencyRulePack.ClasspathTypeLookup classpathTypeLookup(
+            FrontendRequest request, boolean classpathComplete) {
+        return new ResolutionEnvironment(Objects.requireNonNull(request, "request"))
+                .toClasspathTypeLookup(classpathComplete);
+    }
+
+    /** Adapts an ordered list of passive {@link AsmBytecodeIndex} archives into a zero-regex {@link MetadataConsistencyRulePack.ClasspathTypeLookup}. */
+    public static MetadataConsistencyRulePack.ClasspathTypeLookup classpathTypeLookup(
+            List<AsmBytecodeIndex> indexes, boolean classpathComplete) {
+        var safeIndexes = indexes == null ? List.<AsmBytecodeIndex>of() : List.copyOf(indexes);
+        return fqcn -> {
+            if (fqcn == null || fqcn.isBlank()) {
+                return MetadataConsistencyRulePack.TypeLookupOutcome.notFound();
+            }
+            String clean = fqcn.strip();
+            for (AsmBytecodeIndex idx : safeIndexes) {
+                if (idx == null) continue;
+                var descriptor = lookupInIndex(idx, clean);
+                if (descriptor.isPresent()) {
+                    return MetadataConsistencyRulePack.TypeLookupOutcome.found(descriptor.get());
+                }
+            }
+            return classpathComplete
+                    ? MetadataConsistencyRulePack.TypeLookupOutcome.notFound()
+                    : MetadataConsistencyRulePack.TypeLookupOutcome.libraryJarAbsent(
+                            "Offline/incomplete classpath cannot prove absence of " + clean);
+        };
+    }
+
+    /**
+     * Passively indexes verified JAR archives via ASM {@code SKIP_CODE} (reusing {@code JAR_CACHE}, zero
+     * {@code Class.forName}, zero build execution, {@code I1}) for exact WP2.2 metadata consistency checks.
+     */
+    public static MetadataConsistencyRulePack.ClasspathTypeLookup classpathTypeLookupFromJars(
+            Collection<Path> jarPaths, int release, boolean classpathComplete) {
+        int effectiveRelease = release > 0 ? release : Runtime.version().feature();
+        if (jarPaths == null || jarPaths.isEmpty()) {
+            return classpathComplete
+                    ? MetadataConsistencyRulePack.ClasspathTypeLookup.emptyComplete()
+                    : MetadataConsistencyRulePack.ClasspathTypeLookup.emptyOffline();
+        }
+        var indexes = new ArrayList<AsmBytecodeIndex>();
+        var seenReal = new HashSet<Path>();
+        boolean allReadable = true;
+        for (Path rawPath : jarPaths) {
+            if (rawPath == null) continue;
+            try {
+                if (!Files.isRegularFile(rawPath)) {
+                    allReadable = false;
+                    continue;
+                }
+                Path real = rawPath.toRealPath();
+                if (!seenReal.add(real)) continue;
+                ContentDigest digest = sha256File(real);
+                var key = new JarCacheKey(effectiveRelease, digest);
+                AsmBytecodeIndex cached = JAR_CACHE.get(key);
+                if (cached == null) {
+                    cached = buildJarArchiveFromFile(real, effectiveRelease);
+                    JAR_CACHE.put(key, cached);
+                }
+                indexes.add(cached);
+            } catch (IOException | FrontendInputException unreadable) {
+                allReadable = false;
+            }
+        }
+        return classpathTypeLookup(indexes, classpathComplete && allReadable);
+    }
+
+    /** Pure deterministic conversion from {@link AsmClassStub} to {@link MetadataConsistencyRulePack.TypeDescriptor}. */
+    public static MetadataConsistencyRulePack.TypeDescriptor toMetadataTypeDescriptor(AsmClassStub stub) {
+        Objects.requireNonNull(stub, "stub");
+        boolean isAbstract = (stub.access() & org.objectweb.asm.Opcodes.ACC_ABSTRACT) != 0;
+        boolean isInterface = stub.kind() == AsmClassStub.Kind.INTERFACE
+                || (stub.access() & org.objectweb.asm.Opcodes.ACC_INTERFACE) != 0;
+        boolean isRecord = stub.kind() == AsmClassStub.Kind.RECORD
+                || (stub.access() & org.objectweb.asm.Opcodes.ACC_RECORD) != 0;
+
+        var superTypes = new TreeSet<String>();
+        if (stub.superInternalName() != null && !stub.superInternalName().isBlank()
+                && !"java/lang/Object".equals(stub.superInternalName())) {
+            superTypes.add(AsmClassStub.internalToQualifiedName(stub.superInternalName()));
+        }
+        for (String iface : stub.interfaceInternalNames()) {
+            if (iface != null && !iface.isBlank()) {
+                superTypes.add(AsmClassStub.internalToQualifiedName(iface));
+            }
+        }
+
+        var constructors = new ArrayList<MetadataConsistencyRulePack.ConstructorSignature>();
+        var methods = new ArrayList<MetadataConsistencyRulePack.MethodSignature>();
+        for (AsmClassStub.MethodStub m : stub.methods()) {
+            if (m.isStaticInitializer() || m.isSynthetic() || m.isBridge()) continue;
+            org.objectweb.asm.Type[] argTypes = org.objectweb.asm.Type.getArgumentTypes(m.descriptor());
+            var paramNames = new ArrayList<String>(argTypes.length);
+            for (org.objectweb.asm.Type t : argTypes) {
+                paramNames.add(t.getClassName());
+            }
+            boolean accessible = (m.access() & org.objectweb.asm.Opcodes.ACC_PRIVATE) == 0;
+            if (m.isConstructor()) {
+                constructors.add(new MetadataConsistencyRulePack.ConstructorSignature(
+                        argTypes.length, paramNames, accessible));
+            } else {
+                String retType = org.objectweb.asm.Type.getReturnType(m.descriptor()).getClassName();
+                methods.add(new MetadataConsistencyRulePack.MethodSignature(
+                        m.name(), argTypes.length, paramNames, retType, m.isStatic(), accessible));
+            }
+        }
+
+        var fields = new ArrayList<MetadataConsistencyRulePack.FieldSignature>();
+        for (AsmClassStub.FieldStub f : stub.fields()) {
+            if ((f.access() & org.objectweb.asm.Opcodes.ACC_SYNTHETIC) != 0) continue;
+            String fieldType = org.objectweb.asm.Type.getType(f.descriptor()).getClassName();
+            boolean isStatic = (f.access() & org.objectweb.asm.Opcodes.ACC_STATIC) != 0;
+            boolean isFinal = (f.access() & org.objectweb.asm.Opcodes.ACC_FINAL) != 0;
+            fields.add(new MetadataConsistencyRulePack.FieldSignature(f.name(), fieldType, isStatic, isFinal));
+        }
+
+        var annotations = new ArrayList<MetadataConsistencyRulePack.AnnotationInfo>();
+        for (AsmClassStub.AnnotationStub ann : stub.annotations()) {
+            annotations.add(new MetadataConsistencyRulePack.AnnotationInfo(
+                    ann.qualifiedName(), Map.of(), "@" + ann.qualifiedName()));
+        }
+
+        return new MetadataConsistencyRulePack.TypeDescriptor(
+                stub.qualifiedName(),
+                isAbstract,
+                isInterface,
+                isRecord,
+                TrustTier.COMPILER,
+                superTypes,
+                constructors,
+                methods,
+                fields,
+                annotations);
+    }
+
+    private static Optional<MetadataConsistencyRulePack.TypeDescriptor> lookupInIndex(
+            AsmBytecodeIndex index, String canonicalFqcn) {
+        String poolName = index.poolNameForCanonical(canonicalFqcn);
+        if (poolName == null) {
+            // Also accept binary nested name directly (e.g. pkg.Outer$Inner)
+            poolName = index.poolNameForCanonical(canonicalFqcn.replace('$', '.'));
+        }
+        if (poolName == null) {
+            return Optional.empty();
+        }
+        return index.loadStub(poolName).map(ResolutionEnvironment::toMetadataTypeDescriptor);
+    }
+
+    private static MetadataConsistencyRulePack.TypeDescriptor toPlatformTypeDescriptor(Class<?> clazz) {
+        int mods = clazz.getModifiers();
+        var superTypes = new TreeSet<String>();
+        Class<?> sup = clazz.getSuperclass();
+        if (sup != null && sup != Object.class) {
+            superTypes.add(sup.getName().replace('$', '.'));
+        }
+        for (Class<?> iface : clazz.getInterfaces()) {
+            superTypes.add(iface.getName().replace('$', '.'));
+        }
+        var constructors = new ArrayList<MetadataConsistencyRulePack.ConstructorSignature>();
+        try {
+            for (var c : clazz.getDeclaredConstructors()) {
+                if (c.isSynthetic()) continue;
+                var params = Arrays.stream(c.getParameterTypes()).map(Class::getTypeName).toList();
+                constructors.add(new MetadataConsistencyRulePack.ConstructorSignature(
+                        params.size(), params, !java.lang.reflect.Modifier.isPrivate(c.getModifiers())));
+            }
+        } catch (LinkageError ignored) {
+        }
+        var methods = new ArrayList<MetadataConsistencyRulePack.MethodSignature>();
+        try {
+            for (var m : clazz.getDeclaredMethods()) {
+                if (m.isSynthetic() || m.isBridge()) continue;
+                var params = Arrays.stream(m.getParameterTypes()).map(Class::getTypeName).toList();
+                methods.add(new MetadataConsistencyRulePack.MethodSignature(
+                        m.getName(), params.size(), params, m.getReturnType().getTypeName(),
+                        java.lang.reflect.Modifier.isStatic(m.getModifiers()),
+                        !java.lang.reflect.Modifier.isPrivate(m.getModifiers())));
+            }
+        } catch (LinkageError ignored) {
+        }
+        var fields = new ArrayList<MetadataConsistencyRulePack.FieldSignature>();
+        try {
+            for (var f : clazz.getDeclaredFields()) {
+                if (f.isSynthetic()) continue;
+                fields.add(new MetadataConsistencyRulePack.FieldSignature(
+                        f.getName(), f.getType().getTypeName(),
+                        java.lang.reflect.Modifier.isStatic(f.getModifiers()),
+                        java.lang.reflect.Modifier.isFinal(f.getModifiers())));
+            }
+        } catch (LinkageError ignored) {
+        }
+        var annotations = new ArrayList<MetadataConsistencyRulePack.AnnotationInfo>();
+        try {
+            for (var a : clazz.getAnnotations()) {
+                String name = a.annotationType().getName().replace('$', '.');
+                annotations.add(new MetadataConsistencyRulePack.AnnotationInfo(name, Map.of(), "@" + name));
+            }
+        } catch (LinkageError ignored) {
+        }
+        return new MetadataConsistencyRulePack.TypeDescriptor(
+                clazz.getName().replace('$', '.'),
+                java.lang.reflect.Modifier.isAbstract(mods),
+                clazz.isInterface(),
+                clazz.isRecord(),
+                TrustTier.COMPILER,
+                superTypes,
+                constructors,
+                methods,
+                fields,
+                annotations);
+    }
+
+    private static ContentDigest sha256File(Path file) throws IOException {
+        try {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[65536];
+            try (var in = Files.newInputStream(file)) {
+                int read;
+                while ((read = in.read(buf)) != -1) {
+                    md.update(buf, 0, read);
+                }
+            }
+            return new ContentDigest("sha256:" + HexFormat.of().formatHex(md.digest()));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
     }
 }
