@@ -2,12 +2,16 @@ package com.evolution.analysis.query;
 
 import com.evolution.analysis.contract.assessment.AssessmentStatus;
 import com.evolution.analysis.contract.common.*;
+import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.graph.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.*;
+import java.util.regex.Pattern;
 import static com.evolution.analysis.query.ArchitectureQuery.*;
 
 /**
@@ -680,6 +684,1221 @@ public final class ArchitectureQueryService {
     /** Returns all indexed class FQNs present in {@code context} (or all contexts when empty), sorted deterministically. */
     public List<String> indexedClassNames(String context) {
         return metadataIndex().indexedClassNames(context);
+    }
+
+    // -------------------------------------------------------------------------
+    // WP3.2: Typed Compositional Graph Queries & Pointer-Indexed Schema Views
+    // -------------------------------------------------------------------------
+
+    /**
+     * Executes a typed compositional multi-hop query ({@code graph_compose_query}) against this
+     * service's graph, guarded by {@code operationalGuard} ({@code StopReason.MEMORY}, hard
+     * {@code < 2 s} wall-time cap, and visited-state cap).
+     */
+    public GraphComposeQuery.ComposeResult composeQuery(GraphComposeQuery query) {
+        return composeQuery(this.graph, query, GraphComposeQuery.DEFAULT_TIMEOUT_MILLIS,
+                GraphComposeQuery.DEFAULT_MAX_VISITED_STATES);
+    }
+
+    /**
+     * Executes a typed compositional multi-hop query ({@code graph_compose_query}) against
+     * {@code targetGraph}, guarded by this service's {@code operationalGuard}, a hard
+     * {@code < 2 s} wall-time cap, and a bounded visited-state cap.
+     * Results are pointer-indexed ({@code path:startLine-endLine@sha256Prefix}) and
+     * deterministically sorted by {@code (score DESC, entityId ASC)} ({@code I2}).
+     */
+    public GraphComposeQuery.ComposeResult composeQuery(KnowledgeGraph targetGraph, GraphComposeQuery query) {
+        return composeQuery(targetGraph, query, GraphComposeQuery.DEFAULT_TIMEOUT_MILLIS,
+                GraphComposeQuery.DEFAULT_MAX_VISITED_STATES);
+    }
+
+    /**
+     * Bounded execution overload allowing callers/tests to tighten wall-time ({@code <= 2000 ms})
+     * and visited-state budgets while always enforcing {@code operationalGuard}.
+     */
+    public GraphComposeQuery.ComposeResult composeQuery(
+            KnowledgeGraph targetGraph,
+            GraphComposeQuery query,
+            long timeoutMillis,
+            int maxVisitedStates) {
+        Objects.requireNonNull(targetGraph, "graph");
+        Objects.requireNonNull(query, "query");
+        long boundedTimeoutMs = Math.max(1L, Math.min(timeoutMillis, GraphComposeQuery.DEFAULT_TIMEOUT_MILLIS));
+        int boundedMaxStates = Math.max(1, Math.min(maxVisitedStates, GraphComposeQuery.DEFAULT_MAX_VISITED_STATES));
+
+        boolean canMemoize = memoizationEnabled && targetGraph == this.graph
+                && boundedTimeoutMs == GraphComposeQuery.DEFAULT_TIMEOUT_MILLIS
+                && boundedMaxStates == GraphComposeQuery.DEFAULT_MAX_VISITED_STATES
+                && guard.get() == StopReason.NONE;
+        if (canMemoize) {
+            var key = new MemoKey("composeQuery",
+                    ContentDigest.sha256Utf8(CanonicalJson.write(query.toMap())).value());
+            Object hit;
+            synchronized (memoLock) {
+                hit = queryMemoCache.get(key);
+            }
+            if (hit instanceof GraphComposeQuery.ComposeResult cached) {
+                memoHits.incrementAndGet();
+                return cached;
+            }
+            memoMisses.incrementAndGet();
+            var computed = executeComposeQuery(targetGraph, query, boundedTimeoutMs, boundedMaxStates);
+            if (computed.stopReason() == StopReason.NONE && guard.get() == StopReason.NONE) {
+                synchronized (memoLock) {
+                    queryMemoCache.putIfAbsent(key, computed);
+                }
+            }
+            return computed;
+        }
+        return executeComposeQuery(targetGraph, query, boundedTimeoutMs, boundedMaxStates);
+    }
+
+    /** Summarizes the live schema of this service's graph ({@code evo://schema}). */
+    public GraphComposeQuery.SchemaView schemaView() {
+        return schemaView(this.graph);
+    }
+
+    /**
+     * Summarizes the live node kinds, edge kinds, trust tiers, evidence families, and queryable
+     * fields of {@code targetGraph} in deterministic sorted order ({@code evo://schema}).
+     */
+    public GraphComposeQuery.SchemaView schemaView(KnowledgeGraph targetGraph) {
+        Objects.requireNonNull(targetGraph, "graph");
+        boolean canMemoize = memoizationEnabled && targetGraph == this.graph && guard.get() == StopReason.NONE;
+        if (canMemoize) {
+            return memoizedQuery("schemaView", targetGraph.identity().value(), () -> buildSchemaView(targetGraph));
+        }
+        return buildSchemaView(targetGraph);
+    }
+
+    private record ComposeDocMeta(String path, String sha256) {}
+
+    private record ComposeNodeMeta(
+            String id,
+            String context,
+            String kind,
+            String fqn,
+            String simpleName,
+            TrustTier trustTier,
+            Optional<String> sourcePath,
+            int startLine,
+            int endLine,
+            String sha256Prefix,
+            String pointerRef,
+            Optional<String> module,
+            Optional<String> origin,
+            Optional<String> sourceSet,
+            int degree
+    ) {
+        GraphComposeQuery.ProjectedNode toProjected() {
+            return new GraphComposeQuery.ProjectedNode(
+                    id, fqn, kind, trustTier,
+                    new GraphComposeQuery.SpanRef(sourcePath, startLine, endLine, sha256Prefix),
+                    pointerRef);
+        }
+
+        String fieldValue(String field) {
+            return switch (field) {
+                case "id" -> id;
+                case "fqn" -> fqn;
+                case "name" -> simpleName.isEmpty() ? fqn : simpleName;
+                case "kind" -> kind;
+                case "trustTier" -> trustTier.name();
+                case "path", "sourcePath" -> sourcePath.orElse(null);
+                case "context" -> context;
+                case "module" -> module.orElse(null);
+                case "origin" -> origin.orElse(null);
+                case "sourceSet" -> sourceSet.orElse(null);
+                case "pointerRef" -> pointerRef;
+                default -> null;
+            };
+        }
+    }
+
+    private record ComposeAdj(String neighborId, String edgeKind, String edgeId) {}
+
+    private record HopWitness(int hops, List<String> edgeKinds) {}
+
+    private record ScoredMatch(
+            String entityId,
+            BigDecimal score,
+            String bindingKey,
+            GraphComposeQuery.ComposeMatch match
+    ) {}
+
+    private static final class ComposeExecutionGuard {
+        private final Supplier<StopReason> externalGuard;
+        private final long deadlineNanos;
+        private final int maxVisitedStates;
+        private int visitedStates;
+        private StopReason stopReason = StopReason.NONE;
+
+        ComposeExecutionGuard(Supplier<StopReason> externalGuard, long timeoutMillis, int maxVisitedStates) {
+            this.externalGuard = externalGuard;
+            this.deadlineNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
+            this.maxVisitedStates = maxVisitedStates;
+        }
+
+        boolean step() {
+            if (stopReason != StopReason.NONE) {
+                return false;
+            }
+            if (++visitedStates > maxVisitedStates) {
+                stopReason = StopReason.STEPS;
+                return false;
+            }
+            if ((visitedStates & 0x3F) == 1) {
+                return checkExternal();
+            }
+            return true;
+        }
+
+        boolean checkExternal() {
+            if (stopReason != StopReason.NONE) {
+                return false;
+            }
+            StopReason ext = externalGuard.get();
+            if (ext != null && ext != StopReason.NONE) {
+                stopReason = ext;
+                return false;
+            }
+            if (System.nanoTime() - deadlineNanos >= 0L) {
+                stopReason = StopReason.TIME;
+                return false;
+            }
+            return true;
+        }
+
+        StopReason stopReason() {
+            return stopReason;
+        }
+
+        int visitedStates() {
+            return visitedStates;
+        }
+    }
+
+    private GraphComposeQuery.SchemaView buildSchemaView(KnowledgeGraph targetGraph) {
+        var contexts = targetGraph.contexts().stream()
+                .map(KnowledgeGraph.Context::identity)
+                .sorted()
+                .toList();
+        var nodeKinds = new TreeMap<String, Long>();
+        var trustTiers = new TreeMap<String, Long>();
+        for (var node : targetGraph.nodes()) {
+            nodeKinds.merge(node.kind(), 1L, Long::sum);
+            TrustTier tier = inferNodeTrustTier(targetGraph, node);
+            trustTiers.merge(tier.name(), 1L, Long::sum);
+        }
+        var edgeKinds = new TreeMap<String, Long>();
+        for (var edge : targetGraph.edges()) {
+            edgeKinds.merge(edge.kind(), 1L, Long::sum);
+        }
+        var evidenceFamilies = new TreeMap<String, Long>();
+        for (var ev : targetGraph.evidence()) {
+            evidenceFamilies.merge(ev.family(), 1L, Long::sum);
+        }
+        var operators = Arrays.stream(GraphComposeQuery.FilterOp.values())
+                .map(Enum::name)
+                .sorted()
+                .toList();
+        return new GraphComposeQuery.SchemaView(
+                GraphComposeQuery.SCHEMA_VIEW_VERSION,
+                KnowledgeGraph.SCHEMA,
+                targetGraph.identity(),
+                targetGraph.snapshot().value(),
+                targetGraph.nodes().size(),
+                targetGraph.edges().size(),
+                targetGraph.evidence().size(),
+                contexts,
+                nodeKinds,
+                edgeKinds,
+                trustTiers,
+                evidenceFamilies,
+                GraphComposeQuery.QUERYABLE_FILTER_FIELDS,
+                GraphComposeQuery.ALLOWED_RETURN_FIELDS,
+                operators,
+                GraphComposeQuery.advertisedLimits(),
+                GraphComposeQuery.POINTER_REF_FORMAT,
+                GraphComposeQuery.LAZY_READ_TOOL);
+    }
+
+    private GraphComposeQuery.ComposeResult executeComposeQuery(
+            KnowledgeGraph targetGraph,
+            GraphComposeQuery query,
+            long timeoutMillis,
+            int maxVisitedStates) {
+        var execGuard = new ComposeExecutionGuard(guard, timeoutMillis, maxVisitedStates);
+        var gaps = new ArrayList<CapabilityGapRecord>();
+        ContentDigest queryDigest = ContentDigest.sha256Utf8(
+                CanonicalJson.write(List.of(GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.toMap())));
+
+        if (!execGuard.checkExternal()) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, stopReasonGapCode(execGuard.stopReason())));
+            return new GraphComposeQuery.ComposeResult(
+                    GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                    AssessmentStatus.PARTIAL, execGuard.stopReason(), true, query.limit(),
+                    0, execGuard.visitedStates(), query.returnFields(), List.of(), gaps);
+        }
+
+        // Validate explicit context filter against live graph contexts
+        if (query.context().isPresent()) {
+            String reqCtx = query.context().orElseThrow();
+            boolean exists = targetGraph.contexts().stream().anyMatch(c -> c.identity().equals(reqCtx));
+            if (!exists) {
+                gaps.add(composeGap(targetGraph, query.context(), queryDigest, "COMPOSE_CONTEXT_NOT_FOUND"));
+                return new GraphComposeQuery.ComposeResult(
+                        GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                        AssessmentStatus.PARTIAL, StopReason.NONE, false, query.limit(),
+                        0, execGuard.visitedStates(), query.returnFields(), List.of(), gaps);
+            }
+        }
+
+        // 1. Collect validated document path & content SHA-256 index across all contexts
+        var docs = new HashMap<String, ComposeDocMeta>();
+        for (var node : targetGraph.nodes()) {
+            if (!execGuard.step()) {
+                break;
+            }
+            if ("SOURCE_DOCUMENT".equals(node.kind())) {
+                extractComposeDocMeta(targetGraph, node).ifPresent(dm -> docs.putIfAbsent(node.identity(), dm));
+            }
+        }
+        if (execGuard.stopReason() != StopReason.NONE) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, stopReasonGapCode(execGuard.stopReason())));
+            return new GraphComposeQuery.ComposeResult(
+                    GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                    AssessmentStatus.PARTIAL, execGuard.stopReason(), true, query.limit(),
+                    0, execGuard.visitedStates(), query.returnFields(), List.of(), gaps);
+        }
+
+        // 2. Scope nodes & edges + compute incident degree and sorted adjacency lists
+        List<KnowledgeGraph.Node> scopedNodes = query.context().isPresent()
+                ? targetGraph.nodes(query.context().orElseThrow())
+                : targetGraph.nodes();
+        List<KnowledgeGraph.Edge> scopedEdges = query.context().isPresent()
+                ? targetGraph.edges(query.context().orElseThrow())
+                : targetGraph.edges();
+
+        var degreeByNode = new HashMap<String, Integer>();
+        var outgoingAdj = new HashMap<String, List<ComposeAdj>>();
+        var incomingAdj = new HashMap<String, List<ComposeAdj>>();
+        boolean needsEdges = !query.matchEdges().isEmpty();
+        for (var edge : scopedEdges) {
+            if (!execGuard.step()) {
+                break;
+            }
+            if (edge.target().identities().isEmpty()) {
+                continue;
+            }
+            for (String tgt : edge.target().identities()) {
+                degreeByNode.merge(edge.source(), 1, Integer::sum);
+                degreeByNode.merge(tgt, 1, Integer::sum);
+                if (needsEdges) {
+                    outgoingAdj.computeIfAbsent(edge.source(), k -> new ArrayList<>())
+                            .add(new ComposeAdj(tgt, edge.kind(), edge.identity()));
+                    incomingAdj.computeIfAbsent(tgt, k -> new ArrayList<>())
+                            .add(new ComposeAdj(edge.source(), edge.kind(), edge.identity()));
+                }
+            }
+        }
+        if (execGuard.stopReason() != StopReason.NONE) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, stopReasonGapCode(execGuard.stopReason())));
+            return new GraphComposeQuery.ComposeResult(
+                    GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                    AssessmentStatus.PARTIAL, execGuard.stopReason(), true, query.limit(),
+                    0, execGuard.visitedStates(), query.returnFields(), List.of(), gaps);
+        }
+        if (needsEdges) {
+            Comparator<ComposeAdj> adjOrder = Comparator.comparing(ComposeAdj::neighborId)
+                    .thenComparing(ComposeAdj::edgeKind)
+                    .thenComparing(ComposeAdj::edgeId);
+            outgoingAdj.values().forEach(list -> list.sort(adjOrder));
+            incomingAdj.values().forEach(list -> list.sort(adjOrder));
+        }
+
+        // 3. Extract compact pointer-indexed metadata per node (deduplicated deterministically by node id)
+        var nodeMetaById = new TreeMap<String, ComposeNodeMeta>();
+        for (var node : scopedNodes) {
+            if (!execGuard.step()) {
+                break;
+            }
+            int deg = degreeByNode.getOrDefault(node.identity(), 0);
+            var meta = extractComposeNodeMeta(targetGraph, node, docs, deg);
+            var existing = nodeMetaById.get(node.identity());
+            if (existing == null || (existing.sourcePath().isEmpty() && meta.sourcePath().isPresent())) {
+                nodeMetaById.put(node.identity(), meta);
+            }
+        }
+        if (execGuard.stopReason() != StopReason.NONE) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, stopReasonGapCode(execGuard.stopReason())));
+            return new GraphComposeQuery.ComposeResult(
+                    GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                    AssessmentStatus.PARTIAL, execGuard.stopReason(), true, query.limit(),
+                    0, execGuard.visitedStates(), query.returnFields(), List.of(), gaps);
+        }
+
+        // 4. Pre-compile validated REGEX_BOUNDED filters & group filters by alias
+        var filtersByAlias = new HashMap<String, List<GraphComposeQuery.FilterClause>>();
+        var compiledRegexes = new IdentityHashMap<GraphComposeQuery.FilterClause, Pattern>();
+        for (var fc : query.filters()) {
+            filtersByAlias.computeIfAbsent(fc.alias(), k -> new ArrayList<>()).add(fc);
+            if (fc.op() == GraphComposeQuery.FilterOp.REGEX_BOUNDED && fc.value().isPresent()) {
+                compiledRegexes.put(fc, GraphComposeQuery.validateBoundedRegex(
+                        fc.value().orElseThrow(), "filters[" + fc.alias() + "." + fc.field() + "].value"));
+            }
+        }
+
+        // 5. Filter candidate nodes per alias in deterministic ID order
+        var patternByAlias = new LinkedHashMap<String, GraphComposeQuery.NodePattern>();
+        var candidatesByAlias = new LinkedHashMap<String, List<ComposeNodeMeta>>();
+        var candidateIdSets = new LinkedHashMap<String, Set<String>>();
+        for (var np : query.matchNodes()) {
+            patternByAlias.put(np.alias(), np);
+            var aliasFilters = filtersByAlias.getOrDefault(np.alias(), List.of());
+            var cands = new ArrayList<ComposeNodeMeta>();
+            var candIds = new HashSet<String>();
+            for (var meta : nodeMetaById.values()) {
+                if (!execGuard.step()) {
+                    break;
+                }
+                if (matchesNodePattern(np, meta) && matchesAllFilters(aliasFilters, compiledRegexes, meta)) {
+                    cands.add(meta);
+                    candIds.add(meta.id());
+                }
+            }
+            candidatesByAlias.put(np.alias(), cands);
+            candidateIdSets.put(np.alias(), candIds);
+            if (execGuard.stopReason() != StopReason.NONE) {
+                break;
+            }
+        }
+        if (execGuard.stopReason() != StopReason.NONE) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, stopReasonGapCode(execGuard.stopReason())));
+            return new GraphComposeQuery.ComposeResult(
+                    GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                    AssessmentStatus.PARTIAL, execGuard.stopReason(), true, query.limit(),
+                    0, execGuard.visitedStates(), query.returnFields(), List.of(), gaps);
+        }
+
+        // Fast empty exit when any alias has zero candidates
+        for (var cands : candidatesByAlias.values()) {
+            if (cands.isEmpty()) {
+                return new GraphComposeQuery.ComposeResult(
+                        GraphComposeQuery.SCHEMA_VERSION, targetGraph.identity(), query.context(),
+                        AssessmentStatus.COMPLETE, StopReason.NONE, false, query.limit(),
+                        0, execGuard.visitedStates(), query.returnFields(), List.of(), List.of());
+            }
+        }
+
+        // 6. Execute bounded multi-hop pattern matching join
+        var collected = new ArrayList<ScoredMatch>();
+        var seenBindingKeys = new HashSet<String>();
+        int poolCap = Math.max(query.limit() * 20, 1_000);
+        boolean[] poolTruncated = new boolean[1];
+        String anchorAlias = query.matchNodes().getFirst().alias();
+
+        if (query.matchNodes().size() == 1 && query.matchEdges().isEmpty()) {
+            var np = query.matchNodes().getFirst();
+            for (var meta : candidatesByAlias.get(anchorAlias)) {
+                if (!execGuard.step()) {
+                    break;
+                }
+                var bindings = Map.of(anchorAlias, meta);
+                BigDecimal score = scoreComposeMatch(query, patternByAlias, bindings, List.of());
+                var match = new GraphComposeQuery.ComposeMatch(
+                        meta.id(), score, Map.of(anchorAlias, meta.toProjected()), List.of());
+                collected.add(new ScoredMatch(meta.id(), score, meta.id(), match));
+            }
+        } else {
+            // Deterministic variable order: smallest candidate set first, tie-break by alias ASC
+            var aliasOrder = new ArrayList<>(patternByAlias.keySet());
+            aliasOrder.sort(Comparator.<String>comparingInt(a -> candidatesByAlias.get(a).size())
+                    .thenComparing(Comparator.naturalOrder()));
+
+            // Pre-index edges incident to each alias for eager constraint pruning
+            var boundAssignment = new LinkedHashMap<String, ComposeNodeMeta>();
+            var satisfiedEdges = new LinkedHashMap<Integer, GraphComposeQuery.MatchedEdge>();
+            backtrackComposeJoin(
+                    0, aliasOrder, query, patternByAlias, candidatesByAlias, candidateIdSets,
+                    nodeMetaById, outgoingAdj, incomingAdj, boundAssignment, satisfiedEdges,
+                    anchorAlias, seenBindingKeys, collected, poolCap, poolTruncated, execGuard);
+        }
+
+        // 7. Sort deterministically by (score DESC, entityId ASC, bindingKey ASC) & slice to limit (I2)
+        collected.sort(Comparator.comparing(ScoredMatch::score).reversed()
+                .thenComparing(ScoredMatch::entityId)
+                .thenComparing(ScoredMatch::bindingKey));
+
+        int totalMatched = collected.size();
+        boolean slicedByLimit = totalMatched > query.limit();
+        boolean stoppedEarly = execGuard.stopReason() != StopReason.NONE;
+        boolean truncated = slicedByLimit || poolTruncated[0] || stoppedEarly;
+
+        if (stoppedEarly) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, stopReasonGapCode(execGuard.stopReason())));
+        } else if (poolTruncated[0]) {
+            gaps.add(composeGap(targetGraph, query.context(), queryDigest, "COMPOSE_MATCH_POOL_BOUNDED"));
+        }
+
+        var topMatches = collected.stream()
+                .limit(query.limit())
+                .map(ScoredMatch::match)
+                .toList();
+        AssessmentStatus status = (stoppedEarly || poolTruncated[0])
+                ? AssessmentStatus.PARTIAL
+                : AssessmentStatus.COMPLETE;
+
+        return new GraphComposeQuery.ComposeResult(
+                GraphComposeQuery.SCHEMA_VERSION,
+                targetGraph.identity(),
+                query.context(),
+                status,
+                execGuard.stopReason(),
+                truncated,
+                query.limit(),
+                totalMatched,
+                execGuard.visitedStates(),
+                query.returnFields(),
+                topMatches,
+                gaps);
+    }
+
+    private void backtrackComposeJoin(
+            int depth,
+            List<String> aliasOrder,
+            GraphComposeQuery query,
+            Map<String, GraphComposeQuery.NodePattern> patternByAlias,
+            Map<String, List<ComposeNodeMeta>> candidatesByAlias,
+            Map<String, Set<String>> candidateIdSets,
+            Map<String, ComposeNodeMeta> nodeMetaById,
+            Map<String, List<ComposeAdj>> outgoingAdj,
+            Map<String, List<ComposeAdj>> incomingAdj,
+            Map<String, ComposeNodeMeta> bound,
+            Map<Integer, GraphComposeQuery.MatchedEdge> satisfiedEdges,
+            String anchorAlias,
+            Set<String> seenBindingKeys,
+            List<ScoredMatch> collected,
+            int poolCap,
+            boolean[] poolTruncated,
+            ComposeExecutionGuard execGuard) {
+        if (execGuard.stopReason() != StopReason.NONE || poolTruncated[0]) {
+            return;
+        }
+        if (depth == aliasOrder.size()) {
+            // Verify all edge patterns are satisfied
+            var edgeWitnesses = new ArrayList<GraphComposeQuery.MatchedEdge>(query.matchEdges().size());
+            for (int i = 0; i < query.matchEdges().size(); i++) {
+                var witness = satisfiedEdges.get(i);
+                if (witness == null) {
+                    var ep = query.matchEdges().get(i);
+                    String fromId = bound.get(ep.from()).id();
+                    String toId = bound.get(ep.to()).id();
+                    var reached = boundedMultiHopSearch(fromId, ep.edgeKinds(), ep.minHops(), ep.maxHops(),
+                            outgoingAdj, Set.of(toId), false, execGuard);
+                    if (execGuard.stopReason() != StopReason.NONE) {
+                        return;
+                    }
+                    HopWitness hw = reached.get(toId);
+                    if (hw == null) {
+                        return;
+                    }
+                    witness = new GraphComposeQuery.MatchedEdge(ep.from(), ep.to(), fromId, toId, hw.hops(), hw.edgeKinds());
+                }
+                edgeWitnesses.add(witness);
+            }
+            var keyBuilder = new StringBuilder();
+            for (var np : query.matchNodes()) {
+                if (keyBuilder.length() > 0) keyBuilder.append('|');
+                keyBuilder.append(np.alias()).append('=').append(bound.get(np.alias()).id());
+            }
+            String bindingKey = keyBuilder.toString();
+            if (!seenBindingKeys.add(bindingKey)) {
+                return;
+            }
+            if (collected.size() >= poolCap) {
+                poolTruncated[0] = true;
+                return;
+            }
+            String anchorId = bound.get(anchorAlias).id();
+            BigDecimal score = scoreComposeMatch(query, patternByAlias, bound, edgeWitnesses);
+            var projectedBindings = new TreeMap<String, GraphComposeQuery.ProjectedNode>();
+            for (var e : bound.entrySet()) {
+                projectedBindings.put(e.getKey(), e.getValue().toProjected());
+            }
+            var match = new GraphComposeQuery.ComposeMatch(anchorId, score, projectedBindings, edgeWitnesses);
+            collected.add(new ScoredMatch(anchorId, score, bindingKey, match));
+            return;
+        }
+
+        // Pick next unbound alias: prefer one connected by an edge to an already-bound alias for aggressive pruning
+        String nextAlias = null;
+        int drivingEdgeIdx = -1;
+        boolean drivingForward = true;
+        for (int i = 0; i < query.matchEdges().size(); i++) {
+            var ep = query.matchEdges().get(i);
+            boolean fromBound = bound.containsKey(ep.from());
+            boolean toBound = bound.containsKey(ep.to());
+            if (fromBound && !toBound) {
+                nextAlias = ep.to();
+                drivingEdgeIdx = i;
+                drivingForward = true;
+                break;
+            }
+            if (!fromBound && toBound) {
+                nextAlias = ep.from();
+                drivingEdgeIdx = i;
+                drivingForward = false;
+                break;
+            }
+        }
+        if (nextAlias == null) {
+            for (String candidateAlias : aliasOrder) {
+                if (!bound.containsKey(candidateAlias)) {
+                    nextAlias = candidateAlias;
+                    break;
+                }
+            }
+        }
+        if (nextAlias == null) {
+            return;
+        }
+
+        List<ComposeNodeMeta> domain;
+        Map<String, HopWitness> drivingWitnesses = null;
+        if (drivingEdgeIdx >= 0) {
+            var ep = query.matchEdges().get(drivingEdgeIdx);
+            String startId = bound.get(drivingForward ? ep.from() : ep.to()).id();
+            var adj = drivingForward ? outgoingAdj : incomingAdj;
+            drivingWitnesses = boundedMultiHopSearch(startId, ep.edgeKinds(), ep.minHops(), ep.maxHops(),
+                    adj, candidateIdSets.get(nextAlias), !drivingForward, execGuard);
+            if (execGuard.stopReason() != StopReason.NONE || drivingWitnesses.isEmpty()) {
+                return;
+            }
+            domain = new ArrayList<>(drivingWitnesses.size());
+            for (String id : drivingWitnesses.keySet()) {
+                var meta = nodeMetaById.get(id);
+                if (meta != null) {
+                    domain.add(meta);
+                }
+            }
+        } else {
+            domain = candidatesByAlias.get(nextAlias);
+        }
+
+        for (var candidate : domain) {
+            if (!execGuard.step() || poolTruncated[0]) {
+                return;
+            }
+            bound.put(nextAlias, candidate);
+            var addedEdgeIndices = new ArrayList<Integer>();
+            boolean edgesConsistent = true;
+            if (drivingEdgeIdx >= 0 && drivingWitnesses != null) {
+                var ep = query.matchEdges().get(drivingEdgeIdx);
+                HopWitness hw = drivingWitnesses.get(candidate.id());
+                satisfiedEdges.put(drivingEdgeIdx, new GraphComposeQuery.MatchedEdge(
+                        ep.from(), ep.to(), bound.get(ep.from()).id(), bound.get(ep.to()).id(),
+                        hw.hops(), hw.edgeKinds()));
+                addedEdgeIndices.add(drivingEdgeIdx);
+            }
+            // Eagerly validate any other edge whose both endpoints are now bound
+            for (int i = 0; i < query.matchEdges().size(); i++) {
+                if (i == drivingEdgeIdx || satisfiedEdges.containsKey(i)) {
+                    continue;
+                }
+                var ep = query.matchEdges().get(i);
+                if (bound.containsKey(ep.from()) && bound.containsKey(ep.to())) {
+                    String fromId = bound.get(ep.from()).id();
+                    String toId = bound.get(ep.to()).id();
+                    var reached = boundedMultiHopSearch(fromId, ep.edgeKinds(), ep.minHops(), ep.maxHops(),
+                            outgoingAdj, Set.of(toId), false, execGuard);
+                    if (execGuard.stopReason() != StopReason.NONE) {
+                        edgesConsistent = false;
+                        break;
+                    }
+                    HopWitness hw = reached.get(toId);
+                    if (hw == null) {
+                        edgesConsistent = false;
+                        break;
+                    }
+                    satisfiedEdges.put(i, new GraphComposeQuery.MatchedEdge(
+                            ep.from(), ep.to(), fromId, toId, hw.hops(), hw.edgeKinds()));
+                    addedEdgeIndices.add(i);
+                }
+            }
+
+            if (edgesConsistent && execGuard.stopReason() == StopReason.NONE) {
+                backtrackComposeJoin(
+                        depth + 1, aliasOrder, query, patternByAlias, candidatesByAlias, candidateIdSets,
+                        nodeMetaById, outgoingAdj, incomingAdj, bound, satisfiedEdges,
+                        anchorAlias, seenBindingKeys, collected, poolCap, poolTruncated, execGuard);
+            }
+            for (int idx : addedEdgeIndices) {
+                satisfiedEdges.remove(idx);
+            }
+            bound.remove(nextAlias);
+        }
+    }
+
+    /**
+     * Exact bounded multi-hop layered BFS ({@code 1 <= minHops <= maxHops <= 4}) returning reachable
+     * targets in deterministic node-ID order with shortest valid hop count and edge-kind witnesses.
+     */
+    private static Map<String, HopWitness> boundedMultiHopSearch(
+            String startId,
+            List<String> allowedEdgeKinds,
+            int minHops,
+            int maxHops,
+            Map<String, List<ComposeAdj>> adjacency,
+            Set<String> targetFilter,
+            boolean reversePathKinds,
+            ComposeExecutionGuard execGuard) {
+        var reached = new TreeMap<String, HopWitness>();
+        Set<String> kindFilter = allowedEdgeKinds.isEmpty() ? Set.of() : Set.copyOf(allowedEdgeKinds);
+        var frontier = new TreeMap<String, List<String>>();
+        frontier.put(startId, List.of());
+
+        for (int depth = 1; depth <= maxHops && !frontier.isEmpty(); depth++) {
+            var nextFrontier = new TreeMap<String, List<String>>();
+            for (var entry : frontier.entrySet()) {
+                if (!execGuard.step()) {
+                    return reached;
+                }
+                String curr = entry.getKey();
+                List<String> prefixKinds = entry.getValue();
+                for (var adj : adjacency.getOrDefault(curr, List.of())) {
+                    if (!kindFilter.isEmpty() && !kindFilter.contains(adj.edgeKind())) {
+                        continue;
+                    }
+                    if (!execGuard.step()) {
+                        return reached;
+                    }
+                    String next = adj.neighborId();
+                    if (next.equals(startId)) {
+                        continue;
+                    }
+                    var nextKinds = new ArrayList<String>(prefixKinds.size() + 1);
+                    nextKinds.addAll(prefixKinds);
+                    nextKinds.add(adj.edgeKind());
+                    List<String> frozenKinds = List.copyOf(nextKinds);
+                    nextFrontier.putIfAbsent(next, frozenKinds);
+                    if (depth >= minHops && targetFilter.contains(next) && !reached.containsKey(next)) {
+                        List<String> orientedKinds = frozenKinds;
+                        if (reversePathKinds && frozenKinds.size() > 1) {
+                            var rev = new ArrayList<>(frozenKinds);
+                            Collections.reverse(rev);
+                            orientedKinds = List.copyOf(rev);
+                        }
+                        reached.put(next, new HopWitness(depth, orientedKinds));
+                    }
+                }
+            }
+            frontier = nextFrontier;
+        }
+        return reached;
+    }
+
+    private static boolean matchesNodePattern(GraphComposeQuery.NodePattern np, ComposeNodeMeta meta) {
+        if (np.kind().isPresent() && !np.kind().orElseThrow().equalsIgnoreCase(meta.kind())) {
+            return false;
+        }
+        if (np.trustTier().isPresent() && np.trustTier().orElseThrow() != meta.trustTier()) {
+            return false;
+        }
+        if (np.namePattern().isPresent()) {
+            return GraphComposeQuery.matchesNamePattern(
+                    np.namePattern().orElseThrow(), meta.fqn(), meta.simpleName(), meta.id());
+        }
+        return true;
+    }
+
+    private static boolean matchesAllFilters(
+            List<GraphComposeQuery.FilterClause> filters,
+            Map<GraphComposeQuery.FilterClause, Pattern> compiledRegexes,
+            ComposeNodeMeta meta) {
+        for (var fc : filters) {
+            String fieldVal = meta.fieldValue(fc.field());
+            switch (fc.op()) {
+                case EXISTS -> {
+                    boolean wantPresent = fc.value().map(v -> !"false".equalsIgnoreCase(v)).orElse(true);
+                    boolean present = fieldVal != null && !fieldVal.isBlank();
+                    if (wantPresent != present) {
+                        return false;
+                    }
+                }
+                case EQ -> {
+                    if (fieldVal == null || !fieldVal.equals(fc.value().orElseThrow())) {
+                        return false;
+                    }
+                }
+                case NEQ -> {
+                    if (fieldVal != null && fieldVal.equals(fc.value().orElseThrow())) {
+                        return false;
+                    }
+                }
+                case CONTAINS -> {
+                    if (fieldVal == null || !fieldVal.toLowerCase(Locale.ROOT)
+                            .contains(fc.value().orElseThrow().toLowerCase(Locale.ROOT))) {
+                        return false;
+                    }
+                }
+                case PREFIX -> {
+                    if (fieldVal == null || !fieldVal.startsWith(fc.value().orElseThrow())) {
+                        return false;
+                    }
+                }
+                case REGEX_BOUNDED -> {
+                    Pattern pat = compiledRegexes.get(fc);
+                    if (fieldVal == null || pat == null || !GraphComposeQuery.boundedRegexMatch(pat, fieldVal)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static BigDecimal scoreComposeMatch(
+            GraphComposeQuery query,
+            Map<String, GraphComposeQuery.NodePattern> patternByAlias,
+            Map<String, ComposeNodeMeta> bindings,
+            List<GraphComposeQuery.MatchedEdge> matchedEdges) {
+        double trustSum = 0.0;
+        double nameBonus = 0.0;
+        double spanBonus = 0.0;
+        for (var e : bindings.entrySet()) {
+            ComposeNodeMeta meta = e.getValue();
+            trustSum += switch (meta.trustTier()) {
+                case COMPILER -> 1.00;
+                case SPRING_SAT -> 0.95;
+                case SOURCE_SYNTAX -> 0.80;
+                case ADVISORY_UNVERIFIED -> 0.50;
+            };
+            var np = patternByAlias.get(e.getKey());
+            if (np != null && np.namePattern().isPresent()) {
+                String pat = np.namePattern().orElseThrow();
+                if (pat.equalsIgnoreCase(meta.fqn()) || pat.equalsIgnoreCase(meta.simpleName())) {
+                    nameBonus += 0.30;
+                } else if (meta.fqn().toLowerCase(Locale.ROOT).startsWith(pat.toLowerCase(Locale.ROOT))
+                        || meta.simpleName().toLowerCase(Locale.ROOT).startsWith(pat.toLowerCase(Locale.ROOT))) {
+                    nameBonus += 0.15;
+                } else {
+                    nameBonus += 0.05;
+                }
+            }
+            if (meta.sourcePath().isPresent() && meta.startLine() >= 1) {
+                spanBonus += 0.10;
+            }
+        }
+        int n = Math.max(1, bindings.size());
+        double edgeBonus = 0.0;
+        for (var me : matchedEdges) {
+            edgeBonus += 0.20 / Math.max(1, me.hops());
+        }
+        ComposeNodeMeta anchor = bindings.get(query.matchNodes().getFirst().alias());
+        double degreeTieBreak = anchor == null ? 0.0 : Math.min(0.10, Math.log1p(anchor.degree()) * 0.02);
+        double total = (trustSum / n) + (nameBonus / n) + (spanBonus / n) + edgeBonus + degreeTieBreak;
+        return BigDecimal.valueOf(total).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private Optional<ComposeDocMeta> extractComposeDocMeta(KnowledgeGraph targetGraph, KnowledgeGraph.Node node) {
+        String path = null;
+        String sha = null;
+        for (var ref : node.evidence()) {
+            var ev = targetGraph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if ("source.document".equals(ev.family())) {
+                var payload = parseEvidenceForCompose(targetGraph, ev);
+                if (path == null && payload.get("path") instanceof String p) {
+                    path = GraphComposeQuery.validateRelativeSourcePath(p).orElse(null);
+                }
+                if (sha == null) {
+                    sha = firstNonBlank(optionalText(payload, "contentDigest"), optionalText(payload, "contentSha256"));
+                }
+            } else if ("source.bytes".equals(ev.family())) {
+                var payload = parseEvidenceForCompose(targetGraph, ev);
+                if (payload.get("document") instanceof Map<?, ?> docObj) {
+                    var doc = GraphJson.object(docObj);
+                    if (path == null && doc.get("path") instanceof String p) {
+                        path = GraphComposeQuery.validateRelativeSourcePath(p).orElse(null);
+                    }
+                    if (sha == null) {
+                        sha = firstNonBlank(optionalText(doc, "contentDigest"), optionalText(doc, "contentSha256"));
+                    }
+                }
+            }
+        }
+        if (path == null && sha == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ComposeDocMeta(path == null ? "" : path, sha == null ? "" : sha));
+    }
+
+    private ComposeNodeMeta extractComposeNodeMeta(
+            KnowledgeGraph targetGraph,
+            KnowledgeGraph.Node node,
+            Map<String, ComposeDocMeta> docs,
+            int degree) {
+        String fqn = "";
+        String simpleName = "";
+        String sourcePath = "";
+        String contentSha = "";
+        int startLine = 0;
+        int endLine = 0;
+        String module = null;
+        String origin = null;
+        String sourceSet = null;
+        TrustTier trustTier = inferNodeTrustTier(targetGraph, node);
+
+        for (var ref : node.evidence()) {
+            var ev = targetGraph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            var payload = parseEvidenceForCompose(targetGraph, ev);
+            String family = ev.family();
+
+            if ("java.declaration".equals(family)) {
+                if (payload.get("entity") instanceof Map<?, ?> entObj) {
+                    var entity = GraphJson.object(entObj);
+                    String canonical = optionalText(entity, "canonicalName");
+                    if (canonical != null && !canonical.isBlank() && fqn.isEmpty()) {
+                        if ("PACKAGE".equals(node.kind()) && canonical.startsWith("java:v1:")) {
+                            try {
+                                fqn = qualifiedName(packageName(canonical));
+                            } catch (IllegalArgumentException ignored) {
+                                fqn = "";
+                            }
+                        } else {
+                            fqn = qualifiedName(canonical);
+                        }
+                    }
+                    if (origin == null) origin = optionalText(entity, "origin");
+                    String scope = optionalText(entity, "stableScope");
+                    if (module == null && scope != null && scope.startsWith("module:")) {
+                        module = scope;
+                    }
+                    if (entity.get("declaration") instanceof Map<?, ?> spanObj) {
+                        var span = GraphJson.object(spanObj);
+                        String docId = optionalText(span, "document");
+                        if (docId != null) {
+                            var dm = docs.get(docId);
+                            if (dm != null) {
+                                if (sourcePath.isEmpty() && !dm.path().isEmpty()) sourcePath = dm.path();
+                                if (contentSha.isEmpty() && !dm.sha256().isEmpty()) contentSha = dm.sha256();
+                            }
+                        }
+                        if (startLine <= 0) startLine = optSpanInt(span, "startLine");
+                        if (endLine <= 0) endLine = optSpanInt(span, "endLine");
+                    }
+                }
+                String sp = optionalText(payload, "spelling");
+                if (simpleName.isEmpty() && sp != null && safeSpelling(sp)) {
+                    simpleName = sp;
+                }
+            } else if ("source.document".equals(family)) {
+                var dm = docs.get(node.identity());
+                if (dm != null) {
+                    if (sourcePath.isEmpty()) sourcePath = dm.path();
+                    if (contentSha.isEmpty()) contentSha = dm.sha256();
+                } else {
+                    String rawP = optionalText(payload, "path");
+                    var validP = GraphComposeQuery.validateRelativeSourcePath(rawP);
+                    if (validP.isPresent() && sourcePath.isEmpty()) sourcePath = validP.orElseThrow();
+                    String dig = firstNonBlank(optionalText(payload, "contentDigest"), optionalText(payload, "contentSha256"));
+                    if (dig != null && contentSha.isEmpty()) contentSha = dig;
+                }
+                if (fqn.isEmpty() && !sourcePath.isEmpty()) fqn = sourcePath;
+                if (startLine <= 0 && !sourcePath.isEmpty()) {
+                    startLine = 1;
+                    endLine = 1;
+                }
+                if (module == null) module = optionalText(payload, "module");
+                if (sourceSet == null) sourceSet = optionalText(payload, "classification");
+            } else if ("source.bytes".equals(family)) {
+                if (payload.get("document") instanceof Map<?, ?> docObj) {
+                    var doc = GraphJson.object(docObj);
+                    var validP = GraphComposeQuery.validateRelativeSourcePath(optionalText(doc, "path"));
+                    if (validP.isPresent() && sourcePath.isEmpty()) sourcePath = validP.orElseThrow();
+                    String dig = firstNonBlank(optionalText(doc, "contentDigest"), optionalText(doc, "contentSha256"));
+                    if (dig != null && contentSha.isEmpty()) contentSha = dig;
+                    if (fqn.isEmpty() && !sourcePath.isEmpty()) fqn = sourcePath;
+                    if (module == null) module = optionalText(doc, "module");
+                    if (sourceSet == null) sourceSet = optionalText(doc, "classification");
+                }
+            } else if ("module.descriptor".equals(family) || "build.module".equals(family)) {
+                var desc = "build.module".equals(family) && payload.get("descriptor") instanceof Map<?, ?> d
+                        ? GraphJson.object(d) : payload;
+                if (module == null) module = optionalText(desc, "identity");
+                if (origin == null) origin = "PROJECT";
+                String rawModPath = optionalText(desc, "path");
+                if (rawModPath != null && fqn.isEmpty()) {
+                    try {
+                        fqn = ContractChecks.modulePath(rawModPath);
+                    } catch (IllegalArgumentException ignored) {
+                        // Never leak host paths
+                    }
+                }
+            } else if ("spring.endpoint-declaration".equals(family)) {
+                if (payload.get("route") instanceof Map<?, ?> routeObj) {
+                    var route = GraphJson.object(routeObj);
+                    String routePath = optionalText(route, "path");
+                    String methods = route.get("methods") instanceof List<?> ms
+                            ? String.join(",", ms.stream().filter(String.class::isInstance).map(String.class::cast).toList())
+                            : "";
+                    if (routePath != null && !routePath.isBlank() && fqn.isEmpty()) {
+                        fqn = methods.isEmpty() ? routePath : methods + " " + routePath;
+                    }
+                    if (route.get("span") instanceof Map<?, ?> spanObj) {
+                        var span = GraphJson.object(spanObj);
+                        String docId = optionalText(span, "document");
+                        if (docId != null && docs.containsKey(docId)) {
+                            var dm = docs.get(docId);
+                            if (sourcePath.isEmpty()) sourcePath = dm.path();
+                            if (contentSha.isEmpty()) contentSha = dm.sha256();
+                        }
+                        if (startLine <= 0) startLine = optSpanInt(span, "startLine");
+                        if (endLine <= 0) endLine = optSpanInt(span, "endLine");
+                    }
+                }
+                if (module == null) module = optionalText(payload, "module");
+                if (sourceSet == null) sourceSet = optionalText(payload, "sourceSet");
+                if (origin == null) origin = "PROJECT";
+            } else if ("spring.candidate".equals(family)) {
+                if (payload.get("declaredNameKey") instanceof Map<?, ?> nkObj) {
+                    var nk = GraphJson.object(nkObj);
+                    String primary = optionalText(nk, "primary");
+                    if (primary != null && !primary.isBlank() && fqn.isEmpty()) {
+                        fqn = primary;
+                    }
+                }
+            } else if (family.startsWith("polyglot.")) {
+                var fields = payload.get("fields") instanceof Map<?, ?> fm ? GraphJson.object(fm) : payload;
+                String rawP = decodeSafePolyglotPath(fields.get("path"));
+                if (rawP.isEmpty()) rawP = decodeSafePolyglotPath(fields.get("rawPath"));
+                if (!rawP.isEmpty() && sourcePath.isEmpty()) sourcePath = rawP;
+                String dig = firstNonBlank(optionalText(fields, "contentDigest"), optionalText(fields, "contentSha256"));
+                if (dig != null && contentSha.isEmpty()) contentSha = dig;
+                if (sourceSet == null) sourceSet = safePolyglotLabel(optionalText(fields, "language"));
+                if (fields.get("fact") instanceof Map<?, ?> factObj) {
+                    var fact = GraphJson.object(factObj);
+                    String fname = safePolyglotLabel(optionalText(fact, "name"));
+                    if (fact.get("attributes") instanceof Map<?, ?> attrObj) {
+                        String qn = safePolyglotLabel(optionalText(GraphJson.object(attrObj), "qualifiedName"));
+                        if (qn != null) fname = qn;
+                    }
+                    if (fname != null && fqn.isEmpty()) {
+                        fqn = sourcePath.isEmpty() ? fname : sourcePath + "#" + fname;
+                        simpleName = fname;
+                    }
+                    if (fact.get("span") instanceof Map<?, ?> spanObj) {
+                        var span = GraphJson.object(spanObj);
+                        if (startLine <= 0) startLine = optSpanInt(span, "startLine");
+                        if (endLine <= 0) endLine = optSpanInt(span, "endLine");
+                    }
+                }
+                if (origin == null) origin = "PROJECT";
+            }
+
+            // Generic span fallback (validating relative paths strictly — never leaking host paths!)
+            if (payload.get("span") instanceof Map<?, ?> spanObj) {
+                var span = GraphJson.object(spanObj);
+                String docId = optionalText(span, "document");
+                if (docId != null && docs.containsKey(docId)) {
+                    var dm = docs.get(docId);
+                    if (sourcePath.isEmpty()) sourcePath = dm.path();
+                    if (contentSha.isEmpty()) contentSha = dm.sha256();
+                }
+                String spath = optionalText(span, "path");
+                if (sourcePath.isEmpty() && spath != null) {
+                    sourcePath = GraphComposeQuery.validateRelativeSourcePath(spath).orElse("");
+                }
+                if (startLine <= 0) startLine = optSpanInt(span, "startLine");
+                if (endLine <= 0) endLine = optSpanInt(span, "endLine");
+            }
+            if (sourcePath.isEmpty()) {
+                String spath = firstNonBlank(optionalText(payload, "sourcePath"), null);
+                if (spath != null) {
+                    sourcePath = GraphComposeQuery.validateRelativeSourcePath(spath).orElse("");
+                }
+            }
+            if (contentSha.isEmpty()) {
+                String dig = firstNonBlank(optionalText(payload, "contentSha256"), optionalText(payload, "contentDigest"));
+                if (dig != null) contentSha = dig;
+            }
+            if (startLine <= 0) {
+                int sl = optSpanInt(payload, "startLine");
+                if (sl > 0) startLine = sl;
+            }
+            if (endLine <= 0) {
+                int el = optSpanInt(payload, "endLine");
+                if (el > 0) endLine = el;
+            }
+        }
+
+        if (fqn.isEmpty()) {
+            fqn = !sourcePath.isEmpty() ? sourcePath : node.identity();
+        }
+        if (simpleName.isEmpty()) {
+            int hashIdx = fqn.lastIndexOf('#');
+            int dotIdx = fqn.lastIndexOf('.');
+            int slashIdx = fqn.lastIndexOf('/');
+            int sep = Math.max(hashIdx, Math.max(dotIdx, slashIdx));
+            simpleName = (sep >= 0 && sep + 1 < fqn.length()) ? fqn.substring(sep + 1) : fqn;
+        }
+        int finalStart = Math.max(0, startLine);
+        int finalEnd = Math.max(finalStart, endLine);
+        String shaPrefix = GraphComposeQuery.normalizeShaPrefix(
+                !contentSha.isEmpty() ? contentSha : node.evidence().getFirst().value());
+        Optional<String> validPath = sourcePath.isEmpty() ? Optional.empty() : Optional.of(sourcePath);
+        String pointerRef = GraphComposeQuery.formatPointerRef(
+                validPath, node.kind(), node.identity(), finalStart, finalEnd, shaPrefix);
+
+        return new ComposeNodeMeta(
+                node.identity(),
+                node.context(),
+                node.kind(),
+                fqn,
+                simpleName,
+                trustTier,
+                validPath,
+                finalStart,
+                finalEnd,
+                shaPrefix,
+                pointerRef,
+                Optional.ofNullable(module),
+                Optional.ofNullable(origin),
+                Optional.ofNullable(sourceSet),
+                degree);
+    }
+
+    private TrustTier inferNodeTrustTier(KnowledgeGraph targetGraph, KnowledgeGraph.Node node) {
+        boolean hasSpring = false;
+        boolean hasCompiler = false;
+        boolean hasSyntax = false;
+        boolean hasAdvisory = false;
+        for (var ref : node.evidence()) {
+            var ev = targetGraph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            String fam = ev.family();
+            var payload = parseEvidenceForCompose(targetGraph, ev);
+            String explicit = firstNonBlank(optionalText(payload, "trustTier"), optionalText(payload, "trust"));
+            if (explicit != null) {
+                try {
+                    TrustTier parsed = TrustTier.valueOf(explicit.strip().toUpperCase(Locale.ROOT));
+                    if (parsed == TrustTier.ADVISORY_UNVERIFIED) hasAdvisory = true;
+                    else if (parsed == TrustTier.SPRING_SAT) hasSpring = true;
+                    else if (parsed == TrustTier.COMPILER) hasCompiler = true;
+                    else if (parsed == TrustTier.SOURCE_SYNTAX) hasSyntax = true;
+                    continue;
+                } catch (IllegalArgumentException ignored) {
+                    // Ignore non-enum trust labels like "HIGH"/"MEDIUM"
+                }
+            }
+            if (fam.startsWith("advisory.")) {
+                hasAdvisory = true;
+            } else if (fam.startsWith("spring.")) {
+                hasSpring = true;
+            } else if (fam.startsWith("polyglot.source-syntax") || fam.startsWith("polyglot.inventory")) {
+                hasSyntax = true;
+            } else if (fam.equals("java.declaration") || fam.equals("java.type-shape")
+                    || fam.equals("java.member-shape") || fam.equals("java.occurrence")
+                    || fam.equals("java.type-use") || fam.startsWith("scip.")) {
+                hasCompiler = true;
+            } else {
+                hasSyntax = true;
+            }
+        }
+        if (hasAdvisory && !hasCompiler && !hasSpring) return TrustTier.ADVISORY_UNVERIFIED;
+        if (hasSpring) return TrustTier.SPRING_SAT;
+        if (hasCompiler) return TrustTier.COMPILER;
+        if (hasSyntax) return TrustTier.SOURCE_SYNTAX;
+        return TrustTier.SOURCE_SYNTAX;
+    }
+
+    private Map<String, Object> parseEvidenceForCompose(KnowledgeGraph targetGraph, GraphEvidence ev) {
+        if (targetGraph == this.graph) {
+            return parsedEvidence(ev);
+        }
+        try {
+            return Collections.unmodifiableMap(GraphJson.object(
+                    GraphJson.read(ev.canonicalJson(), new GraphJson.Limits(8_000_000, 128, 200_000))));
+        } catch (IllegalArgumentException malformed) {
+            return Map.of();
+        }
+    }
+
+    private static String decodeSafePolyglotPath(Object rawValue) {
+        if (!(rawValue instanceof String text) || text.isBlank()) {
+            return "";
+        }
+        try {
+            var decoded = new com.evolution.analysis.acquisition.streaming.LogicalPath(text).utf8();
+            if (decoded.isPresent()) {
+                return GraphComposeQuery.validateRelativeSourcePath(decoded.orElseThrow()).orElse("");
+            }
+        } catch (IllegalArgumentException notBase64) {
+            return GraphComposeQuery.validateRelativeSourcePath(text).orElse("");
+        }
+        return "";
+    }
+
+    private static int optSpanInt(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        if (val instanceof Number n) {
+            return Math.max(0, n.intValue());
+        }
+        return 0;
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) return a.strip();
+        if (b != null && !b.isBlank()) return b.strip();
+        return null;
+    }
+
+    private static String stopReasonGapCode(StopReason reason) {
+        return switch (reason) {
+            case MEMORY -> "COMPOSE_QUERY_MEMORY_LIMIT";
+            case TIME -> "COMPOSE_QUERY_TIME_LIMIT";
+            case CANCELLED -> "COMPOSE_QUERY_CANCELLED";
+            case STEPS -> "COMPOSE_QUERY_STATE_LIMIT";
+            default -> "COMPOSE_QUERY_TRUNCATED";
+        };
+    }
+
+    private static CapabilityGapRecord composeGap(
+            KnowledgeGraph targetGraph,
+            Optional<String> contextOpt,
+            ContentDigest queryDigest,
+            String reasonCode) {
+        Optional<com.evolution.analysis.contract.identity.AnalysisIdentity> analysisId = contextOpt
+                .flatMap(ctxId -> targetGraph.contexts().stream()
+                        .filter(c -> c.identity().equals(ctxId))
+                        .findFirst()
+                        .flatMap(KnowledgeGraph.Context::analysis));
+        var observation = ProviderObservationReference.create(
+                VERSION, "query.compose", targetGraph.identity(), queryDigest);
+        var subject = EvidenceSubject.observation(observation.identity());
+        var requirement = new EvidenceRequirement(
+                EvidenceRequirement.Kind.REPOSITORY_CONTENT,
+                "query.compose-complete",
+                List.of(subject),
+                EvidenceRequirement.AuthorizationClass.PASSIVE,
+                List.of("Narrow matchNodes/filters or rerun within bounded operational limits."));
+        return CapabilityGapRecord.create(
+                new VersionedIdentifier("evidence.query-gaps", "m5.2-v1"),
+                new EvidenceContext(targetGraph.snapshot(), analysisId),
+                VERSION,
+                "query.compose",
+                reasonCode,
+                subject,
+                List.of(),
+                List.of(observation),
+                List.of(requirement),
+                List.of(),
+                List.of(new AffectedOutput(AffectedOutput.Kind.GRAPH_PROJECTION, "query.compose")),
+                List.of(),
+                List.of(),
+                List.of("Compositional query execution stopped early or was qualified; absence of rows is not proof of absent facts."));
     }
 
     public Result<EntityView> entities(Request request, String search, Page page) {

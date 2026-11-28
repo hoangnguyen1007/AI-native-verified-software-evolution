@@ -194,4 +194,45 @@ class ArchitectureQueryContractTest {
         assertEquals(2, smallCache.cacheStats().entries());
         assertTrue(smallCache.cacheStats().evictions() >= 1);
     }
+
+    @Test void composeQueryAndSchemaViewHideDeclarationBodiesAndHostPathsAndReplayDeterministically() {
+        var f = new Fixture();
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/compose-contract.git");
+        var module = ModuleDescriptor.create(repo, "app", "app");
+        var validDoc = SourceDocument.create(repo, module, "app/src/main/java/p/SafeType.java",
+                ContentDigest.sha256Utf8("class SafeType {}"), SourceClassification.MAIN);
+        var validDocEv = GraphEvidence.capture("source.document", validDoc);
+        var badDocEv = GraphEvidence.capture("source.document",
+                Map.of("identity", id("host-doc"), "path", "C:/PRIVATE_HOST_PATH/Bad.java"));
+        var safeEntity = Entity.create(EntityOrigin.PROJECT, EntityScope.project(module.identity()), EntityKind.TYPE,
+                "p.SafeType", Optional.of(new SourceSpan(validDoc.identity(), 4, 1, 18, 1)));
+        var leakyDecl = GraphEvidence.capture("java.declaration", Map.of(
+                "entity", safeEntity,
+                "spelling", "class SafeType { String secret = \"PRIVATE_BODY_SENTINEL\"; }"));
+        f.evidence.addAll(List.of(validDocEv, badDocEv, leakyDecl));
+        f.nodes.add(new KnowledgeGraph.Node(validDoc.identity().value(), f.context, "SOURCE_DOCUMENT", List.of(validDocEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("host-doc"), f.context, "SOURCE_DOCUMENT", List.of(badDocEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(safeEntity.identity().value(), f.context, "TYPE", List.of(leakyDecl.identity())));
+
+        var graph = f.graph();
+        var service = new ArchitectureQueryService(graph);
+        var query = GraphComposeQuery.of(
+                List.of(new GraphComposeQuery.NodePattern("n", Optional.empty(), Optional.empty(), Optional.empty())),
+                List.of(), List.of());
+        var compose = service.composeQuery(graph, query);
+        var schema = service.schemaView(graph);
+
+        String composeJson = com.evolution.analysis.contract.serialization.CanonicalJson.write(compose.toView());
+        String schemaJson = com.evolution.analysis.contract.serialization.CanonicalJson.write(schema.toView());
+        assertFalse(composeJson.contains("PRIVATE_BODY_SENTINEL"), "Declaration body must never leak in composeQuery");
+        assertFalse(composeJson.contains("PRIVATE_HOST_PATH"), "Host path must never leak in composeQuery pointerRef");
+        assertFalse(schemaJson.contains("PRIVATE_HOST_PATH"), "Host path must never leak in schemaView");
+        assertTrue(composeJson.contains("app/src/main/java/p/SafeType.java:4-18@"),
+                "Validated relative span pointerRef must be emitted: " + composeJson);
+
+        var reloaded = new GraphSnapshotCodec().decode(new GraphSnapshotCodec().encode(graph), GraphJson.Limits.defaults());
+        var reloadedSvc = new ArchitectureQueryService(reloaded);
+        assertEquals(compose.identity(), reloadedSvc.composeQuery(reloaded, query).identity());
+        assertEquals(schema.identity(), reloadedSvc.schemaView(reloaded).identity());
+    }
 }

@@ -120,12 +120,14 @@ class Moonshot5StreamableMcpAndScipTest {
             assertEquals(200, pingResp.statusCode());
             assertTrue(GraphJson.object(parseJson(pingResp.body()).get("result")).isEmpty());
 
-            // 4. tools/list -> 21 read-only tools
+            // 4. tools/list -> read-only tools including WP3.2 graph_compose_query
             var toolsResp = postMcp(http, root, sessionId, null, Map.of(
                     "jsonrpc", "2.0", "id", 3, "method", "tools/list", "params", Map.of()));
             assertEquals(200, toolsResp.statusCode());
             var toolsList = GraphJson.array(GraphJson.object(parseJson(toolsResp.body()).get("result")).get("tools"));
-            assertEquals(21, toolsList.size());
+            assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT, toolsList.size());
+            assertTrue(toolsList.stream().map(t -> GraphJson.string(GraphJson.object(t).get("name")))
+                    .anyMatch("graph_compose_query"::equals), "tools/list must expose graph_compose_query");
 
             // 5. tools/call graph_get + vertical_trace + unlisted operation rejection (-32602)
             var callGraphGet = postMcp(http, root, sessionId, null, Map.of(
@@ -154,12 +156,14 @@ class Moonshot5StreamableMcpAndScipTest {
             assertEquals(200, callRejected.statusCode());
             assertEquals(-32602, ((Number) GraphJson.object(parseJson(callRejected.body()).get("error")).get("code")).intValue());
 
-            // 6. resources/list (6) & resources/read (evo://score-v2)
+            // 6. resources/list (7 including evo://schema) & resources/read (evo://score-v2 + evo://schema)
             var resListResp = postMcp(http, root, sessionId, null, Map.of(
                     "jsonrpc", "2.0", "id", 6, "method", "resources/list", "params", Map.of()));
             assertEquals(200, resListResp.statusCode());
             var resources = GraphJson.array(GraphJson.object(parseJson(resListResp.body()).get("result")).get("resources"));
-            assertEquals(6, resources.size());
+            assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.RESOURCE_COUNT, resources.size());
+            assertTrue(resources.stream().map(r -> GraphJson.string(GraphJson.object(r).get("uri")))
+                    .anyMatch("evo://schema"::equals), "resources/list must expose evo://schema");
 
             var resReadResp = postMcp(http, root, sessionId, null, Map.of(
                     "jsonrpc", "2.0", "id", 7, "method", "resources/read",
@@ -168,6 +172,92 @@ class Moonshot5StreamableMcpAndScipTest {
             var contents = GraphJson.array(GraphJson.object(parseJson(resReadResp.body()).get("result")).get("contents"));
             String scoreText = GraphJson.string(GraphJson.object(contents.getFirst()).get("text"));
             assertTrue(scoreText.contains("architecture.score-formula"), scoreText);
+
+            var schemaReadResp = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 71, "method", "resources/read",
+                    "params", Map.of("uri", "evo://schema")));
+            assertEquals(200, schemaReadResp.statusCode());
+            String schemaText = GraphJson.string(GraphJson.object(
+                    GraphJson.array(GraphJson.object(parseJson(schemaReadResp.body()).get("result")).get("contents")).getFirst()).get("text"));
+            assertTrue(schemaText.contains("evo-schema:v1"), schemaText);
+            assertTrue(schemaText.contains("nodeKinds"), schemaText);
+            assertTrue(schemaText.contains("edgeKinds"), schemaText);
+            assertTrue(schemaText.contains("trustTiers"), schemaText);
+
+            var graphSchemaReadResp = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 72, "method", "resources/read",
+                    "params", Map.of("uri", "evo://graphs/" + fx.graphId() + "/schema")));
+            assertEquals(200, graphSchemaReadResp.statusCode());
+            String graphSchemaText = GraphJson.string(GraphJson.object(
+                    GraphJson.array(GraphJson.object(parseJson(graphSchemaReadResp.body()).get("result")).get("contents")).getFirst()).get("text"));
+            assertEquals(schemaText, graphSchemaText, "evo://graphs/{id}/schema must match evo://schema deterministically");
+
+            // 6b. tools/call graph_compose_query valid execution & strict schema validation rejections
+            var composeOkResp = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 73, "method", "tools/call",
+                    "params", Map.of("name", "graph_compose_query", "arguments", Map.of(
+                            "graph", fx.graphId(),
+                            "matchNodes", List.of(
+                                    Map.of("alias", "pkg", "kind", "PACKAGE"),
+                                    Map.of("alias", "svc", "kind", "TYPE", "namePattern", "*Service")),
+                            "matchEdges", List.of(
+                                    Map.of("from", "pkg", "to", "svc", "edgeKinds", List.of("graph.contains"), "minHops", 1, "maxHops", 2)),
+                            "filters", List.of(
+                                    Map.of("alias", "svc", "field", "fqn", "op", "PREFIX", "value", "com.acme.")),
+                            "returnFields", List.of("id", "fqn", "kind", "trustTier", "span", "pointerRef"),
+                            "limit", 10))));
+            assertEquals(200, composeOkResp.statusCode(), composeOkResp.body());
+            var composeRes = GraphJson.object(parseJson(composeOkResp.body()).get("result"));
+            assertEquals(false, composeRes.get("isError"), () -> "graph_compose_query failed: " + composeRes);
+            String composeText = GraphJson.string(GraphJson.object(GraphJson.array(composeRes.get("content")).getFirst()).get("text"));
+            assertTrue(composeText.contains("graph-compose-query:v1"), composeText);
+            assertTrue(composeText.contains("com.acme.orders.OrderService"), composeText);
+            assertTrue(composeText.contains("\"pointerRef\""), composeText);
+
+            var composeBadHops = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 74, "method", "tools/call",
+                    "params", Map.of("name", "graph_compose_query", "arguments", Map.of(
+                            "graph", fx.graphId(),
+                            "matchNodes", List.of(Map.of("alias", "a"), Map.of("alias", "b")),
+                            "matchEdges", List.of(Map.of("from", "a", "to", "b", "minHops", 1, "maxHops", 5))))));
+            assertEquals(200, composeBadHops.statusCode());
+            var badHopsRes = GraphJson.object(parseJson(composeBadHops.body()).get("result"));
+            assertEquals(true, badHopsRes.get("isError"));
+            assertTrue(badHopsRes.get("content").toString().contains("INVALID_HOP_BOUNDS"), badHopsRes.toString());
+
+            var composeBadRegex = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 75, "method", "tools/call",
+                    "params", Map.of("name", "graph_compose_query", "arguments", Map.of(
+                            "graph", fx.graphId(),
+                            "matchNodes", List.of(Map.of("alias", "a")),
+                            "filters", List.of(Map.of("alias", "a", "field", "fqn", "op", "REGEX_BOUNDED", "value", "(a+)+"))))));
+            assertEquals(200, composeBadRegex.statusCode());
+            var badRegexRes = GraphJson.object(parseJson(composeBadRegex.body()).get("result"));
+            assertEquals(true, badRegexRes.get("isError"));
+            assertTrue(badRegexRes.get("content").toString().contains("UNSAFE_REGEX_PATTERN"), badRegexRes.toString());
+
+            // 6c. Verify llm-redact:v2 pre-redaction on graph_compose_query preserves pointerRef while stripping secrets
+            String syntheticSecret = String.join("", "gh", "p_", "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8");
+            String pointerSample = "src/main/java/com/acme/OrderService.java:14-48@a1b2c3d4e5f6";
+            com.evolution.backend.query.mcp.McpToolDispatcher.ApiBackend secretStub = (m, p, body) ->
+                    new com.evolution.backend.query.mcp.McpToolDispatcher.BackendResponse(200, CanonicalJson.write(Map.of(
+                            "schema", "graph-compose-query:v1",
+                            "matches", List.of(Map.of(
+                                    "entityId", "entity:sha256:" + "a".repeat(64),
+                                    "bindings", Map.of("n", Map.of(
+                                            "fqn", "com.acme.Leak " + syntheticSecret,
+                                            "pointerRef", pointerSample)))))));
+            var redactedCall = com.evolution.backend.query.mcp.McpToolDispatcher.callTool(
+                    Map.of("name", "graph_compose_query", "arguments", Map.of(
+                            "graph", fx.graphId(),
+                            "matchNodes", List.of(Map.of("alias", "n")))),
+                    secretStub,
+                    new java.util.concurrent.atomic.AtomicReference<>(fx.graphId()),
+                    new java.util.concurrent.atomic.AtomicReference<>(fx.contextId()));
+            assertEquals(false, redactedCall.get("isError"));
+            String redactedText = GraphJson.string(GraphJson.object(GraphJson.array(redactedCall.get("content")).getFirst()).get("text"));
+            assertFalse(redactedText.contains(syntheticSecret), "llm-redact:v2 must strip secrets from graph_compose_query output");
+            assertTrue(redactedText.contains(pointerSample), "llm-redact:v2 must preserve pointerRef format: " + redactedText);
 
             // 7. GET /mcp -> 405 Method Not Allowed with Allow: POST, DELETE (even with text/event-stream Accept)
             var getMcp = http.send(HttpRequest.newBuilder(URI.create(root + "/mcp"))
@@ -265,6 +355,32 @@ class Moonshot5StreamableMcpAndScipTest {
             assertEquals(200, patTools.statusCode(), patTools.body());
             assertEquals(false, GraphJson.object(parseJson(patTools.body()).get("result")).get("isError"));
 
+            var patCompose = http.send(HttpRequest.newBuilder(URI.create(fx.root() + "/mcp"))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + fx.bobMcpReadPat())
+                    .header("Mcp-Session-Id", patSessionId)
+                    .POST(HttpRequest.BodyPublishers.ofString(CanonicalJson.write(
+                            Map.of("jsonrpc", "2.0", "id", 51, "method", "tools/call",
+                                    "params", Map.of("name", "graph_compose_query",
+                                            "arguments", Map.of("graph", fx.graphId(),
+                                                    "matchNodes", List.of(Map.of("alias", "n", "kind", "TYPE")),
+                                                    "limit", 10))))))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, patCompose.statusCode(), patCompose.body());
+            assertEquals(false, GraphJson.object(parseJson(patCompose.body()).get("result")).get("isError"));
+
+            var patSchema = http.send(HttpRequest.newBuilder(URI.create(fx.root() + "/mcp"))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + fx.bobMcpReadPat())
+                    .header("Mcp-Session-Id", patSessionId)
+                    .POST(HttpRequest.BodyPublishers.ofString(CanonicalJson.write(
+                            Map.of("jsonrpc", "2.0", "id", 52, "method", "resources/read",
+                                    "params", Map.of("uri", "evo://graphs/" + fx.graphId() + "/schema")))))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, patSchema.statusCode(), patSchema.body());
+            assertTrue(patSchema.body().contains("evo-schema:v1"), patSchema.body());
+            assertTrue(patSchema.body().contains("nodeKinds"), patSchema.body());
+
             var patDel = http.send(HttpRequest.newBuilder(URI.create(fx.root() + "/mcp"))
                     .header("Authorization", "Bearer " + fx.bobMcpReadPat())
                     .header("Mcp-Session-Id", patSessionId)
@@ -279,8 +395,8 @@ class Moonshot5StreamableMcpAndScipTest {
             var setupData = GraphJson.object(parseJson(setupResp.body()).get("data"));
             assertEquals(fx.root() + "/mcp", setupData.get("streamableHttpUrl"));
             assertEquals("2025-11-25", setupData.get("protocolVersion"));
-            assertEquals(21, ((Number) setupData.get("toolCount")).intValue());
-            assertEquals(6, ((Number) setupData.get("resourceCount")).intValue());
+            assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.TOOL_COUNT, ((Number) setupData.get("toolCount")).intValue());
+            assertEquals(com.evolution.backend.query.mcp.McpToolDispatcher.RESOURCE_COUNT, ((Number) setupData.get("resourceCount")).intValue());
             assertEquals(true, setupData.get("patRequired"));
             assertTrue(setupData.containsKey("workbenchProxyConfig"));
             assertTrue(setupData.containsKey("directOfflineConfig"));

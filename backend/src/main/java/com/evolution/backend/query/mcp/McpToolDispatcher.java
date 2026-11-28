@@ -7,11 +7,13 @@ import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.javaparser.slice.JavaMethodSlicer;
 import com.evolution.analysis.policy.PolicyEvaluator;
 import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer;
+import com.evolution.analysis.query.GraphComposeQuery;
 import com.evolution.analysis.treesitter.GoErrorPropagationSummarizer;
 import com.evolution.backend.auth.AuthenticatedUser;
 import com.evolution.backend.auth.RequestContext;
 import com.evolution.backend.query.ArchitectureQueryApi;
 import com.evolution.backend.query.QueryJson;
+import com.evolution.backend.query.llm.LlmTransport;
 
 import java.io.IOException;
 import java.net.URLEncoder;
@@ -32,16 +34,19 @@ import java.util.function.BooleanSupplier;
  * both stdio {@link com.evolution.backend.query.WorkbenchMcpMain} ({@code --port} &amp; {@code --store})
  * and Streamable HTTP {@code /mcp} ({@code POST|GET|DELETE /mcp}).
  *
- * <p>Owns the canonical schema catalog of all 21 read-only architecture tools and 6
- * {@code evo://} MCP resources with zero duplicated schemas or handlers.
+ * <p>Owns the canonical schema catalog of all read-only architecture tools (21 baseline +
+ * WP3.2 {@code graph_compose_query}; hook reserved for WP3.1 {@code symbol_ego_graph}) and 7
+ * {@code evo://} MCP resources (6 baseline + WP3.2 {@code evo://schema}) with zero duplicated
+ * schemas or handlers.
  */
 public final class McpToolDispatcher {
 
     public static final String PROTOCOL_VERSION = "2025-11-25";
     public static final String SERVER_NAME = "evo-workbench";
     public static final String SERVER_VERSION = "2.0.0";
-    public static final int TOOL_COUNT = 21;
-    public static final int RESOURCE_COUNT = 6;
+    // [p3-integrator HOOK — WP3.1]: Increment TOOL_COUNT from 22 -> 23 when registering Tool #22 "symbol_ego_graph".
+    public static final int TOOL_COUNT = 22;
+    public static final int RESOURCE_COUNT = 7;
     public static final int MAX_RESPONSE_BYTES = 16_777_216;
     public static final int MAX_SESSIONS = 256;
     public static final long SESSION_TTL_MILLIS = TimeUnit.HOURS.toMillis(4);
@@ -346,6 +351,76 @@ public final class McpToolDispatcher {
         traceSliceProps.put("direction", Map.of("type", "string", "enum", List.of("BACKWARD", "FORWARD", "BOTH")));
         traceSliceProps.put("maxStatements", Map.of("type", "integer", "minimum", 1, "maximum", 500));
 
+        var composeNodeItemProps = new LinkedHashMap<String, Object>();
+        composeNodeItemProps.put("alias", Map.of("type", "string",
+                "description", "Unique node pattern alias matching ^[a-zA-Z][a-zA-Z0-9_]{0,31}$."));
+        composeNodeItemProps.put("kind", Map.of("type", "string",
+                "description", "Optional node kind from evo://schema (e.g. TYPE, METHOD, ENDPOINT, BEAN_DEFINITION_CANDIDATE)."));
+        composeNodeItemProps.put("namePattern", Map.of("type", "string",
+                "description", "Optional bounded substring or glob (*, ?) name pattern (<= 128 chars)."));
+        composeNodeItemProps.put("trustTier", Map.of("type", "string",
+                "enum", Arrays.stream(TrustTier.values()).map(Enum::name).toList()));
+
+        var composeEdgeItemProps = new LinkedHashMap<String, Object>();
+        composeEdgeItemProps.put("from", Map.of("type", "string", "description", "Source node alias declared in matchNodes."));
+        composeEdgeItemProps.put("to", Map.of("type", "string", "description", "Target node alias declared in matchNodes."));
+        composeEdgeItemProps.put("edgeKinds", Map.of("type", "array", "items", Map.of("type", "string"),
+                "description", "Optional allowed canonical edge kinds from evo://schema."));
+        composeEdgeItemProps.put("minHops", Map.of("type", "integer", "minimum", GraphComposeQuery.MIN_HOPS,
+                "maximum", GraphComposeQuery.MAX_HOPS, "default", GraphComposeQuery.MIN_HOPS));
+        composeEdgeItemProps.put("maxHops", Map.of("type", "integer", "minimum", GraphComposeQuery.MIN_HOPS,
+                "maximum", GraphComposeQuery.MAX_HOPS, "default", GraphComposeQuery.MIN_HOPS));
+
+        var composeFilterItemProps = new LinkedHashMap<String, Object>();
+        composeFilterItemProps.put("alias", Map.of("type", "string", "description", "Node alias declared in matchNodes."));
+        composeFilterItemProps.put("field", Map.of("type", "string", "enum", GraphComposeQuery.QUERYABLE_FILTER_FIELDS));
+        composeFilterItemProps.put("op", Map.of("type", "string",
+                "enum", Arrays.stream(GraphComposeQuery.FilterOp.values()).map(Enum::name).sorted().toList()));
+        composeFilterItemProps.put("value", Map.of("type", "string",
+                "description", "Filter operand (bounded regex <= 128 chars for REGEX_BOUNDED; optional boolean string for EXISTS)."));
+
+        var composeQueryProps = new LinkedHashMap<String, Object>();
+        composeQueryProps.put("graph", graph);
+        composeQueryProps.put("context", context);
+        composeQueryProps.put("matchNodes", Map.of(
+                "type", "array",
+                "minItems", 1,
+                "maxItems", GraphComposeQuery.MAX_MATCH_NODES,
+                "items", Map.of(
+                        "type", "object",
+                        "properties", Collections.unmodifiableMap(composeNodeItemProps),
+                        "required", List.of("alias"),
+                        "additionalProperties", false),
+                "description", "Typed node patterns to match (discover valid kinds/trustTiers via evo://schema)."));
+        composeQueryProps.put("matchEdges", Map.of(
+                "type", "array",
+                "maxItems", GraphComposeQuery.MAX_MATCH_EDGES,
+                "items", Map.of(
+                        "type", "object",
+                        "properties", Collections.unmodifiableMap(composeEdgeItemProps),
+                        "required", List.of("from", "to"),
+                        "additionalProperties", false),
+                "description", "Optional multi-hop edge constraints (1 <= minHops <= maxHops <= 4)."));
+        composeQueryProps.put("filters", Map.of(
+                "type", "array",
+                "maxItems", GraphComposeQuery.MAX_FILTERS,
+                "items", Map.of(
+                        "type", "object",
+                        "properties", Collections.unmodifiableMap(composeFilterItemProps),
+                        "required", List.of("alias", "field", "op"),
+                        "additionalProperties", false),
+                "description", "Optional typed node predicate filters (zero free-form query strings)."));
+        composeQueryProps.put("returnFields", Map.of(
+                "type", "array",
+                "items", Map.of("type", "string", "enum", GraphComposeQuery.ALLOWED_RETURN_FIELDS),
+                "description", "Subset of [id, fqn, kind, trustTier, span, pointerRef]. pointerRef is always included."));
+        composeQueryProps.put("limit", Map.of(
+                "type", "integer",
+                "minimum", GraphComposeQuery.MIN_LIMIT,
+                "maximum", GraphComposeQuery.MAX_LIMIT,
+                "default", GraphComposeQuery.DEFAULT_LIMIT,
+                "description", "Hard-capped result limit (1..50, default 25)."));
+
         return List.of(
                 tool("jobs_list", "List recent analysis jobs and their graph, snapshot and status.", Map.of(), List.of()),
                 tool("graph_get", "Read the published graph contexts and report identities.", Map.of("graph", graph), reqGraph),
@@ -386,7 +461,10 @@ public final class McpToolDispatcher {
                 tool("vertical_trace", "Trace full-stack execution and data flow across 8 architectural layers with call-path flamegraph (file:line chain + passive Fail-Close/Fail-Open RPC resilience verdict) and quarantined ADVISORY_UNVERIFIED SQL/Terraform overlays.",
                         verticalTraceProps, hasDefaultGraph ? List.of("seed") : List.of("graph", "seed")),
                 tool("trace_slice", "Compute a lazy, pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file at a 1-based line number (SOURCE_SYNTAX, zero secret leakage).",
-                        traceSliceProps, hasDefaultGraph ? List.of("path", "line") : List.of("graph", "path", "line")));
+                        traceSliceProps, hasDefaultGraph ? List.of("path", "line") : List.of("graph", "path", "line")),
+                // [p3-integrator HOOK — WP3.1]: Register Tool #22 "symbol_ego_graph" (k=1 flattened <= 2,500 tokens, k>=2 auto Signature(n)) here.
+                tool("graph_compose_query", "Execute a strict typed JSON-AST compositional multi-hop graph query (1..4 hops, limit <= 50, zero Cypher syntax errors, llm-redact:v2) returning pointer-indexed nodes (path:startLine-endLine@sha256Prefix) for lazy read_captured_source lookups.",
+                        composeQueryProps, hasDefaultGraph ? List.of("matchNodes") : List.of("graph", "matchNodes")));
     }
 
     public static List<Map<String, Object>> listResourcesView() {
@@ -402,7 +480,10 @@ public final class McpToolDispatcher {
                 resource("evo://cycles", "Dependency Cycles & Tangles",
                         "Tarjan SCC dependency cycles and minimal cycle-breaking edge candidates.", "application/json"),
                 resource("evo://spring-summary", "Spring Wiring Summary",
-                        "Spring bean candidates, producers, endpoints, and conditional realizations.", "application/json"));
+                        "Spring bean candidates, producers, endpoints, and conditional realizations.", "application/json"),
+                resource("evo://schema", "Live Graph Schema View",
+                        "Pointer-indexed live node kinds, edge kinds, trust tiers, evidence families, queryable fields, and bounds for graph_compose_query (also readable via evo://graphs/{graphDigest}/schema).",
+                        "application/json"));
     }
 
     public static Map<String, Object> initializeResult() {
@@ -911,6 +992,22 @@ public final class McpToolDispatcher {
                     method = "POST";
                     path = "/api/v1/graphs/" + graph.value() + "/queries/code-slice";
                 }
+                // [p3-integrator HOOK — WP3.1]: Add case "symbol_ego_graph" -> POST /api/v1/graphs/{graph}/queries/symbol-ego-graph here.
+                case "graph_compose_query" -> {
+                    GraphComposeQuery validated;
+                    try {
+                        validated = GraphComposeQuery.fromMap(arguments);
+                    } catch (GraphComposeQuery.ValidationException invalidQuery) {
+                        return toolResult(CanonicalJson.write(invalidQuery.toErrorView()), true);
+                    }
+                    var graph = requireGraph(arguments, backend, defaultGraphRef, defaultContextRef);
+                    var resp = backend.dispatch("POST",
+                            "/api/v1/graphs/" + graph.value() + "/queries/compose",
+                            validated.toMap());
+                    String redacted = redactMcpJsonPayload("mcp/graph_compose_query.json", resp.body());
+                    // [p3-integrator HOOK — WP3.3]: Optionally attach advisory tacit memory annotations (include_tacit_memory, theta >= 0.70) to read_captured_source, search_captured_source, graph_query, vertical_trace, symbol_ego_graph, and graph_compose_query.
+                    return toolResult(redacted, resp.status() != 200);
+                }
                 default -> throw new IllegalArgumentException();
             }
 
@@ -930,6 +1027,27 @@ public final class McpToolDispatcher {
             AtomicReference<String> defaultGraphRef,
             AtomicReference<String> defaultContextRef) {
         String uri = QueryJson.text(params, "uri");
+        // Support explicit graph-addressed schema URI: evo://graphs/{graphDigest}/schema
+        if (uri.startsWith("evo://graphs/") && uri.endsWith("/schema")) {
+            String rawDigest = uri.substring("evo://graphs/".length(), uri.length() - "/schema".length());
+            var explicitGraph = new ContentDigest(rawDigest);
+            try {
+                var resp = backend.dispatch("GET", "/api/v1/graphs/" + explicitGraph.value() + "/schema", null);
+                if (resp.status() != 200) {
+                    return resourceContent(uri, "application/json", CanonicalJson.write(
+                            Map.of("error", "UPSTREAM_ERROR", "status", resp.status(), "uri", uri)));
+                }
+                return resourceContent(uri, "application/json",
+                        redactMcpJsonPayload("mcp/evo-schema.json", resp.body()));
+            } catch (IOException io) {
+                return resourceContent(uri, "application/json",
+                        CanonicalJson.write(Map.of("error", "RESOURCE_UNAVAILABLE", "uri", uri)));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return resourceContent(uri, "application/json",
+                        CanonicalJson.write(Map.of("error", "INTERRUPTED", "uri", uri)));
+            }
+        }
         ensureDefaultBound(backend, defaultGraphRef, defaultContextRef);
         String resolvedGraph = defaultGraphRef == null ? null : defaultGraphRef.get();
         if (resolvedGraph == null) {
@@ -940,7 +1058,7 @@ public final class McpToolDispatcher {
         String resolvedCtx = defaultContextRef == null ? null : defaultContextRef.get();
         String ctx = resolvedCtx != null ? resolvedCtx : resolveContextForGraph(resolvedGraph, backend);
         try {
-            if (ctx == null && !uri.equals("evo://score-v2")) {
+            if (ctx == null && !uri.equals("evo://score-v2") && !uri.equals("evo://schema")) {
                 return resourceContent(uri, "application/json",
                         CanonicalJson.write(Map.of("error", "CONTEXT_UNAVAILABLE", "uri", uri, "graph", resolvedGraph)));
             }
@@ -1019,6 +1137,15 @@ public final class McpToolDispatcher {
                             "components", parseData(springResp.body()),
                             "realizations", cfgResp.status() == 200 ? parseData(cfgResp.body()) : Map.of());
                     yield resourceContent(uri, "application/json", CanonicalJson.write(combined));
+                }
+                case "evo://schema" -> {
+                    var resp = backend.dispatch("GET", "/api/v1/graphs/" + resolvedGraph + "/schema", null);
+                    if (resp.status() != 200) {
+                        yield resourceContent(uri, "application/json", CanonicalJson.write(
+                                Map.of("error", "UPSTREAM_ERROR", "status", resp.status(), "uri", uri)));
+                    }
+                    yield resourceContent(uri, "application/json",
+                            redactMcpJsonPayload("mcp/evo-schema.json", resp.body()));
                 }
                 default -> throw new IllegalArgumentException("Unknown MCP resource URI: " + uri);
             };
@@ -1253,6 +1380,63 @@ public final class McpToolDispatcher {
 
     private static Map<String, Object> toolResult(String text, boolean error) {
         return Map.of("content", List.of(Map.of("type", "text", "text", text)), "isError", error);
+    }
+
+    private static final Set<String> PRESERVE_STRUCTURAL_KEYS = Set.of(
+            "apiVersion", "queryVersion", "schema", "graphSchema", "resultIdentity",
+            "graphDigest", "snapshot", "context", "id", "entityId", "fromId", "toId",
+            "sha256Prefix", "pointerRef", "pointerRefFormat", "lazyReadTool", "status", "stopReason");
+
+    /**
+     * Pre-redacts an MCP JSON payload using {@code llm-redact:v2} ({@link LlmTransport#redactSecrets},
+     * {@link LlmTransport#redactForPath}, and {@link LlmTransport#neutralizeInjectionSentinels})
+     * so secrets and prompt-injection sentinels never escape while preserving structural digests
+     * and {@code path:startLine-endLine@sha256Prefix} pointers.
+     */
+    static String redactMcpJsonPayload(String logicalPath, String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return "";
+        }
+        try {
+            Object parsed = GraphJson.read(rawJson, RESP_JSON);
+            if (parsed instanceof Map<?, ?> map) {
+                Object cleaned = redactMcpValue(null, GraphJson.object(map), 0);
+                return CanonicalJson.write(cleaned);
+            }
+        } catch (RuntimeException ignored) {
+            // Fall through to raw text redaction below
+        }
+        return LlmTransport.neutralizeInjectionSentinels(
+                LlmTransport.redactDocumentForPath(logicalPath, rawJson).text());
+    }
+
+    private static Object redactMcpValue(String key, Object val, int depth) {
+        if (val == null) return null;
+        if (depth > 16) return "[TRUNCATED]";
+        if (val instanceof String s) {
+            if (key != null && PRESERVE_STRUCTURAL_KEYS.contains(key)) {
+                return LlmTransport.neutralizeInjectionSentinels(LlmTransport.redactSecrets(s).text());
+            }
+            return LlmTransport.neutralizeInjectionSentinels(
+                    LlmTransport.redactForPath("mcp/payload.txt", s, false).text());
+        }
+        if (val instanceof Map<?, ?> m) {
+            var copy = new LinkedHashMap<String, Object>();
+            for (var e : m.entrySet()) {
+                String k = e.getKey() == null ? ""
+                        : LlmTransport.neutralizeInjectionSentinels(LlmTransport.redactSecrets(String.valueOf(e.getKey())).text());
+                copy.put(k, redactMcpValue(k, e.getValue(), depth + 1));
+            }
+            return copy;
+        }
+        if (val instanceof List<?> list) {
+            var copy = new ArrayList<Object>(list.size());
+            for (var item : list) {
+                copy.add(redactMcpValue(key, item, depth + 1));
+            }
+            return copy;
+        }
+        return val;
     }
 
     // -------------------------------------------------------------------------

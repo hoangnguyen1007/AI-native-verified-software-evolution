@@ -851,6 +851,8 @@ public final class ArchitectureQueryApi {
             return error(413, "JSON_LIMIT_EXCEEDED");
         } catch (GraphStoreException unavailable) {
             return error(503, "GRAPH_STORE_UNAVAILABLE");
+        } catch (GraphComposeQuery.ValidationException invalidQuery) {
+            return new Response(400, BoundedJson.encode(invalidQuery.toErrorView(), limits.responseBytes()));
         } catch (IllegalArgumentException invalid) {
             return error(400, "INVALID_REQUEST");
         } catch (RuntimeException failed) {
@@ -1517,7 +1519,7 @@ public final class ArchitectureQueryApi {
 
     private static final Set<String> MCP_GET_GRAPH_SUFFIXES = Set.of(
             "codeowners", "advisory-links", "wiki-dossier", "captured-files", "repo-map", "repository-score",
-            "conversations");
+            "conversations", "schema");
     private static final Set<String> MCP_POST_GRAPH_SUFFIXES = Set.of(
             "architecture-insights", "architecture-score", "captured-files", "captured-source",
             "search-captured-source", "markdown-section", "repo-map", "suggested-policy",
@@ -1713,7 +1715,8 @@ public final class ArchitectureQueryApi {
             return "POST";
         }
         if (path.startsWith("/api/v1/graphs/") && (path.endsWith("/codeowners") || path.endsWith("/sarif")
-                || path.endsWith("/advisory-links") || path.endsWith("/wiki-dossier"))) {
+                || path.endsWith("/advisory-links") || path.endsWith("/wiki-dossier")
+                || path.endsWith("/schema"))) {
             return "GET";
         }
         if (path.startsWith("/api/v1/graphs/") && path.endsWith("/conversations")) {
@@ -2519,6 +2522,27 @@ public final class ArchitectureQueryApi {
             } catch (FullStackVerticalTraceService.CapturedSourceNotFoundException missing) {
                 throw new Failure(404, "SOURCE_NOT_FOUND");
             }
+        }
+        if (parts.length == 6 && parts[5].equals("schema")) {
+            requireMethod(method, "GET");
+            requireEmpty(body);
+            long deadline = System.nanoTime() + Math.min(limits.queryTimeoutMillis(), GraphComposeQuery.DEFAULT_TIMEOUT_MILLIS) * 1_000_000L;
+            var guard = ArchitectureQueryService.operationalGuard(cancelled, deadline, 8_000_000);
+            var graph = load(graphId);
+            var service = factory.apply(graph, guard);
+            return com.evolution.backend.query.llm.LlmTransport.neutralizeMapForLlm(service.schemaView(graph).toView());
+        }
+        if (parts.length == 7 && parts[5].equals("queries") && parts[6].equals("compose")) {
+            requireMethod(method, "POST");
+            var input = decode(body, contentType);
+            var composeQuery = GraphComposeQuery.fromMap(input);
+            long timeoutMs = Math.min(limits.queryTimeoutMillis(), GraphComposeQuery.DEFAULT_TIMEOUT_MILLIS);
+            long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+            var guard = ArchitectureQueryService.operationalGuard(cancelled, deadline, 8_000_000);
+            var graph = load(graphId);
+            var service = factory.apply(graph, guard);
+            var result = service.composeQuery(graph, composeQuery, timeoutMs, GraphComposeQuery.DEFAULT_MAX_VISITED_STATES);
+            return com.evolution.backend.query.llm.LlmTransport.neutralizeMapForLlm(result.toView());
         }
         if (parts.length == 7 && parts[5].equals("queries") && OPERATIONS.contains(parts[6])) {
             requireMethod(method, "POST");
