@@ -3,6 +3,7 @@ package com.evolution.analysis.spring.condition;
 import com.evolution.analysis.contract.analysis.ClasspathEntry;
 import com.evolution.analysis.contract.analysis.ClasspathEntryKind;
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.frontend.BinaryInput;
 import com.evolution.analysis.ingestion.IngestionFixtures;
 import com.evolution.analysis.spring.SpringFrameworkEvidence;
@@ -136,6 +137,288 @@ class IncrementalCdclAndCoiSlicerTest {
 
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
         assertTrue(elapsedMs < 2_000, "CDCL PHP(4,3) + 120-var incremental session took " + elapsedMs + "ms");
+    }
+
+    @Test
+    void policyIdentifierReflectsCdclV2AcrossBothReasonerFacades() {
+        var expected = new VersionedIdentifier("spring.configuration-reasoner", "cdcl-2wl-1uip-v2");
+        assertEquals(expected, SatConfigurationReasoner.INSTANCE.policy());
+        assertEquals(expected, IncrementalCdclReasoner.INSTANCE.policy());
+    }
+
+    @Test
+    void unitImpliedAssumptionChainAndBackjumpAcrossAssumptionLevelsRemainSound() {
+        // Part A: 3-assumption chain where assumption #1 (a1) unit-propagates #2 (a2) at decision level 1,
+        // and assumption #3 (a3) opens decision level 2 (< assumptionPtr == 3) and triggers a conflict.
+        Formula a1 = variable("a1");
+        Formula a2 = variable("a2");
+        Formula a3 = variable("a3");
+        Formula u = variable("u");
+        Formula freeVar = variable("freeVar");
+        Formula conflictFormula = and(
+                or(not(a1), a2),
+                or(not(a2), not(a3), u),
+                or(not(a1), not(a3), not(u)),
+                or(a1, a3, freeVar));
+
+        var conflictSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        conflictSession.addRoot(conflictFormula);
+        int lA1 = conflictSession.encode(a1);
+        int lA2 = conflictSession.encode(a2);
+        int lA3 = conflictSession.encode(a3);
+
+        // [a1, a2, a3]: a1 propagates a2 at level 1; a3 conflicts at level 2 < assumptionPtr(3) -> UNSAT
+        var unsatChain = conflictSession.solveIncremental(ContentDigest.sha256Utf8("chain-3-unsat"), lA1, lA2, lA3);
+        assertEquals(UNSATISFIABLE, unsatChain.status());
+
+        // Session must remain unpoisoned (topLevelUnsat must NOT be set) for subsequent assumption queries
+        var satFlipA3 = conflictSession.solveIncremental(ContentDigest.sha256Utf8("chain-3-flip-a3"), lA1, lA2, -lA3);
+        assertEquals(SATISFIABLE, satFlipA3.status());
+        assertTrue(satFlipA3.witness().get("a1"));
+        assertTrue(satFlipA3.witness().get("a2"));
+        assertFalse(satFlipA3.witness().get("a3"));
+        assertTrue(conflictFormula.evaluate(satFlipA3.witness()));
+
+        var satFlipA1 = conflictSession.solveIncremental(ContentDigest.sha256Utf8("chain-3-flip-a1"), -lA1, lA2, lA3);
+        assertEquals(SATISFIABLE, satFlipA1.status());
+        assertFalse(satFlipA1.witness().get("a1"));
+        assertTrue(satFlipA1.witness().get("a2"));
+        assertTrue(satFlipA1.witness().get("a3"));
+        assertTrue(conflictFormula.evaluate(satFlipA1.witness()));
+
+        // Part B: 3-assumption chain [a1, a2, a3] where a1 unit-propagates a2 (maxAssumptionDecisionLevel = 2,
+        // assumptionPtr = 3), followed by free search at level 3 whose 1-UIP learned clause (x | -a1) backjumps
+        // to btLevel = 1 < maxAssumptionDecisionLevel (2), requiring assumptionPtr to unwind to index 2 (a3).
+        Formula x = variable("x");
+        Formula y = variable("y");
+        Formula z = variable("z");
+        Formula w = variable("w");
+        Formula backjumpSatFormula = and(
+                or(not(a1), a2),
+                or(not(a1), x, y),
+                or(not(a1), x, not(y), z),
+                or(not(a1), x, not(y), not(z)),
+                or(not(a3), not(x), w));
+
+        var btSatSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        btSatSession.addRoot(backjumpSatFormula);
+        int bA1 = btSatSession.encode(a1);
+        int bA2 = btSatSession.encode(a2);
+        int bA3 = btSatSession.encode(a3);
+        var btSatAns = btSatSession.solveIncremental(ContentDigest.sha256Utf8("bt-below-assump-sat"), bA1, bA2, bA3);
+        assertEquals(SATISFIABLE, btSatAns.status());
+        assertTrue(btSatAns.witness().get("a1"));
+        assertTrue(btSatAns.witness().get("a2"));
+        assertTrue(btSatAns.witness().get("a3"));
+        assertTrue(btSatAns.witness().get("x"));
+        assertTrue(btSatAns.witness().get("w"));
+        assertTrue(backjumpSatFormula.evaluate(btSatAns.witness()));
+
+        // Part B2: Same backjump to btLevel = 1 asserts x=true, which then unit-propagates -a3 at level 1 -> UNSAT
+        Formula backjumpUnsatFormula = and(
+                or(not(a1), a2),
+                or(not(a1), x, y),
+                or(not(a1), x, not(y), z),
+                or(not(a1), x, not(y), not(z)),
+                or(not(x), not(a3)));
+
+        var btUnsatSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        btUnsatSession.addRoot(backjumpUnsatFormula);
+        int uA1 = btUnsatSession.encode(a1);
+        int uA2 = btUnsatSession.encode(a2);
+        int uA3 = btUnsatSession.encode(a3);
+        var btUnsatAns = btUnsatSession.solveIncremental(ContentDigest.sha256Utf8("bt-below-assump-unsat"), uA1, uA2, uA3);
+        assertEquals(UNSATISFIABLE, btUnsatAns.status());
+
+        // Subsequent query on same session with -a3 must succeed cleanly
+        var btRecover = btUnsatSession.solveIncremental(ContentDigest.sha256Utf8("bt-below-assump-recover"), uA1, uA2, -uA3);
+        assertEquals(SATISFIABLE, btRecover.status());
+        assertTrue(btRecover.witness().get("a1"));
+        assertTrue(btRecover.witness().get("a2"));
+        assertFalse(btRecover.witness().get("a3"));
+        assertTrue(backjumpUnsatFormula.evaluate(btRecover.witness()));
+    }
+
+    @Test
+    void cdclMatchesExhaustiveOracleAcross500RandomCnfFormulasPlainAndWithAssumptions() {
+        var random = new Random(20261128L);
+        for (int trial = 0; trial < 500; trial++) {
+            int varCount = 4 + (trial % 3); // 4..6 vars (16..64 exhaustive worlds)
+            var vars = new ArrayList<Formula>(varCount);
+            for (int v = 0; v < varCount; v++) {
+                vars.add(variable("v" + v));
+            }
+            int clauseCount = 6 + (trial % 15);
+            var clauses = new ArrayList<Formula>(clauseCount);
+            for (int c = 0; c < clauseCount; c++) {
+                int len = 1 + random.nextInt(3);
+                var lits = new ArrayList<Formula>(len);
+                for (int l = 0; l < len; l++) {
+                    Formula v = vars.get(random.nextInt(varCount));
+                    lits.add(random.nextBoolean() ? v : not(v));
+                }
+                clauses.add(len == 1 ? lits.getFirst() : or(lits));
+            }
+            Formula formula = and(clauses);
+
+            int worlds = 1 << varCount;
+            boolean[] worldSat = new boolean[worlds];
+            boolean plainOracleSat = false;
+            for (int mask = 0; mask < worlds; mask++) {
+                var assign = new HashMap<String, Boolean>(varCount * 2);
+                for (int v = 0; v < varCount; v++) {
+                    assign.put("v" + v, (mask & (1 << v)) != 0);
+                }
+                if (formula.evaluate(assign)) {
+                    worldSat[mask] = true;
+                    plainOracleSat = true;
+                }
+            }
+
+            // 1. Plain solve agreement & determinism
+            var plainAns = IncrementalCdclReasoner.INSTANCE.solve(new Query(formula, Limits.defaults()));
+            assertEquals(plainOracleSat ? SATISFIABLE : UNSATISFIABLE, plainAns.status(),
+                    "Plain mismatch on trial " + trial);
+            if (plainOracleSat) {
+                assertTrue(formula.evaluate(plainAns.witness()), "Plain witness invalid on trial " + trial);
+            }
+            assertEquals(plainAns, SatConfigurationReasoner.INSTANCE.solve(new Query(formula, Limits.defaults())),
+                    "Determinism / facade parity mismatch on trial " + trial);
+
+            // 2. Incremental session solve across 5 random assumption lists per formula (2,500 total)
+            var session = new IncrementalCdclReasoner.Session(Limits.defaults());
+            session.addRoot(formula);
+            int[] varLits = new int[varCount];
+            for (int v = 0; v < varCount; v++) {
+                varLits[v] = session.encode(vars.get(v));
+            }
+            for (int q = 0; q < 5; q++) {
+                int assumpCount = random.nextInt(5); // 0..4 assumptions (includes repeats & contradictions)
+                int[] assumpVarIdx = new int[assumpCount];
+                boolean[] assumpSign = new boolean[assumpCount];
+                int[] assumpLits = new int[assumpCount];
+                for (int a = 0; a < assumpCount; a++) {
+                    int vi = random.nextInt(varCount);
+                    boolean pos = random.nextBoolean();
+                    assumpVarIdx[a] = vi;
+                    assumpSign[a] = pos;
+                    assumpLits[a] = pos ? varLits[vi] : -varLits[vi];
+                }
+
+                boolean expectedSat = false;
+                for (int mask = 0; mask < worlds; mask++) {
+                    if (!worldSat[mask]) {
+                        continue;
+                    }
+                    boolean matchesAll = true;
+                    for (int a = 0; a < assumpCount; a++) {
+                        boolean bit = (mask & (1 << assumpVarIdx[a])) != 0;
+                        if (bit != assumpSign[a]) {
+                            matchesAll = false;
+                            break;
+                        }
+                    }
+                    if (matchesAll) {
+                        expectedSat = true;
+                        break;
+                    }
+                }
+
+                ContentDigest qid = ContentDigest.sha256Utf8("prop-t" + trial + "-q" + q);
+                var ans = session.solveIncremental(qid, assumpLits);
+                assertEquals(expectedSat ? SATISFIABLE : UNSATISFIABLE, ans.status(),
+                        "Assumption mismatch on trial " + trial + " query " + q);
+                if (expectedSat) {
+                    assertTrue(formula.evaluate(ans.witness()),
+                            "Assumption witness fails formula on trial " + trial + " query " + q);
+                    for (int a = 0; a < assumpCount; a++) {
+                        assertEquals(assumpSign[a], ans.witness().get("v" + assumpVarIdx[a]),
+                                "Assumption literal violated on trial " + trial + " query " + q);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void binaryMaxHeapLubyRestartsAndLbdReductionStaySoundAndDeterministicUnderAssumptions() {
+        // Verify exact Luby restart sequence values
+        int[] expectedLuby = {1, 1, 2, 1, 1, 2, 4, 1, 1, 2, 1, 1, 2, 4, 8};
+        for (int i = 0; i < expectedLuby.length; i++) {
+            assertEquals(expectedLuby[i], IncrementalCdclReasoner.luby(i), "Luby mismatch at index " + i);
+        }
+
+        // Guard PHP(7, 6) behind assumption a3 with a1 -> a2 so solving under [a1, a2, a3]
+        // exercises Luby restarts (base = 100) and LBD learned-clause reduction (> 200 learnts)
+        // while strictly preserving active assumption levels and retaining glue clauses (LBD <= 2).
+        Formula a1 = variable("guard_a1");
+        Formula a2 = variable("guard_a2");
+        Formula a3 = variable("guard_a3");
+        int pigeons = 7;
+        int holes = 6;
+        Formula[][] x = new Formula[pigeons][holes];
+        for (int p = 0; p < pigeons; p++) {
+            for (int h = 0; h < holes; h++) {
+                x[p][h] = variable("php76_" + p + "_" + h);
+            }
+        }
+        var clauses = new ArrayList<Formula>();
+        clauses.add(or(not(a1), a2));
+        for (int p = 0; p < pigeons; p++) {
+            var row = new ArrayList<Formula>(holes + 1);
+            row.add(not(a3));
+            for (int h = 0; h < holes; h++) {
+                row.add(x[p][h]);
+            }
+            clauses.add(or(row));
+        }
+        for (int h = 0; h < holes; h++) {
+            for (int p1 = 0; p1 < pigeons; p1++) {
+                for (int p2 = p1 + 1; p2 < pigeons; p2++) {
+                    clauses.add(or(not(a3), not(x[p1][h]), not(x[p2][h])));
+                }
+            }
+        }
+        Formula guardedPhp = and(clauses);
+
+        var session1 = new IncrementalCdclReasoner.Session(Limits.defaults());
+        session1.addRoot(guardedPhp);
+        int l1 = session1.encode(a1);
+        int l2 = session1.encode(a2);
+        int l3 = session1.encode(a3);
+        var unsatAns1 = session1.solveIncremental(ContentDigest.sha256Utf8("php76-assump-1"), l1, l2, l3);
+        assertEquals(UNSATISFIABLE, unsatAns1.status());
+        assertTrue(session1.restarts() >= 1,
+                () -> "Expected Luby restarts (>= 1) on guarded PHP(7,6), got " + session1.restarts()
+                        + " (conflicts=" + session1.conflicts() + ")");
+        assertTrue(session1.learnedClauseReductions() >= 1,
+                () -> "Expected LBD learned-clause reduction (>= 1) on guarded PHP(7,6), got "
+                        + session1.learnedClauseReductions() + " (conflicts=" + session1.conflicts() + ")");
+        assertTrue(session1.prunedLearnedClauses() >= 1,
+                () -> "Expected LBD reduction to prune high-LBD clauses, pruned=" + session1.prunedLearnedClauses());
+        assertTrue(session1.learntClauseCount() < session1.conflicts(),
+                () -> "Expected retained learnt clauses (" + session1.learntClauseCount()
+                        + ") < total conflicts (" + session1.conflicts() + ")");
+
+        // Same session must still satisfy [a1, a2, -a3] cleanly after restarts & LBD reductions
+        var satAfterReduction = session1.solveIncremental(ContentDigest.sha256Utf8("php76-flip-a3"), l1, l2, -l3);
+        assertEquals(SATISFIABLE, satAfterReduction.status());
+        assertTrue(satAfterReduction.witness().get("guard_a1"));
+        assertTrue(satAfterReduction.witness().get("guard_a2"));
+        assertFalse(satAfterReduction.witness().get("guard_a3"));
+        assertTrue(guardedPhp.evaluate(satAfterReduction.witness()));
+
+        // Strict I2 determinism: independent fresh session produces bit-identical Answer & search trajectory
+        var session2 = new IncrementalCdclReasoner.Session(Limits.defaults());
+        session2.addRoot(guardedPhp);
+        int m1 = session2.encode(a1);
+        int m2 = session2.encode(a2);
+        int m3 = session2.encode(a3);
+        var unsatAns2 = session2.solveIncremental(ContentDigest.sha256Utf8("php76-assump-1"), m1, m2, m3);
+        assertEquals(unsatAns1, unsatAns2);
+        assertEquals(session1.conflicts(), session2.conflicts());
+        assertEquals(session1.restarts(), session2.restarts());
+        assertEquals(session1.prunedLearnedClauses(), session2.prunedLearnedClauses());
     }
 
     @Test

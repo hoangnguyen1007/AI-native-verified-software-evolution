@@ -1,5 +1,6 @@
 package com.evolution.analysis.spring.condition;
 
+import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.spring.truth.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,11 @@ import static com.evolution.analysis.spring.truth.SymbolicConfiguration.*;
 import static com.evolution.analysis.spring.truth.ConfigurationReasoner.Satisfiability.*;
 
 class SatConfigurationReasonerTest {
+    @Test void policyIdentifierReflectsCdclV2Reasoner() {
+        var expected = new VersionedIdentifier("spring.configuration-reasoner", "cdcl-2wl-1uip-v2");
+        assertEquals(expected, SatConfigurationReasoner.INSTANCE.policy());
+        assertEquals(expected, IncrementalCdclReasoner.INSTANCE.policy());
+    }
     @Test void solvesFiftySixDimensionsWithoutEnumeratingAndReplaysWitness() {
         var variables = java.util.stream.IntStream.range(0, 56).mapToObj(i -> variable("profile-" + i)).toList();
         var query = new Query(and(variables), Limits.defaults());
