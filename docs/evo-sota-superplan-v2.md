@@ -264,6 +264,8 @@ Mỗi Work Package dưới đây bắt buộc tuân thủ đủ **6 mục chuẩ
 
 ## Phase 1 (`WP1.1`–`WP1.5`) — Pillar 1: Microservices, Polyglot RPC, Passive Fail-Close Resilience & Blind SAR
 
+> **Dấu ấn Thực thi Phase 1 (`CONFIRMED` — `2026-11-28`, `WP1.1–WP1.5` trên `main`):** Toàn bộ 5 luồng mã nguồn, kiểm thử và manifest holdout của `WP1.1–WP1.5` đã được kiểm toán và tích hợp sạch trên `main` (`70fd14b` WP1.1/WP1.5a AMQP wildcard + `k=2` folding + Gateway Java DSL + holdout manifests; `87279f1` WP1.2 passive counterfactual Fail-Close RPC + `fail-close-tier-policy` + MCP flamegraph; `b2facef` WP1.3 AND/OR concordance + quarantined `RUNTIME_OBSERVED` drift; `06398c4` WP1.4 `1/inDeg`+`2×` cyclic+BM25 multi-$\gamma$ Leiden + DSM Eqs. 1–5/RDP + quarantined SemRef; `93cb53b` WP1.5 `PolyglotScopeGraphResolver` Phase-2 DFS). Kết quả kiểm chứng liên mô-đun hợp nhất: **`169/169`** Maven tests (`analyzer:83`, `analyzer-javaparser:20`, `analyzer-treesitter:34`, `backend:32`), `6/6` reactor `test-compile` gồm `cli` PASS, **`25/25`** Python E0 suite PASS, **`I5` audit `0` rò rỉ** (`774` tệp, `88+9` luật, `56` từ khóa GT), `canonicalLeakage=0`, `0` broken links. **Còn mở theo mốc môi trường ngoài máy:** rebuild JARs/`evo-workbench-online:latest` khi bật Docker daemon, chạy đánh giá mù `10`-repo `Micans` + `DeathStarBench`, và chiến dịch vật lý **Ubuntu 24.04 LTS `n >= 5`**.
+
 ### `WP1.1` — Passive AMQP `Binding` Wildcard Routing, Bounded `k`-Callsite String/Enum Folding & Strictly Blind 10-Repo `Micans` Holdout
 
 - **(i) Nguồn Paper & Công thức / Thuật toán / Trang chính xác:**
