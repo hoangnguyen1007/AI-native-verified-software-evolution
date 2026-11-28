@@ -51,6 +51,54 @@ class AffectedTestSelectorTest {
         assertEquals(AffectedTestSelector.SelectionMode.FULL_SUITE, xmlRes.mode());
     }
 
+    @Test
+    void sharedCrossCuttingAspectDoesNotCrossContaminateUnrelatedAdvisedServices() {
+        var graph = buildGraphWithSharedAspectAdvisingTwoServices();
+
+        // Editing the shared aspect MUST select BOTH OrderServiceTest and BillingServiceTest
+        var aspectRes = AffectedTestSelector.select(
+                graph, null, List.of("src/main/java/com/acme/AuditAspect.java"));
+        assertEquals(AffectedTestSelector.SelectionMode.SELECTED_TESTS, aspectRes.mode(), aspectRes.rationale());
+        var aspectTests = aspectRes.selectedTests().stream().map(AffectedTestSelector.SelectedTest::testClass).toList();
+        assertTrue(aspectTests.contains("OrderServiceTest"), () -> "tests=" + aspectTests);
+        assertTrue(aspectTests.contains("BillingServiceTest"), () -> "tests=" + aspectTests);
+
+        // Editing OrderService MUST select OrderServiceTest and MUST NOT cross-contaminate BillingServiceTest via AuditAspect!
+        var orderRes = AffectedTestSelector.select(
+                graph, null, List.of("src/main/java/com/acme/OrderService.java"));
+        assertEquals(AffectedTestSelector.SelectionMode.SELECTED_TESTS, orderRes.mode(), orderRes.rationale());
+        var orderTests = orderRes.selectedTests().stream().map(AffectedTestSelector.SelectedTest::testClass).toList();
+        assertTrue(orderTests.contains("OrderServiceTest"), () -> "tests=" + orderTests);
+        assertFalse(orderTests.contains("BillingServiceTest"),
+                () -> "ADVISES_METHOD must be one-way (aspect -> target) and not leak OrderService edit to BillingServiceTest: " + orderTests);
+    }
+
+    private static KnowledgeGraph buildGraphWithSharedAspectAdvisingTwoServices() {
+        var base = buildGraph();
+        String ctxId = base.contexts().stream()
+                .map(KnowledgeGraph.Context::identity)
+                .filter(id -> !id.equals(SNAPSHOT.value()))
+                .findFirst().orElseThrow();
+        String aspectNode = "type:" + ContentDigest.sha256Utf8("com.acme.AuditAspect").value();
+        String billingNode = "type:" + ContentDigest.sha256Utf8("com.acme.BillingService").value();
+
+        var evList = new ArrayList<>(base.evidence());
+        var edges = new ArrayList<>(base.edges());
+        var aopEv2 = GraphEvidence.capture("spring.aop-advice", Map.of(
+                "aspectClass", "com.acme.AuditAspect",
+                "adviceKind", "BEFORE",
+                "order", 1,
+                "pointcut", "execution(* com.acme.*Service.*(..))",
+                "targetClass", "com.acme.BillingService",
+                "targetMethod", "bill"));
+        evList.add(aopEv2);
+        edges.add(new KnowledgeGraph.Edge(
+                "edge:" + ContentDigest.sha256Utf8("aop-2").value(), ctxId, "ADVISES_METHOD", aspectNode,
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(billingNode), Optional.empty()),
+                List.of(aopEv2.identity()), Optional.empty()));
+        return new KnowledgeGraph(SNAPSHOT, base.contexts(), base.nodes(), edges, evList);
+    }
+
     private static KnowledgeGraph buildGraph() {
         String snapCtxId = SNAPSHOT.value();
         String ctxId = "ctx:" + ContentDigest.sha256Utf8("main-ctx").value();

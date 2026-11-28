@@ -201,6 +201,52 @@ class SpringXmlBeanExtractorTest {
         assertEquals(CollectionContainerSummary.FlowDirection.PUT_TO_CONTENTS, flowEdge.direction());
     }
 
+    @Test
+    void preservesOuterPropertyAndConstructorArgAcrossNestedInnerBeans() {
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <beans xmlns="http://www.springframework.org/schema/beans">
+                    <bean id="outerService" class="com.acme.OuterService">
+                        <constructor-arg name="engine">
+                            <bean class="com.acme.InnerEngine">
+                                <constructor-arg name="threads"><value>4</value></constructor-arg>
+                            </bean>
+                        </constructor-arg>
+                        <property name="dep">
+                            <bean class="com.acme.InnerDep">
+                                <property name="x" value="1"/>
+                                <property name="label"><value>nested</value></property>
+                            </bean>
+                        </property>
+                    </bean>
+                </beans>
+                """;
+        var result = SpringXmlBeanExtractor.extractFromXml(
+                SNAPSHOT, "src/main/resources/nested-beans.xml", xml, SpringXmlBeanExtractor.Limits.defaults());
+        assertTrue(result.gaps().isEmpty(), () -> "Unexpected gaps: " + result.gaps());
+        assertEquals(3, result.beans().size());
+
+        var outer = result.beans().stream().filter(b -> "outerService".equals(b.beanId())).findFirst().orElseThrow();
+        var innerDep = result.beans().stream().filter(b -> "com.acme.InnerDep".equals(b.className())).findFirst().orElseThrow();
+        var innerEngine = result.beans().stream().filter(b -> "com.acme.InnerEngine".equals(b.className())).findFirst().orElseThrow();
+
+        assertEquals(1, outer.properties().size(), () -> "Outer property dep must survive inner bean properties: " + outer.properties());
+        assertEquals("dep", outer.properties().getFirst().name());
+        assertEquals(innerDep.beanId(), outer.properties().getFirst().ref());
+
+        assertEquals(1, outer.constructorArgs().size(), () -> "Outer constructor-arg engine must survive inner bean constructor-arg: " + outer.constructorArgs());
+        assertEquals("engine", outer.constructorArgs().getFirst().name());
+        assertEquals(innerEngine.beanId(), outer.constructorArgs().getFirst().ref());
+
+        assertEquals(2, innerDep.properties().size());
+        assertTrue(innerDep.properties().stream().anyMatch(p -> p.name().equals("x") && p.value().equals("1")));
+        assertTrue(innerDep.properties().stream().anyMatch(p -> p.name().equals("label") && p.value().equals("nested")));
+
+        assertEquals(1, innerEngine.constructorArgs().size());
+        assertEquals("threads", innerEngine.constructorArgs().getFirst().name());
+        assertEquals("4", innerEngine.constructorArgs().getFirst().value());
+    }
+
     private static void addFile(Map<String, SourceInput> files, String path, String content) {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         var doc = SourceDocument.create(REPO, MODULE, path, ContentDigest.sha256(bytes), SourceClassification.OTHER);

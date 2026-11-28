@@ -175,12 +175,12 @@ public final class AffectedTestSelector {
                     }
                     continue;
                 }
-                // WP2.1: AOP ADVISES_METHOD (aspect -> advised target) propagates impact forward
-                // from modified aspect to every advised target method/class and its tests.
+                // WP2.1: AOP ADVISES_METHOD (aspect -> advised target) propagates impact one-way
+                // forward from modified aspect to every advised target method/class and its tests,
+                // without turning a shared cross-cutting aspect into an undirected hub across unrelated services.
                 if ("ADVISES_METHOD".equals(edge.kind()) || "spring.advises-method".equals(edge.kind())) {
                     for (String targetId : edge.target().identities()) {
                         reverseAdj.computeIfAbsent(edge.source(), k -> new LinkedHashSet<>()).add(targetId);
-                        reverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
                     }
                     indexAopAdviceEdgeBridge(graph, edge, aopAspectToTargetFqns);
                     continue;

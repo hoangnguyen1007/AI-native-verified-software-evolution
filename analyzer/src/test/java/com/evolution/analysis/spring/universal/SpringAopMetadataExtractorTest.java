@@ -179,4 +179,55 @@ class SpringAopMetadataExtractorTest {
         assertTrue(traps.cglibPrivateFinalFindings().stream().anyMatch(f -> f.targetMethod().equals("finalEndpoint")));
         assertTrue(traps.cglibPrivateFinalFindings().stream().noneMatch(f -> f.targetMethod().equals("plainHelper")));
     }
+
+    @Test
+    void matchesExecutionDoubleDotSubpackageAndWildcardTypePatterns() {
+        var advices = List.of(
+                new SpringAopMetadataExtractor.AdviceDeclaration(
+                        "com.acme.SubpkgAspect", "logSubpkg",
+                        SpringAopMetadataExtractor.AdviceKind.BEFORE, 5,
+                        "execution(* com.acme.service..*(..))",
+                        "SubpkgAspect.java", 6, TrustTier.SOURCE_SYNTAX),
+                new SpringAopMetadataExtractor.AdviceDeclaration(
+                        "com.acme.SubpkgAspect", "logSaveSubpkg",
+                        SpringAopMetadataExtractor.AdviceKind.AFTER, 5,
+                        "execution(* com.acme.service..save*(..))",
+                        "SubpkgAspect.java", 10, TrustTier.SOURCE_SYNTAX),
+                new SpringAopMetadataExtractor.AdviceDeclaration(
+                        "com.acme.SubpkgAspect", "logAnyPing",
+                        SpringAopMetadataExtractor.AdviceKind.AROUND, 5,
+                        "execution(* ..ping(..))",
+                        "SubpkgAspect.java", 14, TrustTier.SOURCE_SYNTAX));
+
+        var targets = List.of(
+                new SpringAopMetadataExtractor.TargetMethodDescriptor(
+                        "com.acme.service.DirectService", "saveOrder", "void", List.of(),
+                        Set.of("public"), Set.of(), Set.of(), Set.of(), "DirectService.java", 10),
+                new SpringAopMetadataExtractor.TargetMethodDescriptor(
+                        "com.acme.service.nested.deep.SubOrderService", "saveLine", "void", List.of("java.lang.String"),
+                        Set.of("public"), Set.of(), Set.of(), Set.of(), "SubOrderService.java", 12),
+                new SpringAopMetadataExtractor.TargetMethodDescriptor(
+                        "com.acme.service.nested.deep.SubOrderService", "findLine", "java.lang.String", List.of(),
+                        Set.of("public"), Set.of(), Set.of(), Set.of(), "SubOrderService.java", 18),
+                new SpringAopMetadataExtractor.TargetMethodDescriptor(
+                        "com.acme.other.BillingService", "saveInvoice", "void", List.of(),
+                        Set.of("public"), Set.of(), Set.of(), Set.of(), "BillingService.java", 10),
+                new SpringAopMetadataExtractor.TargetMethodDescriptor(
+                        "com.acme.other.HealthController", "ping", "java.lang.String", List.of(),
+                        Set.of("public"), Set.of(), Set.of(), Set.of(), "HealthController.java", 8));
+
+        var result = SpringAopMetadataExtractor.match(SNAPSHOT, advices, List.of(), targets);
+        assertTrue(result.gaps().isEmpty(), () -> "Unexpected gaps: " + result.gaps());
+
+        // DirectService#saveOrder matched by BOTH ..*(..) and ..save*(..)
+        assertEquals(2, result.advicesForMethod("com.acme.service.DirectService", "saveOrder").size());
+        // Deep subpackage SubOrderService#saveLine matched by BOTH ..*(..) and ..save*(..)
+        assertEquals(2, result.advicesForMethod("com.acme.service.nested.deep.SubOrderService", "saveLine").size());
+        // Deep subpackage SubOrderService#findLine matched ONLY by ..*(..)
+        assertEquals(1, result.advicesForMethod("com.acme.service.nested.deep.SubOrderService", "findLine").size());
+        // Unrelated package BillingService#saveInvoice NOT matched
+        assertTrue(result.advicesForMethod("com.acme.other.BillingService", "saveInvoice").isEmpty());
+        // "..ping(..)" matches HealthController#ping across any package
+        assertEquals(1, result.advicesForMethod("com.acme.other.HealthController", "ping").size());
+    }
 }

@@ -477,19 +477,6 @@ public final class SpringXmlBeanExtractor {
             boolean isSpringDoc = false;
             boolean rootSeen = false;
             var beanStack = new ArrayDeque<MutableBean>();
-            String activePropertyName = null;
-            String activePropertyRef = null;
-            String activePropertyValue = null;
-            boolean inProperty = false;
-            boolean inPropertyValueText = false;
-            int activeCtorIndex = -1;
-            String activeCtorName = null;
-            String activeCtorType = null;
-            String activeCtorRef = null;
-            String activeCtorValue = null;
-            boolean inCtorArg = false;
-            boolean inCtorValueText = false;
-            var textBuf = new StringBuilder();
 
             while (reader.hasNext()) {
                 int event = reader.next();
@@ -527,49 +514,54 @@ public final class SpringXmlBeanExtractor {
                         }
                         var bean = parseBeanStart(reader, normPath, line);
                         if (!beanStack.isEmpty()) {
-                            // Inner anonymous bean inside a <property> or <constructor-arg>
-                            if (inProperty && safe(activePropertyRef).isEmpty() && !bean.beanId.isEmpty()) {
-                                activePropertyRef = bean.beanId;
-                            } else if (inCtorArg && safe(activeCtorRef).isEmpty() && !bean.beanId.isEmpty()) {
-                                activeCtorRef = bean.beanId;
+                            // Inner anonymous/named bean inside an enclosing bean's <property> or <constructor-arg>
+                            MutableBean parent = beanStack.peek();
+                            if (parent.pendingProperty != null
+                                    && safe(parent.pendingProperty.ref).isEmpty()
+                                    && !bean.beanId.isEmpty()) {
+                                parent.pendingProperty.ref = bean.beanId;
+                            } else if (parent.pendingCtorArg != null
+                                    && safe(parent.pendingCtorArg.ref).isEmpty()
+                                    && !bean.beanId.isEmpty()) {
+                                parent.pendingCtorArg.ref = bean.beanId;
                             }
                         }
                         rawBeans.add(bean);
                         beanStack.push(bean);
                     } else if ("property".equals(local) && !beanStack.isEmpty()) {
-                        inProperty = true;
-                        inPropertyValueText = false;
-                        activePropertyName = attr(reader, "name");
-                        activePropertyRef = attr(reader, "ref");
-                        activePropertyValue = attr(reader, "value");
+                        beanStack.peek().pendingProperty = new PendingProperty(
+                                attr(reader, "name"), attr(reader, "ref"), attr(reader, "value"));
                     } else if ("constructor-arg".equals(local) && !beanStack.isEmpty()) {
-                        inCtorArg = true;
-                        inCtorValueText = false;
-                        activeCtorIndex = parseIntOrDefault(attr(reader, "index"), -1);
-                        activeCtorName = attr(reader, "name");
-                        activeCtorType = attr(reader, "type");
-                        activeCtorRef = attr(reader, "ref");
-                        activeCtorValue = attr(reader, "value");
+                        beanStack.peek().pendingCtorArg = new PendingCtorArg(
+                                parseIntOrDefault(attr(reader, "index"), -1),
+                                attr(reader, "name"),
+                                attr(reader, "type"),
+                                attr(reader, "ref"),
+                                attr(reader, "value"));
                     } else if ("ref".equals(local) && !beanStack.isEmpty()) {
                         String refBean = firstNonBlank(attr(reader, "bean"), attr(reader, "local"), attr(reader, "parent"));
-                        if (inProperty && safe(activePropertyRef).isEmpty()) {
-                            activePropertyRef = refBean;
-                        } else if (inCtorArg && safe(activeCtorRef).isEmpty()) {
-                            activeCtorRef = refBean;
+                        MutableBean cur = beanStack.peek();
+                        if (cur.pendingProperty != null && safe(cur.pendingProperty.ref).isEmpty()) {
+                            cur.pendingProperty.ref = refBean;
+                        } else if (cur.pendingCtorArg != null && safe(cur.pendingCtorArg.ref).isEmpty()) {
+                            cur.pendingCtorArg.ref = refBean;
                         }
                     } else if ("idref".equals(local) && !beanStack.isEmpty()) {
                         String refBean = firstNonBlank(attr(reader, "bean"), attr(reader, "local"));
-                        if (inProperty && safe(activePropertyValue).isEmpty()) {
-                            activePropertyValue = refBean;
-                        } else if (inCtorArg && safe(activeCtorValue).isEmpty()) {
-                            activeCtorValue = refBean;
+                        MutableBean cur = beanStack.peek();
+                        if (cur.pendingProperty != null && safe(cur.pendingProperty.value).isEmpty()) {
+                            cur.pendingProperty.value = refBean;
+                        } else if (cur.pendingCtorArg != null && safe(cur.pendingCtorArg.value).isEmpty()) {
+                            cur.pendingCtorArg.value = refBean;
                         }
                     } else if ("value".equals(local) && !beanStack.isEmpty()) {
-                        textBuf.setLength(0);
-                        if (inProperty) {
-                            inPropertyValueText = true;
-                        } else if (inCtorArg) {
-                            inCtorValueText = true;
+                        MutableBean cur = beanStack.peek();
+                        if (cur.pendingProperty != null) {
+                            cur.pendingProperty.valueBuf.setLength(0);
+                            cur.pendingProperty.capturingValueText = true;
+                        } else if (cur.pendingCtorArg != null) {
+                            cur.pendingCtorArg.valueBuf.setLength(0);
+                            cur.pendingCtorArg.capturingValueText = true;
                         }
                     } else if ("qualifier".equals(local) && !beanStack.isEmpty()) {
                         String qVal = firstNonBlank(attr(reader, "value"), attr(reader, "type"));
@@ -594,46 +586,52 @@ public final class SpringXmlBeanExtractor {
                         }
                     }
                 } else if (event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA) {
-                    if (inPropertyValueText || inCtorValueText) {
-                        textBuf.append(reader.getText());
+                    if (!beanStack.isEmpty()) {
+                        MutableBean cur = beanStack.peek();
+                        if (cur.pendingProperty != null && cur.pendingProperty.capturingValueText) {
+                            cur.pendingProperty.valueBuf.append(reader.getText());
+                        } else if (cur.pendingCtorArg != null && cur.pendingCtorArg.capturingValueText) {
+                            cur.pendingCtorArg.valueBuf.append(reader.getText());
+                        }
                     }
                 } else if (event == XMLStreamConstants.END_ELEMENT) {
                     depth = Math.max(0, depth - 1);
                     String local = reader.getLocalName();
-                    if ("value".equals(local)) {
-                        String captured = textBuf.toString().trim();
-                        if (inPropertyValueText) {
-                            if (safe(activePropertyValue).isEmpty()) {
-                                activePropertyValue = captured;
+                    if ("value".equals(local) && !beanStack.isEmpty()) {
+                        MutableBean cur = beanStack.peek();
+                        if (cur.pendingProperty != null && cur.pendingProperty.capturingValueText) {
+                            String captured = cur.pendingProperty.valueBuf.toString().trim();
+                            if (safe(cur.pendingProperty.value).isEmpty()) {
+                                cur.pendingProperty.value = captured;
                             }
-                            inPropertyValueText = false;
-                        } else if (inCtorValueText) {
-                            if (safe(activeCtorValue).isEmpty()) {
-                                activeCtorValue = captured;
+                            cur.pendingProperty.capturingValueText = false;
+                            cur.pendingProperty.valueBuf.setLength(0);
+                        } else if (cur.pendingCtorArg != null && cur.pendingCtorArg.capturingValueText) {
+                            String captured = cur.pendingCtorArg.valueBuf.toString().trim();
+                            if (safe(cur.pendingCtorArg.value).isEmpty()) {
+                                cur.pendingCtorArg.value = captured;
                             }
-                            inCtorValueText = false;
+                            cur.pendingCtorArg.capturingValueText = false;
+                            cur.pendingCtorArg.valueBuf.setLength(0);
                         }
-                        textBuf.setLength(0);
-                    } else if ("property".equals(local) && inProperty && !beanStack.isEmpty()) {
-                        if (!safe(activePropertyName).isEmpty()) {
-                            beanStack.peek().properties.add(new PropertyInjection(
-                                    activePropertyName, activePropertyRef, activePropertyValue));
+                    } else if ("property".equals(local) && !beanStack.isEmpty()) {
+                        MutableBean cur = beanStack.peek();
+                        PendingProperty prop = cur.pendingProperty;
+                        if (prop != null) {
+                            if (!safe(prop.name).isEmpty()) {
+                                cur.properties.add(new PropertyInjection(prop.name, prop.ref, prop.value));
+                            }
+                            cur.pendingProperty = null;
                         }
-                        inProperty = false;
-                        activePropertyName = null;
-                        activePropertyRef = null;
-                        activePropertyValue = null;
-                    } else if ("constructor-arg".equals(local) && inCtorArg && !beanStack.isEmpty()) {
-                        var owner = beanStack.peek();
-                        int resolvedIdx = activeCtorIndex >= 0 ? activeCtorIndex : owner.constructorArgs.size();
-                        owner.constructorArgs.add(new ConstructorArg(
-                                resolvedIdx, activeCtorName, activeCtorType, activeCtorRef, activeCtorValue));
-                        inCtorArg = false;
-                        activeCtorIndex = -1;
-                        activeCtorName = null;
-                        activeCtorType = null;
-                        activeCtorRef = null;
-                        activeCtorValue = null;
+                    } else if ("constructor-arg".equals(local) && !beanStack.isEmpty()) {
+                        MutableBean cur = beanStack.peek();
+                        PendingCtorArg arg = cur.pendingCtorArg;
+                        if (arg != null) {
+                            int resolvedIdx = arg.index >= 0 ? arg.index : cur.constructorArgs.size();
+                            cur.constructorArgs.add(new ConstructorArg(
+                                    resolvedIdx, arg.name, arg.type, arg.ref, arg.value));
+                            cur.pendingCtorArg = null;
+                        }
                     } else if ("bean".equals(local) && !beanStack.isEmpty()) {
                         beanStack.pop();
                     }
@@ -897,6 +895,38 @@ public final class SpringXmlBeanExtractor {
         return false;
     }
 
+    private static final class PendingProperty {
+        final String name;
+        String ref;
+        String value;
+        boolean capturingValueText;
+        final StringBuilder valueBuf = new StringBuilder();
+
+        PendingProperty(String name, String ref, String value) {
+            this.name = name;
+            this.ref = ref;
+            this.value = value;
+        }
+    }
+
+    private static final class PendingCtorArg {
+        final int index;
+        final String name;
+        final String type;
+        String ref;
+        String value;
+        boolean capturingValueText;
+        final StringBuilder valueBuf = new StringBuilder();
+
+        PendingCtorArg(int index, String name, String type, String ref, String value) {
+            this.index = index;
+            this.name = name;
+            this.type = type;
+            this.ref = ref;
+            this.value = value;
+        }
+    }
+
     private static final class MutableBean {
         final String beanId;
         final List<String> aliases = new ArrayList<>();
@@ -913,6 +943,8 @@ public final class SpringXmlBeanExtractor {
         final List<PropertyInjection> properties = new ArrayList<>();
         final List<ConstructorArg> constructorArgs = new ArrayList<>();
         final List<String> qualifiers = new ArrayList<>();
+        PendingProperty pendingProperty;
+        PendingCtorArg pendingCtorArg;
 
         MutableBean(String beanId, String className, String scope, String initMethod, String destroyMethod,
                 boolean primary, boolean lazyInit, String factoryBean, String factoryMethod,

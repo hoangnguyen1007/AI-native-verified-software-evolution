@@ -937,7 +937,8 @@ public final class SpringAopMetadataExtractor {
             // Handle "com.acme.service..*()" where lastIndexOf('.') splits inside ".."
             if (declaringTypePattern.endsWith(".")) {
                 // e.g. "com.acme.service..foo" -> declaringType = "com.acme.service..*", method = "foo"
-                declaringTypePattern = declaringTypePattern + "*";
+                // and "..foo" -> declaringType = "..*", method = "foo"
+                declaringTypePattern = declaringTypePattern + ".*";
             }
             methodNamePattern = nameSpec.substring(dot + 1);
         } else {
