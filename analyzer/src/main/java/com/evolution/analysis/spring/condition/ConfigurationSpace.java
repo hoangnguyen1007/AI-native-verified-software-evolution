@@ -69,8 +69,17 @@ public record ConfigurationSpace(SpringBuildContext buildContext, ConfigurationE
         return ContractChecks.sortedDistinct(values.stream().map(ConditionIdentitySupport::name).toList(),
                 Comparator.naturalOrder(), "profile set");
     }
+    private record IdentityCacheEntry(java.lang.ref.WeakReference<ConfigurationSpace> space, ConfigurationSpaceIdentity identity) {}
+    private static final java.util.concurrent.atomic.AtomicReferenceArray<IdentityCacheEntry> IDENTITY_CACHE =
+            new java.util.concurrent.atomic.AtomicReferenceArray<>(32);
+
     public ConfigurationSpaceIdentity identity() {
-        return new ConfigurationSpaceIdentity(ConditionIdentitySupport.derive("spring-configuration-space", canonicalForm()));
+        int slot = (System.identityHashCode(this) & 0x7fffffff) % 32;
+        var hit = IDENTITY_CACHE.get(slot);
+        if (hit != null && hit.space().get() == this) return hit.identity();
+        var computed = new ConfigurationSpaceIdentity(ConditionIdentitySupport.derive("spring-configuration-space", canonicalForm()));
+        IDENTITY_CACHE.set(slot, new IdentityCacheEntry(new java.lang.ref.WeakReference<>(this), computed));
+        return computed;
     }
     public Map<String, Object> canonicalForm() {
         return Map.of("buildContextIdentity", buildContext.identity(), "repositoryEnvelopeIdentity", repositoryEnvelope.identity(),

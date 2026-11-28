@@ -71,6 +71,7 @@ public final class DiscoveryTransitions {
         private final List<CapabilityGapRecord> gaps;
         private final boolean discoveryClosed;
         private final ExogenousConditionEvaluator.Result conditions;
+        private volatile ContentDigest cachedIdentity;
         private Result(Evaluation evaluation) {
             input = evaluation.input; context = evaluation.context; conditions = evaluation.conditionResult;
             rows = evaluation.rows.values().stream().sorted(Comparator.comparing(Row::event)).toList();
@@ -83,7 +84,13 @@ public final class DiscoveryTransitions {
             discoveryClosed = evaluation.discoveryClosed && rows.stream().allMatch(r -> r.outcome() == Outcome.DISCOVERED || r.outcome() == Outcome.SKIPPED);
         }
         public ContentDigest inputIdentity() { return input; }
-        public ContentDigest identity() { return RegistrationIdentity.digest(canonicalForm()); }
+        public ContentDigest identity() {
+            ContentDigest cached = cachedIdentity;
+            if (cached != null) return cached;
+            ContentDigest computed = RegistrationIdentity.digest(canonicalForm());
+            cachedIdentity = computed;
+            return computed;
+        }
         public ContextIdentity semanticsContextIdentity() { return context; }
         public List<Row> rows() { return rows; }
         public List<State> states() { return states; }
@@ -103,13 +110,18 @@ public final class DiscoveryTransitions {
         }
     }
     public static Result evaluate(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment, ExogenousConditionEvaluator.Limits limits) {
-        return new Evaluation(plan, model, assignment, limits, false).run();
+        return new Evaluation(plan, model, assignment, limits, false, null).run();
     }
     /** M4C.2 preparation: register-site conditions/callbacks belong to the separate evidenced
      * registration schedule. This mode establishes membership only, never their effects. */
     public static Result prepareRegistration(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment,
                                              ExogenousConditionEvaluator.Limits limits) {
-        return new Evaluation(plan, model, assignment, limits, true).run();
+        return prepareRegistration(plan, model, assignment, limits, null);
+    }
+    public static Result prepareRegistration(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment,
+                                             ExogenousConditionEvaluator.Limits limits,
+                                             ExogenousConditionEvaluator.Result precomputedExogenous) {
+        return new Evaluation(plan, model, assignment, limits, true, precomputedExogenous).run();
     }
     private static final class Evaluation {
         final RegistrationPlan plan;
@@ -118,6 +130,8 @@ public final class DiscoveryTransitions {
         final ConfigurationAssignment assignment;
         final ExogenousConditionEvaluator.Result conditionResult;
         final Map<RegistrationEvent.Identity, RegistrationEvent> events = new HashMap<>();
+        final Map<RegistrationEvent, RegistrationEvent.Identity> eventIds = new IdentityHashMap<>();
+        final Map<BeanDefinitionCandidate, BeanDefinitionCandidate.Identity> candidateIds = new IdentityHashMap<>();
         final Map<RegistrationEvent.Identity, Row> rows = new HashMap<>();
         final Map<ConditionOccurrence.Identity, LogicalValue> truths = new HashMap<>();
         final Set<ConditionOccurrence.Identity> opaqueConditions = new HashSet<>();
@@ -129,8 +143,17 @@ public final class DiscoveryTransitions {
         final boolean registrationPreparation;
         boolean discoveryClosed, environmentUnknown, stopped;
         long stateCells;
+
+        RegistrationEvent.Identity eventId(RegistrationEvent event) {
+            return eventIds.computeIfAbsent(event, RegistrationEvent::identity);
+        }
+
+        BeanDefinitionCandidate.Identity candidateId(BeanDefinitionCandidate candidate) {
+            return candidateIds.computeIfAbsent(candidate, BeanDefinitionCandidate::identity);
+        }
+
         Evaluation(RegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment, ExogenousConditionEvaluator.Limits limits,
-                   boolean registrationPreparation) {
+                   boolean registrationPreparation, ExogenousConditionEvaluator.Result precomputedExogenous) {
             this.plan = Objects.requireNonNull(plan); Objects.requireNonNull(model); this.assignment = Objects.requireNonNull(assignment);
             this.registrationPreparation = registrationPreparation;
             context = new ContextIdentity(RegistrationIdentity.derive("spring-semantics-context", Map.ofEntries(
@@ -139,18 +162,26 @@ public final class DiscoveryTransitions {
                     Map.entry("conditionIrVersion", ConditionExpression.IR), Map.entry("frameworkSemantics", plan.lowering().semantics()),
                     Map.entry("registrationSemantics", RegistrationProcessing.SEMANTICS), Map.entry("bindingSemantics", "NOT_IMPLEMENTED"),
                     Map.entry("reasonerPolicy", registrationPreparation ? "registration-preparation:m4c.2-v1" : "evidenced-order-prefix:no-branching-v1"), Map.entry("deterministicLimits", Map.of("discovery", plan.limits(), "exogenous", limits)))));
-            input = RegistrationIdentity.digest(Map.of("context", context, "model", model.identity(), "assignment", assignment.identity(), "provider", RegistrationProcessing.PROVIDER));
-            var modelOccurrences = new HashSet<ConditionOccurrence.Identity>(); model.sourceRows().forEach(o -> modelOccurrences.add(o.identity()));
+            var assignmentIdentity = assignment.identity();
+            input = RegistrationIdentity.digest(Map.of("context", context, "model", model.identity(), "assignment", assignmentIdentity, "provider", RegistrationProcessing.PROVIDER));
+            var modelOccurrences = new HashSet<ConditionOccurrence.Identity>(Math.max(16, model.sourceRows().size() * 2));
+            model.sourceRows().forEach(o -> modelOccurrences.add(model.identityOf(o)));
             validContext = model.space().buildContext().identity().equals(plan.buildContext().identity())
-                    && plan.lowering().occurrences().stream().allMatch(o -> modelOccurrences.contains(o.identity()));
-            conditionResult = ExogenousConditionEvaluator.evaluate(model, plan.lowering().semantics(), assignment, limits);
+                    && plan.lowering().occurrences().stream().allMatch(o -> modelOccurrences.contains(model.identityOf(o)));
+            ContentDigest expectedExoInput = precomputedExogenous == null ? null : RegistrationIdentity.digest(Map.of(
+                    "model", model.identity(), "semantics", plan.lowering().semantics(),
+                    "assignment", assignmentIdentity, "limits", limits, "provider", ExogenousConditionEvaluator.PROVIDER));
+            conditionResult = precomputedExogenous != null && precomputedExogenous.inputIdentity().equals(expectedExoInput)
+                    ? precomputedExogenous
+                    : ExogenousConditionEvaluator.evaluate(model, plan.lowering().semantics(), assignment, limits);
             conditionResult.rows().forEach(r -> truths.put(r.occurrence(), r.truth()));
             plan.lowering().occurrences().stream().filter(o -> o.expression().dependencies().contains(ConditionExpression.Dependency.OPAQUE))
-                    .forEach(o -> opaqueConditions.add(o.identity()));
-            plan.events().forEach(e -> { events.put(e.identity(), e); e.candidate().ifPresent(c -> candidates.putIfAbsent(c.identity(),
-                    new CandidateState(c.identity(), DiscoveryStatus.NOT_PROCESSED, RegistrationStatus.NOT_EVALUATED, List.of()))); });
-            plan.initialDefinitions().forEach(c -> candidates.put(c.identity(), new CandidateState(c.identity(), DiscoveryStatus.DISCOVERED,
-                    RegistrationStatus.SUPPLIED_INITIAL_DEFINITION, List.of())));
+                    .forEach(o -> opaqueConditions.add(model.identityOf(o)));
+            plan.events().forEach(e -> { var eid = eventId(e); events.put(eid, e); e.candidate().ifPresent(c -> {
+                    var cid = candidateId(c);
+                    candidates.putIfAbsent(cid, new CandidateState(cid, DiscoveryStatus.NOT_PROCESSED, RegistrationStatus.NOT_EVALUATED, List.of())); }); });
+            plan.initialDefinitions().forEach(c -> { var cid = candidateId(c); candidates.put(cid, new CandidateState(cid, DiscoveryStatus.DISCOVERED,
+                    RegistrationStatus.SUPPLIED_INITIAL_DEFINITION, List.of())); });
             discoveryClosed = plan.issues().isEmpty() && validContext && conditionResult.assignmentFeasibility() == LogicalValue.TRUE;
             if (!validContext) issue(BUILD_CONTEXT_MISMATCH, "condition-model", null);
             if (conditionResult.assignmentFeasibility() != LogicalValue.TRUE) issue(INVALID_CONFIGURATION, "assignment-feasibility", null);
@@ -177,16 +208,19 @@ public final class DiscoveryTransitions {
                 states.add(state); transitions.add(transition);
                 rows.put(id, new Row(id, row.outcome(), row.conditionTruth(), row.conditions(), Optional.of(transition.identity())));
             }
-            for (var event : plan.events()) if (!rows.containsKey(event.identity())) {
-                issue(stopped ? PRIOR_CONTAINER_ERROR : budgetExhausted || plan.orderStatus() == RegistrationPlan.OrderStatus.LIMIT_EXCEEDED ? DISCOVERY_LIMIT : ORDER_EVIDENCE_MISSING,
-                        "unprocessed-event", event);
-                var outcome = stopped ? Outcome.NOT_REACHED : Outcome.UNKNOWN;
-                rows.put(event.identity(), row(event, outcome, LogicalValue.UNKNOWN, InvocationStatus.NOT_INVOKED));
-                updateCandidate(event, outcome);
+            for (var event : plan.events()) {
+                var eid = eventId(event);
+                if (!rows.containsKey(eid)) {
+                    issue(stopped ? PRIOR_CONTAINER_ERROR : budgetExhausted || plan.orderStatus() == RegistrationPlan.OrderStatus.LIMIT_EXCEEDED ? DISCOVERY_LIMIT : ORDER_EVIDENCE_MISSING,
+                            "unprocessed-event", event);
+                    var outcome = stopped ? Outcome.NOT_REACHED : Outcome.UNKNOWN;
+                    rows.put(eid, row(event, outcome, LogicalValue.UNKNOWN, InvocationStatus.NOT_INVOKED));
+                    updateCandidate(event, outcome);
+                }
             }
             for (var event : plan.events()) event.candidate().ifPresent(candidate -> {
-                if (candidate.declaredNameKey().status() == BeanDefinitionCandidate.NameStatus.UNRESOLVED) issue(CANDIDATE_NAMES_UNRESOLVED, candidate.identity().value(), event);
-                if (candidate.exposedTypes().isEmpty()) issue(CANDIDATE_TYPES_UNRESOLVED, candidate.identity().value(), event);
+                if (candidate.declaredNameKey().status() == BeanDefinitionCandidate.NameStatus.UNRESOLVED) issue(CANDIDATE_NAMES_UNRESOLVED, candidateId(candidate).value(), event);
+                if (candidate.exposedTypes().isEmpty()) issue(CANDIDATE_TYPES_UNRESOLVED, candidateId(candidate).value(), event);
             });
             if (candidates.values().stream().anyMatch(c -> c.registration() == RegistrationStatus.NOT_EVALUATED))
                 issue(REGISTRATION_NOT_EVALUATED, "candidate-definition-registration", null);
@@ -239,8 +273,8 @@ public final class DiscoveryTransitions {
                 }
                 invocations.add(new Invocation(condition.occurrence(), event.conditionSite(), status, truth));
             }
-            if (guard == LogicalValue.FALSE) return new Row(event.identity(), Outcome.SKIPPED, guard, invocations, Optional.empty());
-            if (guard == LogicalValue.UNKNOWN) { discoveryClosed = false; return new Row(event.identity(), Outcome.UNKNOWN, guard, invocations, Optional.empty()); }
+            if (guard == LogicalValue.FALSE) return new Row(eventId(event), Outcome.SKIPPED, guard, invocations, Optional.empty());
+            if (guard == LogicalValue.UNKNOWN) { discoveryClosed = false; return new Row(eventId(event), Outcome.UNKNOWN, guard, invocations, Optional.empty()); }
             RegistrationProcessing.Reason opaque = switch (event.kind()) {
                 case IMPORT_SELECTOR -> UNKNOWN_IMPORT_SELECTOR; case IMPORT_REGISTRAR -> CUSTOM_REGISTRAR;
                 case REGISTRY_POST_PROCESSOR -> REGISTRY_MUTATION_UNKNOWN; case ENVIRONMENT_MUTATION -> ENVIRONMENT_MUTATION_UNKNOWN;
@@ -250,12 +284,13 @@ public final class DiscoveryTransitions {
                 issue(opaque, event.eventSlot(), event); discoveryClosed = false;
                 // Arbitrary callbacks may mutate the Environment too. Never reuse precomputed conditions across them.
                 environmentUnknown = true;
-                return new Row(event.identity(), Outcome.UNKNOWN, LogicalValue.UNKNOWN, invocations, Optional.empty());
+                return new Row(eventId(event), Outcome.UNKNOWN, LogicalValue.UNKNOWN, invocations, Optional.empty());
             }
-            return new Row(event.identity(), Outcome.DISCOVERED, guard, invocations, Optional.empty());
+            return new Row(eventId(event), Outcome.DISCOVERED, guard, invocations, Optional.empty());
         }
         boolean invalidEvidence(RegistrationEvent event) {
-            return plan.issues().stream().anyMatch(i -> (i.event().isEmpty() || i.event().filter(event.identity()::equals).isPresent())
+            var eid = eventId(event);
+            return plan.issues().stream().anyMatch(i -> (i.event().isEmpty() || i.event().filter(eid::equals).isPresent())
                     && switch (i.reason()) {
                         case BUILD_CONTEXT_MISMATCH, VERSION_FRAGMENT_NOT_VALIDATED, SOURCE_EVIDENCE_MISMATCH, MISSING_SOURCE_SPAN,
                                 CONDITION_REFERENCE_MISSING, CONDITION_PHASE_CONFLICT, PARENT_REFERENCE_MISSING, INVALID_ORDER_DOMAIN, DISCOVERY_LIMIT -> true;
@@ -285,17 +320,18 @@ public final class DiscoveryTransitions {
         }
         Row row(RegistrationEvent event, Outcome outcome, LogicalValue truth, InvocationStatus status) {
             if (outcome != Outcome.DISCOVERED && outcome != Outcome.SKIPPED) discoveryClosed = false;
-            return new Row(event.identity(), outcome, truth, event.conditions().stream()
+            return new Row(eventId(event), outcome, truth, event.conditions().stream()
                     .map(c -> new Invocation(c.occurrence(), event.conditionSite(), status, LogicalValue.UNKNOWN)).toList(), Optional.empty());
         }
         void updateCandidate(RegistrationEvent event, Outcome outcome) {
             event.candidate().ifPresent(candidate -> {
-                var previous = candidates.get(candidate.identity());
+                var cid = candidateId(candidate);
+                var previous = candidates.get(cid);
                 DiscoveryStatus now = switch (outcome) { case DISCOVERED -> DiscoveryStatus.DISCOVERED; case SKIPPED -> DiscoveryStatus.SKIPPED; default -> DiscoveryStatus.UNKNOWN; };
                 if (previous.discovery() == DiscoveryStatus.DISCOVERED || now == DiscoveryStatus.DISCOVERED) now = DiscoveryStatus.DISCOVERED;
                 else if (previous.discovery() == DiscoveryStatus.UNKNOWN) now = DiscoveryStatus.UNKNOWN;
-                var paths = new ArrayList<>(previous.discoveryEvents()); paths.add(event.identity());
-                candidates.put(candidate.identity(), new CandidateState(candidate.identity(), now, previous.registration(), paths));
+                var paths = new ArrayList<>(previous.discoveryEvents()); paths.add(eventId(event));
+                candidates.put(cid, new CandidateState(cid, now, previous.registration(), paths));
             });
         }
         void issue(RegistrationProcessing.Reason reason, String subject, RegistrationEvent event) {

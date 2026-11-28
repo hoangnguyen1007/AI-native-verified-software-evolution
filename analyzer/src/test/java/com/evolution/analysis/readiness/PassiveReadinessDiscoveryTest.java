@@ -57,6 +57,47 @@ class PassiveReadinessDiscoveryTest {
         assertTrue(main.sourceRoots().contains("mapstruct-on-gradle-protobuf3/protobuf3-Async/src/main/java"));
         assertTrue(main.sourceRoots().contains("mapstruct-on-gradle-protobuf3/usage/build/generated/source/proto"));
     }
+    @Test void pythonRequirementsDiscoversStandaloneServicesAndFoldsNestedRequirementsUnderEnclosingRoot(){
+        var projection=discover(Map.of(
+                "services/mailer/requirements.txt","grpcio==1.60.0\n",
+                "services/recommender/requirements.txt","flask==3.0.0\n",
+                "services/analytics/pyproject.toml","[project]\nname='analytics'\n",
+                "services/analytics/docs/requirements.txt","sphinx==7.0.0\n"));
+        var pyModules=projection.modules().stream().filter(m->m.id().startsWith("PYTHON:")).map(com.evolution.analysis.readiness.ReadinessPlan.Module::directory).collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of("services/mailer","services/recommender","services/analytics"),pyModules);
+        assertFalse(pyModules.contains("services/analytics/docs"),"nested docs/requirements.txt must fold into enclosing Python root");
+    }
+    @Test void dotnetSolutionFoldsSingleServiceSrcAndTestsWhilePreservingMultiServiceSolutions(){
+        String singleSln="""
+                Microsoft Visual Studio Solution File, Format Version 12.00
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "inventory", "src\\inventory.csproj", "{11111111-1111-1111-1111-111111111111}"
+                EndProject
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "inventory.tests", "tests\\inventory.tests.csproj", "{22222222-2222-2222-2222-222222222222}"
+                EndProject
+                """;
+        var single=discover(Map.of(
+                "services/inventory/inventory.sln",singleSln,
+                "services/inventory/src/inventory.csproj","<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>",
+                "services/inventory/tests/inventory.tests.csproj","<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"Microsoft.NET.Test.Sdk\"/></ItemGroup></Project>"));
+        var singleMods=single.modules().stream().filter(m->m.id().startsWith("DOTNET:")).map(com.evolution.analysis.readiness.ReadinessPlan.Module::directory).toList();
+        assertEquals(List.of("services/inventory"),singleMods,"single-service .sln with src/ and tests/ must emit 1 canonical DOTNET module, not 3");
+        assertTrue(single.contexts().stream().anyMatch(c->c.sourceSet().equals("main")&&c.sourceRoots().equals(List.of("services/inventory/src"))));
+        assertTrue(single.contexts().stream().anyMatch(c->c.sourceSet().equals("test")&&c.sourceRoots().equals(List.of("services/inventory/tests"))));
+
+        String multiSln="""
+                Microsoft Visual Studio Solution File, Format Version 12.00
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Catalog", "Catalog\\Catalog.csproj", "{11111111-1111-1111-1111-111111111111}"
+                EndProject
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Billing", "Billing\\Billing.csproj", "{22222222-2222-2222-2222-222222222222}"
+                EndProject
+                """;
+        var multi=discover(Map.of(
+                "platform/Platform.sln",multiSln,
+                "platform/Catalog/Catalog.csproj","<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>",
+                "platform/Billing/Billing.csproj","<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>"));
+        var multiMods=multi.modules().stream().filter(m->m.id().startsWith("DOTNET:")).map(com.evolution.analysis.readiness.ReadinessPlan.Module::directory).collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of("platform/Catalog","platform/Billing"),multiMods,"multi-service .sln must preserve each distinct service project");
+    }
     private static ReadinessDiscovery.Projection discover(Map<String,String> files){
         var descriptors=new TreeMap<String,ReadinessDiscovery.Descriptor>();files.forEach((path,text)->{byte[] bytes=text.getBytes(StandardCharsets.UTF_8);descriptors.put(path,new ReadinessDiscovery.Descriptor(path,new ContentHandle(ContentDigest.sha256(bytes),bytes.length),bytes));});
         var manifest=new InventoryManifest(InventoryManifest.SCHEMA,RepositoryIdentity.fromCanonicalCoordinate("urn:test:generic-readiness"),ContentDigest.sha256Utf8("selection"),ContentDigest.sha256Utf8("inventory"),files.size(),files.size(),0,0,Optional.empty(),Optional.empty());

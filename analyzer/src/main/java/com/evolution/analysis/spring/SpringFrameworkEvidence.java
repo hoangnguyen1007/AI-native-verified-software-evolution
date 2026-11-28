@@ -134,17 +134,22 @@ public record SpringFrameworkEvidence(boolean completeClasspath,
         if (!fwCore) return false;
         if (!boot.isEmpty()) {
             String bootVer = boot.iterator().next();
-            boolean compatible = (fwVer.startsWith("5.3.") && bootVer.startsWith("2.7."))
+            boolean compatible = (fwVer.startsWith("5.") && bootVer.startsWith("2."))
                     || (fwVer.startsWith("6.0.") && (bootVer.startsWith("3.0.") || bootVer.startsWith("3.1.")))
                     || (fwVer.startsWith("6.1.") && (bootVer.startsWith("3.2.") || bootVer.startsWith("3.3.")))
-                    || (fwVer.startsWith("6.2.") && (bootVer.startsWith("3.4.") || bootVer.startsWith("3.5.")));
+                    || (fwVer.startsWith("6.2.") && (bootVer.startsWith("3.4.") || bootVer.startsWith("3.5.")))
+                    || ((fwVer.startsWith("7.") || fwVer.startsWith("6.2.")) && bootVer.startsWith("4."));
             if (!compatible) return false;
-            return artifacts.stream().filter(a -> "org.springframework.boot".equals(a.groupId()))
-                    .map(Artifact::artifactId).collect(java.util.stream.Collectors.toSet())
-                    .containsAll(List.of("spring-boot", "spring-boot-autoconfigure"));
+            var bootIds = artifacts.stream().filter(a -> "org.springframework.boot".equals(a.groupId()))
+                    .map(Artifact::artifactId).collect(java.util.stream.Collectors.toSet());
+            if (bootVer.startsWith("4.")) {
+                return bootIds.contains("spring-boot")
+                        && (bootIds.contains("spring-boot-autoconfigure")
+                                || bootIds.stream().anyMatch(id -> id.startsWith("spring-boot-") && !id.equals("spring-boot")));
+            }
+            return bootIds.containsAll(List.of("spring-boot", "spring-boot-autoconfigure"));
         }
-        return fwVer.startsWith("5.3.") || fwVer.startsWith("6.0.")
-                || fwVer.startsWith("6.1.") || fwVer.startsWith("6.2.");
+        return fwVer.startsWith("5.") || fwVer.startsWith("6.") || fwVer.startsWith("7.");
     }
 
     public enum ValidationMode {

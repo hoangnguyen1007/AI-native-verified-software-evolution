@@ -59,12 +59,14 @@ final class SpringOperands {
 
     private static void indexResult(EvolutionInput side,GraphEvidence evidence)throws IOException {
         var meta=new TreeMap<String,Object>();
+        var declaredCounts=new HashMap<String,Long>();
         GraphJson.streamObject(new StringReader(evidence.canonicalJson()),
                 new GraphJson.StreamLimits(Math.max(1,evidence.canonicalJson().length()),128,Long.MAX_VALUE),
                 (field,value)->{
                     switch(field) {
                         case "schema","provider","inputIdentity","semanticsContextIdentity","legalOrderIdentity",
                                 "coverage","feasibility","identity","signaturesComplete" -> meta.put(field,value.read());
+                        case "regionsCount","tracesCount" -> declaredCounts.put(field,number(value.read()));
                         case "worlds","regions","witnesses","replays","traces" -> {
                             var ordinal=new long[1];
                             value.array(member->{
@@ -79,9 +81,62 @@ final class SpringOperands {
                             });
                             meta.put(field+"Count",ordinal[0]);
                         }
+                        case "regionDigestPages" -> {
+                            var ordinal=new long[1];
+                            var pageIdx=new long[1];
+                            String prefix=side.name+"|"+evidence.identity().value()+"|regions|";
+                            value.array(pageRef->{
+                                EvolutionSnapshot.check(side.run.cancelled);
+                                var pageEv=side.evidence(new ContentDigest(GraphJson.string(pageRef)));
+                                if(!"spring.symbolic-region-digest-page".equals(pageEv.family()))throw EvolutionInput.corrupt();
+                                var pageObj=EvolutionInput.payload(pageEv);
+                                if(number(pageObj.get("page"))!=pageIdx[0]++)throw EvolutionInput.corrupt();
+                                for(var digestObj:list(pageObj.get("records"))) {
+                                    EvolutionSnapshot.check(side.run.cancelled);
+                                    String digest=GraphJson.string(digestObj);
+                                    unique(side.run.index,"spring-member",prefix+digest,row("ordinal",ordinal[0]));
+                                    ordinal[0]++;
+                                }
+                            });
+                            meta.put("regionsCount",ordinal[0]);
+                        }
+                        case "traceEvidencePages" -> {
+                            var ordinal=new long[1];
+                            var pageIdx=new long[1];
+                            String prefix=side.name+"|"+evidence.identity().value()+"|traces|";
+                            value.array(pageRef->{
+                                EvolutionSnapshot.check(side.run.cancelled);
+                                var pageEv=side.evidence(new ContentDigest(GraphJson.string(pageRef)));
+                                if(!"spring.symbolic-trace-index-page".equals(pageEv.family()))throw EvolutionInput.corrupt();
+                                var pageObj=EvolutionInput.payload(pageEv);
+                                if(number(pageObj.get("page"))!=pageIdx[0]++)throw EvolutionInput.corrupt();
+                                for(var traceRefObj:list(pageObj.get("records"))) {
+                                    EvolutionSnapshot.check(side.run.cancelled);
+                                    var traceEv=side.evidence(new ContentDigest(GraphJson.string(traceRefObj)));
+                                    if(!"spring.symbolic-trace".equals(traceEv.family()))throw EvolutionInput.corrupt();
+                                    var digest=ContentDigest.sha256Utf8(traceEv.canonicalJson());
+                                    unique(side.run.index,"spring-member",prefix+digest.value(),row("ordinal",ordinal[0]));
+                                    var traceLimits=new GraphJson.Limits(
+                                            Math.max(GraphJson.Limits.defaults().maxCharacters(),traceEv.canonicalJson().length()),
+                                            128,Integer.MAX_VALUE-8);
+                                    unique(side.run.index,"spring-trace",prefix+digest.value(),
+                                            obj(GraphJson.read(traceEv.canonicalJson(),traceLimits)));
+                                    ordinal[0]++;
+                                }
+                            });
+                            meta.put("tracesCount",ordinal[0]);
+                        }
                         default -> value.skip();
                     }
                 });
+        if("spring.symbolic-result:m8.4-paged-v1".equals(meta.get("schema"))) {
+            if(!meta.containsKey("regionsCount")||!meta.containsKey("tracesCount")
+                    ||!declaredCounts.containsKey("regionsCount")||!declaredCounts.containsKey("tracesCount"))
+                throw EvolutionInput.corrupt();
+            if(!declaredCounts.get("regionsCount").equals(meta.get("regionsCount"))
+                    ||!declaredCounts.get("tracesCount").equals(meta.get("tracesCount")))
+                throw EvolutionInput.corrupt();
+        }
         meta.put("evidence",evidence.identity());
         String key=evidence.family().equals("spring.explicit-result")?text(meta,"semanticsContextIdentity"):text(meta,"inputIdentity");
         var lookup=side.name+"|"+evidence.family()+"|"+key;

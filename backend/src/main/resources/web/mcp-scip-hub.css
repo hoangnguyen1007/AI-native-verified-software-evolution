@@ -494,6 +494,127 @@ dialog.evo-hub-dialog {
   border: 1px solid var(--accent-line);
 }
 
+.evo-mcp-copy-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.evo-mcp-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(140, 226, 185, 0.34);
+  background: rgba(140, 226, 185, 0.14);
+  color: #e9f2ee;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color .2s var(--ux-ease), border-color .2s var(--ux-ease), color .2s var(--ux-ease), transform .18s var(--ux-ease);
+}
+
+.evo-mcp-copy-btn:hover {
+  background: rgba(140, 226, 185, 0.24);
+  border-color: #8ce2b9;
+}
+
+.evo-mcp-copy-btn:active {
+  transform: scale(0.96);
+}
+
+.evo-mcp-copy-btn.is-copied {
+  background: #4fd19a;
+  border-color: #4fd19a;
+  color: #07261b;
+}
+
+.evo-mcp-copy-ic {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+}
+
+.evo-mcp-copy-ic svg {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: opacity .2s var(--ux-ease), transform .3s var(--ux-spring);
+}
+
+.evo-mcp-copy-btn.is-copied .u008-cp {
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.evo-mcp-copy-btn.is-copied .u008-ok {
+  opacity: 1;
+  transform: none;
+}
+
+.evo-mcp-copy-btn.is-copied .u008-ok path {
+  stroke-dashoffset: 0;
+}
+
+.evo-mcp-posture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.evo-mcp-posture-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-mid);
+  background: var(--surface);
+  display: grid;
+  gap: 4px;
+}
+
+.evo-mcp-posture-card strong {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.evo-mcp-posture-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.evo-mcp-catalog-details {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.evo-mcp-catalog-details > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.evo-mcp-catalog-details[open] .evo-mcp-chips {
+  margin-top: 10px;
+}
+
+.evo-mcp-chip.is-static {
+  cursor: default;
+}
+
 /* ── #239 Interactive Live Connection Tester ── */
 .u239-hub {
   position: relative;

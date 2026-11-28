@@ -1,0 +1,178 @@
+{
+  "schema": "e0.corpus-manifest:v1",
+  "description": "Standardized publication corpus manifest for Evo Track 1 (Spring ASM+COI) and Track 2 (17-app microSecEnD + Polyglot/Java benchmarks).",
+  "banned_duplicates": [
+    "oversengineer/microservices-kafka"
+  ],
+  "suites": {
+    "microsecend_17": [
+      {
+        "id": "anilallewar/microservices-basics-spring-boot",
+        "dir": "microservices-basics-spring-boot",
+        "url": "https://github.com/anilallewar/microservices-basics-spring-boot",
+        "build": "gradle",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "apssouza22/java-microservice",
+        "dir": "java-microservice",
+        "url": "https://github.com/apssouza22/java-microservice",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "callistaenterprise/blog-microservices",
+        "dir": "blog-microservices",
+        "url": "https://github.com/callistaenterprise/blog-microservices",
+        "build": "gradle",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "ewolff/microservice",
+        "dir": "microservice",
+        "url": "https://github.com/ewolff/microservice",
+        "build": "maven",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "ewolff/microservice-kafka",
+        "dir": "microservice-kafka",
+        "url": "https://github.com/ewolff/microservice-kafka",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "fernandoabcampos/spring-netflix-oss-microservices",
+        "dir": "spring-netflix-oss-microservices",
+        "url": "https://github.com/fernandoabcampos/spring-netflix-oss-microservices",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "georgwittberger/apache-spring-boot-microservice-example",
+        "dir": "apache-spring-boot-microservice-example",
+        "url": "https://github.com/georgwittberger/apache-spring-boot-microservice-example",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "jferrater/tap-and-eat-microservices",
+        "dir": "tap-and-eat-microservices",
+        "url": "https://github.com/jferrater/tap-and-eat-microservices",
+        "build": "gradle",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "koushikkothagal/spring-boot-microservices-workshop",
+        "dir": "spring-boot-microservices-workshop",
+        "url": "https://github.com/koushikkothagal/spring-boot-microservices-workshop",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "mdeket/spring-cloud-movie-recommendation",
+        "dir": "spring-cloud-movie-recommendation",
+        "url": "https://github.com/mdeket/spring-cloud-movie-recommendation",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "mudigal-technologies/microservices-sample",
+        "dir": "microservices-sample",
+        "url": "https://github.com/mudigal-technologies/microservices-sample",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "piomin/sample-spring-oauth2-microservices",
+        "dir": "sample-spring-oauth2-microservices",
+        "url": "https://github.com/piomin/sample-spring-oauth2-microservices",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "rohitghatol/spring-boot-microservices",
+        "dir": "spring-boot-microservices",
+        "url": "https://github.com/rohitghatol/spring-boot-microservices",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "shabbirdwd53/springboot-microservice",
+        "dir": "springboot-microservice",
+        "url": "https://github.com/shabbirdwd53/springboot-microservice",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "spring-petclinic/spring-petclinic-microservices",
+        "dir": "spring-petclinic-microservices",
+        "url": "https://github.com/spring-petclinic/spring-petclinic-microservices",
+        "build": "maven",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "sqshq/piggymetrics",
+        "dir": "piggymetrics",
+        "url": "https://github.com/sqshq/piggymetrics",
+        "build": "maven",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "yidongnan/spring-cloud-netflix-example",
+        "dir": "spring-cloud-netflix-example",
+        "url": "https://github.com/yidongnan/spring-cloud-netflix-example",
+        "build": "maven",
+        "in_5repo_baseline": false
+      }
+    ],
+    "flagship_polyglot_java": [
+      {
+        "id": "GoogleCloudPlatform/microservices-demo",
+        "dir": "microservices-demo",
+        "pinned_sha": "c7cb6d5",
+        "stack": "polyglot-grpc-5lang"
+      },
+      {
+        "id": "DescartesResearch/TeaStore",
+        "dir": "TeaStore",
+        "pinned_sha": "34b37f7",
+        "stack": "java-jaxrs-servlet"
+      },
+      {
+        "id": "shopizer-ecommerce/shopizer",
+        "dir": "shopizer",
+        "pinned_sha": "6a4a0a65",
+        "stack": "java-spring-boot-large"
+      },
+      {
+        "id": "spring-projects/spring-petclinic",
+        "dir": "spring-petclinic",
+        "pinned_sha": "818c4136",
+        "stack": "java-spring-boot"
+      }
+    ],
+    "s1_spring_spike_5": [
+      {
+        "id": "spring-cloud/spring-cloud-gateway",
+        "dir": "spring-cloud-gateway"
+      },
+      {
+        "id": "spring-projects/spring-authorization-server",
+        "dir": "spring-authorization-server"
+      },
+      {
+        "id": "halo-dev/halo",
+        "dir": "halo"
+      },
+      {
+        "id": "flowable/flowable-engine",
+        "dir": "flowable-engine"
+      },
+      {
+        "id": "shopizer-ecommerce/shopizer",
+        "dir": "shopizer"
+      }
+    ]
+  }
+}

@@ -38,6 +38,7 @@ public final class ExogenousConditionEvaluator {
         private final Status status;
         private final LogicalValue assignmentFeasibility;
         private final int steps;
+        private volatile ContentDigest cachedIdentity;
         Result(ContentDigest input, List<Row> rows, List<EffectiveValue> environment, Map<String, LogicalValue> profiles,
                Collection<ConditionProcessing.Issue> issues, List<CapabilityGapRecord> inherited,
                SpringBuildContext build, Status status, LogicalValue feasibility, int steps) {
@@ -48,7 +49,13 @@ public final class ExogenousConditionEvaluator {
             this.status = status; assignmentFeasibility = feasibility; this.steps = steps;
         }
         public ContentDigest inputIdentity() { return inputIdentity; }
-        public ContentDigest identity() { return ConditionIdentitySupport.digest(canonicalForm()); }
+        public ContentDigest identity() {
+            ContentDigest cached = cachedIdentity;
+            if (cached != null) return cached;
+            ContentDigest computed = ConditionIdentitySupport.digest(canonicalForm());
+            cachedIdentity = computed;
+            return computed;
+        }
         public List<Row> rows() { return rows; }
         public List<EffectiveValue> environment() { return environment; }
         public Map<String, LogicalValue> effectiveProfiles() { return profiles; }
@@ -111,18 +118,19 @@ public final class ExogenousConditionEvaluator {
             Map<ConditionOccurrence.Identity, ConditionModel.RowStatus> rowStatus = new HashMap<>();
             model.rows().forEach(r -> rowStatus.put(r.identity(), r.status()));
             for (var occurrence : model.sourceRows()) {
-                current = Optional.of(occurrence.identity()); currentEvidence = occurrence.declarationEvidenceKey();
+                var occId = model.identityOf(occurrence);
+                current = Optional.of(occId); currentEvidence = occurrence.declarationEvidenceKey();
                 LogicalValue value = LogicalValue.UNKNOWN;
                 boolean evidenced = evidence(currentEvidence);
-                if (rowStatus.get(occurrence.identity()) == ConditionModel.RowStatus.NOT_EXPANDED) {
-                    issue(EXPRESSION_NOT_EXPANDED, occurrence.identity().value(), currentEvidence);
+                if (rowStatus.get(occId) == ConditionModel.RowStatus.NOT_EXPANDED) {
+                    issue(EXPRESSION_NOT_EXPANDED, occId.value(), currentEvidence);
                 } else if (!invalidModel && !invalidAssignment && validSemantics && evidenced) {
                     value = expression(occurrence.expression().identity());
                 }
-                rows.add(new Row(occurrence.identity(), value)); truths.put(occurrence.identity(), value);
+                rows.add(new Row(occId, value)); truths.put(occId, value);
             }
             LogicalValue feasible = LogicalValue.TRUE;
-            for (var constraint : space.constraints()) feasible = feasible.and(truths.get(constraint.identity()));
+            for (var constraint : space.constraints()) feasible = feasible.and(truths.get(model.identityOf(constraint)));
             if (invalidModel || invalidAssignment || !validSemantics || requiredSourceMissing || environmentIncomplete) {
                 feasible = feasible.and(LogicalValue.UNKNOWN);
             }

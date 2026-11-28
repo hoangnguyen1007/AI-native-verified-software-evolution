@@ -67,7 +67,8 @@ public final class WorkbenchApiMain {
             String graphDirectory,
             String bindHost,
             int port,
-            Optional<String> policyPath) {
+            Optional<String> policyPath,
+            boolean onlineMode) {
     }
 
     public static LaunchOptions parseLaunchOptions(
@@ -77,10 +78,17 @@ public final class WorkbenchApiMain {
         String hostFlag = null;
         String portFlag = null;
         String policyFlag = null;
+        String stateDirFlag = null;
+        String jdkFlag = null;
+        String releaseFlag = null;
+        String mavenCacheFlag = null;
+        boolean onlineFlag = false;
         var positional = new ArrayList<String>();
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
-            if ("--host".equals(arg)) {
+            if ("--online".equals(arg)) {
+                onlineFlag = true;
+            } else if ("--host".equals(arg)) {
                 if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --host");
                 hostFlag = args[++i];
             } else if (arg.startsWith("--host=")) {
@@ -95,14 +103,114 @@ public final class WorkbenchApiMain {
                 policyFlag = args[++i];
             } else if (arg.startsWith("--policy=")) {
                 policyFlag = arg.substring("--policy=".length());
+            } else if ("--state-dir".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --state-dir");
+                stateDirFlag = args[++i];
+            } else if (arg.startsWith("--state-dir=")) {
+                stateDirFlag = arg.substring("--state-dir=".length());
+            } else if ("--jdk".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --jdk");
+                jdkFlag = args[++i];
+            } else if (arg.startsWith("--jdk=")) {
+                jdkFlag = arg.substring("--jdk=".length());
+            } else if ("--release".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --release");
+                releaseFlag = args[++i];
+            } else if (arg.startsWith("--release=")) {
+                releaseFlag = arg.substring("--release=".length());
+            } else if ("--maven-cache".equals(arg)) {
+                if (i + 1 >= args.length) throw new IllegalArgumentException("Missing value for --maven-cache");
+                mavenCacheFlag = args[++i];
+            } else if (arg.startsWith("--maven-cache=")) {
+                mavenCacheFlag = arg.substring("--maven-cache=".length());
             } else if (arg.startsWith("--")) {
                 throw new IllegalArgumentException("Unknown option: " + arg);
             } else {
                 positional.add(arg);
             }
         }
+
+        Optional<String> policyPath = Optional.empty();
+        if (policyFlag != null && !policyFlag.isBlank()) {
+            policyPath = Optional.of(policyFlag.strip());
+        } else if (!onlineFlag && positional.size() == 8) {
+            policyPath = Optional.of(positional.get(7));
+        } else {
+            String envPolicy = firstNonBlank(props.apply("evo.workbench.policy"), env.apply("EVO_POLICY_FILE"));
+            if (envPolicy != null) {
+                policyPath = Optional.of(envPolicy);
+            }
+        }
+
+        String envOnlineRaw = firstNonBlank(props.apply("evo.workbench.onlineMode"), env.apply("EVO_ONLINE_MODE"));
+        boolean envOnline = envOnlineRaw != null && ("true".equalsIgnoreCase(envOnlineRaw) || "1".equals(envOnlineRaw));
+        boolean onlineMode = onlineFlag || envOnline;
+
+        if (onlineMode) {
+            if (!positional.isEmpty()) {
+                throw new IllegalArgumentException("Online mode does not accept positional local source arguments");
+            }
+            String stateDir = firstNonBlank(
+                    stateDirFlag,
+                    props.apply("evo.workbench.stateDir"),
+                    env.apply("EVO_STATE_DIR"));
+            if (stateDir == null) {
+                stateDir = ".evo-online";
+            }
+            String mavenCache = firstNonBlank(
+                    mavenCacheFlag,
+                    props.apply("evo.workbench.mavenCache"),
+                    env.apply("EVO_M2_REPOSITORY"));
+            if (mavenCache == null) {
+                mavenCache = Path.of(stateDir, "m2-cache").toString();
+            }
+            String jdk = firstNonBlank(
+                    jdkFlag,
+                    props.apply("evo.workbench.jdk"),
+                    env.apply("EVO_JDK"),
+                    env.apply("JAVA_HOME"),
+                    props.apply("java.home"));
+            if (jdk == null) {
+                throw new IllegalArgumentException("JDK path required");
+            }
+            String relSource = firstNonBlank(
+                    releaseFlag,
+                    props.apply("evo.workbench.release"),
+                    env.apply("EVO_JAVA_RELEASE"));
+            int release = relSource == null ? 21 : Integer.parseInt(relSource);
+
+            String resolvedHost = firstNonBlank(
+                    hostFlag,
+                    props.apply("evo.http.bindHost"),
+                    env.apply("EVO_BIND_HOST"));
+            if (resolvedHost == null) {
+                resolvedHost = "0.0.0.0";
+            }
+            String portSource = firstNonBlank(
+                    portFlag,
+                    props.apply("evo.http.port"),
+                    env.apply("EVO_PORT"),
+                    env.apply("PORT"));
+            int resolvedPort = portSource == null ? 8080 : Integer.parseInt(portSource);
+            if (resolvedPort < 0 || resolvedPort > 65535) {
+                throw new IllegalArgumentException("Invalid port: " + resolvedPort);
+            }
+
+            return new LaunchOptions(
+                    null,
+                    null,
+                    jdk,
+                    release,
+                    mavenCache,
+                    stateDir,
+                    resolvedHost,
+                    resolvedPort,
+                    policyPath,
+                    true);
+        }
+
         if (positional.size() < 6 || positional.size() > 8) {
-            throw new IllegalArgumentException("Expected 6..8 positional arguments");
+            throw new IllegalArgumentException("Expected 6..8 positional arguments or --online");
         }
         int release = Integer.parseInt(positional.get(3));
         String resolvedHost = (hostFlag != null && !hostFlag.isBlank())
@@ -128,13 +236,6 @@ public final class WorkbenchApiMain {
             throw new IllegalArgumentException("Invalid port: " + resolvedPort);
         }
 
-        Optional<String> policyPath = Optional.empty();
-        if (policyFlag != null && !policyFlag.isBlank()) {
-            policyPath = Optional.of(policyFlag.strip());
-        } else if (positional.size() == 8) {
-            policyPath = Optional.of(positional.get(7));
-        }
-
         return new LaunchOptions(
                 positional.get(0),
                 positional.get(1),
@@ -144,7 +245,8 @@ public final class WorkbenchApiMain {
                 positional.get(5),
                 resolvedHost,
                 resolvedPort,
-                policyPath);
+                policyPath,
+                false);
     }
 
     private static String firstNonBlank(String... values) {
@@ -162,25 +264,35 @@ public final class WorkbenchApiMain {
             launch = parseLaunchOptions(args, System::getenv, System::getProperty);
         } catch (IllegalArgumentException invalid) {
             System.err.println(
-                    "Usage: WorkbenchApiMain [--host <bind-host>] [--port <port>] <source> <repository-coordinate> <jdk> <release> <maven-cache> <existing-graph-directory> [port] [policy.yaml]");
+                    "Usage: WorkbenchApiMain --online [--host <bind-host>] [--port <port>] [--state-dir <dir>] [--jdk <dir>] [--release <n>] [--maven-cache <dir>] [--policy <file>]\n"
+                            + "   or: WorkbenchApiMain [--host <bind-host>] [--port <port>] <source> <repository-coordinate> <jdk> <release> <maven-cache> <existing-graph-directory> [port] [policy.yaml]");
             System.exit(2);
             return;
         }
         try {
-            var source = LocalAnalysisRunner.safe(Path.of(launch.source()));
+            if (launch.onlineMode()) {
+                Files.createDirectories(Path.of(launch.graphDirectory()));
+                Files.createDirectories(Path.of(launch.mavenCache()));
+            }
             var jdk = LocalAnalysisRunner.safe(Path.of(launch.jdk()));
             var cache = LocalAnalysisRunner.safe(Path.of(launch.mavenCache()));
             var directory = LocalAnalysisRunner.safe(Path.of(launch.graphDirectory()));
-            if (!Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)
-                    || !Files.isDirectory(jdk, LinkOption.NOFOLLOW_LINKS))
-                throw new IllegalArgumentException("Inputs unavailable");
-            // Prevent output files from changing the next captured snapshot, even when the
-            // store lives inside the source tree.
-            if (directory.equals(source))
-                throw new IllegalArgumentException("Store must have its own directory");
-            var exclusions = directory.startsWith(source)
-                    ? List.of(source.relativize(directory).toString().replace('\\', '/'))
-                    : List.<String>of();
+            if (!Files.isDirectory(jdk, LinkOption.NOFOLLOW_LINKS))
+                throw new IllegalArgumentException("JDK directory unavailable");
+            Path source = null;
+            List<String> exclusions = List.of();
+            if (!launch.onlineMode()) {
+                source = LocalAnalysisRunner.safe(Path.of(launch.source()));
+                if (!Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS))
+                    throw new IllegalArgumentException("Inputs unavailable");
+                // Prevent output files from changing the next captured snapshot, even when the
+                // store lives inside the source tree.
+                if (directory.equals(source))
+                    throw new IllegalArgumentException("Store must have its own directory");
+                exclusions = directory.startsWith(source)
+                        ? List.of(source.relativize(directory).toString().replace('\\', '/'))
+                        : List.<String>of();
+            }
             Optional<LocalAnalysisRunner.PolicyInput> policy = Optional.empty();
             if (launch.policyPath().isPresent()) {
                 var path = LocalAnalysisRunner.safe(Path.of(launch.policyPath().orElseThrow()));
@@ -197,13 +309,16 @@ public final class WorkbenchApiMain {
                     readBoundedCasContent(contentRoot, contentStoreRef, digest, expectedSize));
             var acquisitionDir = directory.resolve("acquisition");
             var sharedCaches = LocalAnalysisRunner.sharedCaches(acquisitionDir);
-            var runner = new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,
-                    RepositoryIdentity.fromCanonicalCoordinate(launch.coordinate()), jdk, launch.release(), cache,
-                    Optional.empty(), true, false, exclusions, policy, LocalAnalysisRunner.SpringInput.autoMultiConfig()),
-                    acquisitionDir, artifactPolicy,
-                    LocalAnalysisRunner.NativeExecutionConfig.fromEnvironment(),
-                    Optional.of(directory),
-                    sharedCaches);
+            Optional<LocalAnalysisRunner> localRunner = launch.onlineMode()
+                    ? Optional.empty()
+                    : Optional.of(new LocalAnalysisRunner(new LocalAnalysisRunner.Input(source,
+                            RepositoryIdentity.fromCanonicalCoordinate(launch.coordinate()),
+                            jdk, launch.release(), cache, Optional.empty(), true, false,
+                            exclusions, policy, LocalAnalysisRunner.SpringInput.autoMultiConfig()),
+                            acquisitionDir, artifactPolicy,
+                            LocalAnalysisRunner.NativeExecutionConfig.fromEnvironment(),
+                            Optional.of(directory),
+                            sharedCaches));
             // The streamed reader is bounded by the actual file and its token limits.
             // Current free space is checked separately for new writes.
             long bytes = Long.MAX_VALUE - 1;
@@ -402,13 +517,13 @@ public final class WorkbenchApiMain {
                     var disk = new AnalysisJobDiskStore(directory.resolve("jobs"))) {
                 var reports = new PublishedReports(reportDisk);
                 var previewStore = new WorkbenchPreviewStore();
-                try (var jobs = new AnalysisJobs(List.of(runner.registration("local")), store, reports,
+                var initialSetups = localRunner.map(r -> List.of(r.registration("local"))).orElseGet(List::of);
+                try (var jobs = new AnalysisJobs(initialSetups, store, reports,
                         AnalysisJobs.Limits.defaults(), disk, previewStore)) {
                     var history = jobs.history(1, Optional.empty()).items();
                     if (!history.isEmpty()) {
                         history.getFirst().result().flatMap(AnalysisJobs.Result::graph).ifPresent(store::warm);
                     }
-                    var repositoryId = RepositoryIdentity.fromCanonicalCoordinate(launch.coordinate());
                     var oauthConfig = com.evolution.backend.auth.GitHubOAuthService.Config.fromEnvironment();
                     var authDir = directory.resolve("auth");
                     var oauthConfigStore = new com.evolution.backend.auth.GitHubOAuthConfigStore(authDir, System::getenv);
@@ -421,8 +536,11 @@ public final class WorkbenchApiMain {
                             Optional.of(directory.resolve("auth-sessions.enc")),
                             Optional.of(oauthConfigStore.masterKeyBytes()));
                     var connections = new RepositoryConnections(jobs, jdk, launch.release(), cache, directory,
-                            policy, "git", gitHostPolicy, artifactPolicy);
-                    connections.describeLocal("local", source.getFileName().toString(), repositoryId, source, policy);
+                            policy, "git", gitHostPolicy, artifactPolicy, launch.onlineMode());
+                    if (!launch.onlineMode()) {
+                        var repositoryId = RepositoryIdentity.fromCanonicalCoordinate(launch.coordinate());
+                        connections.describeLocal("local", source.getFileName().toString(), repositoryId, source, policy);
+                    }
                     try (githubTokens;
                             sessionStore;
                             accountStore;
@@ -524,7 +642,13 @@ public final class WorkbenchApiMain {
                             Runtime.getRuntime().addShutdownHook(shutdown);
                             try {
                                 server.start();
-                                System.out.println("Architecture workbench API: " + server.uri() + "/api/v1");
+                                if (launch.onlineMode()) {
+                                    System.out.println("Architecture workbench ONLINE web app: http://"
+                                            + launch.bindHost() + ":" + launch.port()
+                                            + " (API: /api/v1, health: /api/v1/health)");
+                                } else {
+                                    System.out.println("Architecture workbench API: " + server.uri() + "/api/v1");
+                                }
                                 stopped.await();
                             } finally {
                                 try {
@@ -540,7 +664,7 @@ public final class WorkbenchApiMain {
             Thread.currentThread().interrupt();
         } catch (Exception failure) {
             System.err.println(
-                    "Unable to start local workbench API; check the explicit inputs, storage limits and port.");
+                    "Unable to start workbench API; check the explicit inputs, storage limits and port.");
             System.exit(1);
         }
     }
@@ -714,7 +838,7 @@ public final class WorkbenchApiMain {
                 : Arrays.stream(trimmed.split("\\s+")).map(URI::create).toList();
         return Optional.of(
                 new DependencyAcquisitionPolicy(4096, 64_000_000, MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES, 64,
-                        repositories, 5000, 15000, 1, 8));
+                        repositories, 5000, 15000, 1, 16));
     }
 
     private WorkbenchApiMain() {

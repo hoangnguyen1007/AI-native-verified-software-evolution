@@ -32,9 +32,17 @@ public final class RepositoryConfigurationSpaceBuilder {
 
     public static Selected build(SpringBuildContext build, ConfigDataIngestion.Result captured,
             List<ConditionOccurrence> conditions) {
+        return build(build, captured, conditions, MAX_DIMENSIONS);
+    }
+
+    public static Selected build(SpringBuildContext build, ConfigDataIngestion.Result captured,
+            List<ConditionOccurrence> conditions, int maxDimensions) {
         Objects.requireNonNull(build);
         Objects.requireNonNull(captured);
         Objects.requireNonNull(conditions);
+        if (maxDimensions < 1) {
+            throw new IllegalArgumentException("Positive maxDimensions required");
+        }
 
         var evidence = new ConditionEvidence.Derived(List.of(captured.identity()), PROVIDER,
                 "repository-multi-config-space");
@@ -43,6 +51,7 @@ public final class RepositoryConfigurationSpaceBuilder {
         var directProfileNames = new TreeSet<String>();
         var ambientProfileNames = new TreeSet<String>();
         var propertyHints = new TreeMap<String, LinkedHashSet<String>>();
+        var propertyHavingValues = new HashMap<String, Set<String>>();
 
         // 1. Collect direct profile & property variables referenced by lowered
         // condition occurrences
@@ -63,6 +72,8 @@ public final class RepositoryConfigurationSpaceBuilder {
                     var hints = propertyHints.computeIfAbsent(key, k -> new LinkedHashSet<>());
                     if (!property.havingValue().isBlank()) {
                         hints.add(property.havingValue());
+                        propertyHavingValues.computeIfAbsent(key, k -> new LinkedHashSet<>())
+                                .add(property.havingValue().toLowerCase(Locale.ROOT));
                     } else {
                         hints.add("true");
                         hints.add("false");
@@ -127,22 +138,22 @@ public final class RepositoryConfigurationSpaceBuilder {
         ambientVars.sort(Comparator.naturalOrder());
 
         int totalDiscovered = directVars.size() + ambientVars.size();
-        var allVars = new ArrayList<FiniteDomain.Variable>(Math.min(MAX_DIMENSIONS, totalDiscovered));
+        var allVars = new ArrayList<FiniteDomain.Variable>(Math.min(maxDimensions, totalDiscovered));
         for (var v : directVars) {
-            if (allVars.size() >= MAX_DIMENSIONS)
+            if (allVars.size() >= maxDimensions)
                 break;
             allVars.add(v);
         }
         for (var v : ambientVars) {
-            if (allVars.size() >= MAX_DIMENSIONS)
+            if (allVars.size() >= maxDimensions)
                 break;
             allVars.add(v);
         }
         allVars.sort(Comparator.naturalOrder());
 
-        if (totalDiscovered > MAX_DIMENSIONS) {
+        if (totalDiscovered > maxDimensions) {
             gaps.add(gap(build, captured.identity(), "CONFIGURATION_SPACE_DIMENSION_BOUNDED",
-                    "Configuration dimensions capped at " + MAX_DIMENSIONS + " of " + totalDiscovered
+                    "Configuration dimensions capped at " + maxDimensions + " of " + totalDiscovered
                             + " discovered variables."));
         }
 
@@ -168,6 +179,22 @@ public final class RepositoryConfigurationSpaceBuilder {
                         break;
                     if (!hint.isBlank())
                         valueSet.add(FiniteDomain.Value.exact(hint));
+                }
+                // Soundness guard: when @ConditionalOnProperty uses havingValue (especially with matchIfMissing=true),
+                // retain at least one non-matching explicit counter-witness value so SAT does not conflate with MUST.
+                var havingSet = propertyHavingValues.get(variable.name());
+                if (havingSet != null && valueSet.size() < MAX_VALUES_PER_PROPERTY) {
+                    boolean hasNonMatching = valueSet.stream()
+                            .anyMatch(v -> v.kind() == FiniteDomain.ValueKind.EXACT
+                                    && !havingSet.contains(v.exact().orElseThrow().toLowerCase(Locale.ROOT)));
+                    if (!hasNonMatching) {
+                        for (String candidate : List.of("false", "true", "__non_matching__")) {
+                            if (!havingSet.contains(candidate.toLowerCase(Locale.ROOT))) {
+                                valueSet.add(FiniteDomain.Value.exact(candidate));
+                                break;
+                            }
+                        }
+                    }
                 }
                 baselineValues.put(variable, baseVal);
                 domains.add(new FiniteDomain(variable, List.copyOf(valueSet), evidence));
@@ -213,18 +240,25 @@ public final class RepositoryConfigurationSpaceBuilder {
     }
 
     private static void addProfileKeys(Map<String, String> props, Set<String> profiles) {
-        for (String key : List.of("spring.profiles.active", "spring.profiles.default", "spring.profiles.include",
-                "spring.config.activate.on-profile")) {
+        for (String key : List.of("spring.profiles", "spring.profiles.active", "spring.profiles.default",
+                "spring.profiles.include", "spring.config.activate.on-profile")) {
             String raw = props.get(key);
             if (raw != null)
                 parseProfileTokens(raw, profiles);
         }
         for (var entry : props.entrySet()) {
-            if (entry.getKey().startsWith("spring.profiles.group.") && entry.getValue() != null) {
-                String group = entry.getKey().substring("spring.profiles.group.".length());
+            String k = entry.getKey();
+            String v = entry.getValue();
+            if (v == null)
+                continue;
+            if (k.startsWith("spring.profiles.group.")) {
+                String group = k.substring("spring.profiles.group.".length());
                 if (!group.isBlank())
                     profiles.add(group);
-                parseProfileTokens(entry.getValue(), profiles);
+                parseProfileTokens(v, profiles);
+            } else if (k.startsWith("spring.profiles[") || k.startsWith("spring.profiles.active[")
+                    || k.startsWith("spring.config.activate.on-profile[")) {
+                parseProfileTokens(v, profiles);
             }
         }
     }

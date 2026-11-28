@@ -11,8 +11,37 @@ import java.util.*;
 /** Declaration-level HTTP entry points. Handler activation and potential call paths remain separate evidence. */
 public final class WebRouteMapper {
     private static final String PREFIX="org.springframework.web.bind.annotation.";
+    private static final String MEDIA_TYPE_PREFIX="org.springframework.http.MediaType.";
     private static final Map<String,String> SHORTCUTS=Map.of("GetMapping","GET","PostMapping","POST","PutMapping","PUT","DeleteMapping","DELETE","PatchMapping","PATCH");
     private static final Set<String> METHODS=Set.of("GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS","TRACE");
+    private static final Map<String,String> MEDIA_TYPE_VALUES=Map.ofEntries(
+            Map.entry("ALL_VALUE","*/*"),
+            Map.entry("APPLICATION_ATOM_XML_VALUE","application/atom+xml"),
+            Map.entry("APPLICATION_CBOR_VALUE","application/cbor"),
+            Map.entry("APPLICATION_FORM_URLENCODED_VALUE","application/x-www-form-urlencoded"),
+            Map.entry("APPLICATION_GRAPHQL_RESPONSE_VALUE","application/graphql-response+json"),
+            Map.entry("APPLICATION_JSON_VALUE","application/json"),
+            Map.entry("APPLICATION_JSON_UTF8_VALUE","application/json;charset=UTF-8"),
+            Map.entry("APPLICATION_NDJSON_VALUE","application/x-ndjson"),
+            Map.entry("APPLICATION_OCTET_STREAM_VALUE","application/octet-stream"),
+            Map.entry("APPLICATION_PDF_VALUE","application/pdf"),
+            Map.entry("APPLICATION_PROBLEM_JSON_VALUE","application/problem+json"),
+            Map.entry("APPLICATION_PROBLEM_XML_VALUE","application/problem+xml"),
+            Map.entry("APPLICATION_RSS_XML_VALUE","application/rss+xml"),
+            Map.entry("APPLICATION_STREAM_JSON_VALUE","application/stream+json"),
+            Map.entry("APPLICATION_XHTML_XML_VALUE","application/xhtml+xml"),
+            Map.entry("APPLICATION_XML_VALUE","application/xml"),
+            Map.entry("IMAGE_GIF_VALUE","image/gif"),
+            Map.entry("IMAGE_JPEG_VALUE","image/jpeg"),
+            Map.entry("IMAGE_PNG_VALUE","image/png"),
+            Map.entry("MULTIPART_FORM_DATA_VALUE","multipart/form-data"),
+            Map.entry("MULTIPART_MIXED_VALUE","multipart/mixed"),
+            Map.entry("MULTIPART_RELATED_VALUE","multipart/related"),
+            Map.entry("TEXT_EVENT_STREAM_VALUE","text/event-stream"),
+            Map.entry("TEXT_HTML_VALUE","text/html"),
+            Map.entry("TEXT_MARKDOWN_VALUE","text/markdown"),
+            Map.entry("TEXT_PLAIN_VALUE","text/plain"),
+            Map.entry("TEXT_XML_VALUE","text/xml"));
     public enum Status { MAPPED, NOT_CONTROLLER, UNKNOWN, LIMITED }
     public record Route(EntityIdentity controller,EntityIdentity handler,String path,List<String> methods,
                         List<String> params,List<String> headers,List<String> consumes,List<String> produces,
@@ -95,7 +124,24 @@ public final class WebRouteMapper {
         }
         return new Mapping(paths.stream().map(p->resolve(p,properties)).toList(),methods,
                 LiteralConditionAnnotation.strings(attrs,"params",List.of()).stream().map(p->resolve(p,properties)).toList(),LiteralConditionAnnotation.strings(attrs,"headers",List.of()).stream().map(p->resolve(p,properties)).toList(),
-                LiteralConditionAnnotation.strings(attrs,"consumes",List.of()).stream().map(p->resolve(p,properties)).toList(),LiteralConditionAnnotation.strings(attrs,"produces",List.of()).stream().map(p->resolve(p,properties)).toList(),use.evidence());
+                mediaTypes(attrs,"consumes",properties),mediaTypes(attrs,"produces",properties),use.evidence());
+    }
+    private static List<String> mediaTypes(Map<String,LiteralConditionAnnotation.Value> attrs,String name,Map<String,String> properties) {
+        var value=attrs.get(name);
+        if(value==null)return List.of();
+        if(value instanceof LiteralConditionAnnotation.Strings strings)return strings.values().stream().map(p->resolve(p,properties)).toList();
+        if(value instanceof LiteralConditionAnnotation.Enums enums) {
+            var decoded=new ArrayList<String>(enums.names().size());
+            for(String raw:enums.names()) {
+                if(!raw.startsWith("MediaType.")&&!raw.startsWith(MEDIA_TYPE_PREFIX))throw new IllegalArgumentException();
+                String constant=raw.substring(raw.lastIndexOf('.')+1);
+                String mediaType=MEDIA_TYPE_VALUES.get(constant);
+                if(mediaType==null)throw new IllegalArgumentException();
+                decoded.add(mediaType);
+            }
+            return List.copyOf(decoded);
+        }
+        throw new IllegalArgumentException();
     }
     private static String resolve(String path,Map<String,String> properties) {
         for(int depth=0;path.contains("${")&&depth<32;depth++) {

@@ -77,3 +77,26 @@ docker-compose.override.yml
 Thumbs.db
 ehthumbs.db
 [Dd]esktop.ini
+
+# Graphify local knowledge graph
+graphify-out/
+
+# SOTA research PDFs (keep lightweight Markdown/JSON indexes tracked in Git)
+docs/paper/*.pdf
+docs/paper/**/*.pdf
+docs/paper/**/*.epub
+!docs/paper/README.md
+!docs/paper/catalog.json
+
+# Heavy VM disk images, raw archives & SQLite runtime journals (never commit)
+*.vhdx
+*.vhd
+*.qcow2
+*.vmdk
+*.iso
+*.7z
+*.tgz
+*.tar
+*.db-wal
+*.db-shm
+*.sqlite-journal

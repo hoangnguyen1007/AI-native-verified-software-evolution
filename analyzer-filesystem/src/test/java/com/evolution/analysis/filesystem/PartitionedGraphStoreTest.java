@@ -321,6 +321,137 @@ class PartitionedGraphStoreTest {
                 () -> cold.adjacency(firstPartition, "not-a-valid-node-id", false, 10, Optional.empty()));
         assertFalse(PartitionedGraphStore.isLocalPageCacheActive(), "Exception path must never leak ThreadLocal page cache");
     }
+    @Test void internalPublishAuditsInMemoryWithoutSpoolingAuditSqliteAndHasPublishedRootReflectsState() throws Exception {
+        var graph = fixture();
+        Path pages = directory.resolve("no-audit-pages");
+        Path snapshots = directory.resolve("no-audit-snapshots");
+        var store = new PartitionedGraphStore(pages);
+        assertFalse(store.hasPublishedRoot(graph.identity()));
+        store.build(graph, snapshots, () -> false, workspace -> {});
+        assertTrue(store.hasPublishedRoot(graph.identity()));
+        try (var leftover = Files.list(pages)) {
+            assertTrue(leftover.noneMatch(p -> p.getFileName().toString().startsWith("graph-audit-")),
+                    "Default in-process publish must not create graph-audit-*.sqlite");
+        }
+        // Dangling contribution still fails cleanly via in-process database audit.
+        Path badSnapshots = directory.resolve("bad-audit-snapshots");
+        var badStore = new PartitionedGraphStore(directory.resolve("bad-audit-pages"));
+        assertThrows(java.io.IOException.class, () -> badStore.build(graph, badSnapshots, () -> false, workspace -> {
+            var edge = graph.edges().getFirst();
+            String id = KnowledgeGraph.derivedIdentity("bad-dangling", 1);
+            workspace.records("edges", GraphSnapshotCodec::edge).put(edge.context() + "|" + id,
+                    new KnowledgeGraph.Edge(id, edge.context(), "fixture.dangling", edge.source(),
+                            new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED,
+                                    List.of(KnowledgeGraph.derivedIdentity("missing-target", 1)), Optional.empty()),
+                            edge.evidence(), Optional.empty()));
+        }));
+    }
+    @Test void nearBudgetRowAndSmallBudgetMultiRowLeavesSurviveFramingAndColdRead() throws Exception {
+        var base = FileGraphStoreTest.graph();
+        var evidence = new ArrayList<>(base.evidence());
+        // Single row ~4040 bytes: admitted under rowBytes=4096, but leaf JSON framing pushes the leaf blob > 4096 bytes.
+        var nearLimit = GraphEvidence.capture("fixture.near-budget", Map.of("text", "a".repeat(3880)));
+        int encodedLen = GraphCanonicalWriter.encodeValue(nearLimit).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        assertTrue(encodedLen > 4000 && encodedLen <= 4096, "Expected encoded row near 4096 bytes, got " + encodedLen);
+        evidence.add(nearLimit);
+        var multiRows = new ArrayList<GraphEvidence>();
+        for (int i = 0; i < 6; i++) {
+            var row = GraphEvidence.capture("fixture.multi-small", Map.of("index", i, "text", "b".repeat(1200)));
+            multiRows.add(row);
+            evidence.add(row);
+        }
+        var graph = new KnowledgeGraph(base.snapshot(), base.contexts(), base.nodes(), base.edges(), evidence);
+
+        Path buildPages = directory.resolve("tight-build-pages");
+        Path buildSnaps = directory.resolve("tight-build-snaps");
+        var published = new PartitionedGraphStore(buildPages, 4096, 1).build(graph, buildSnaps, () -> false, ws -> {});
+        assertEquals(graph.identity(), published.graph());
+        var coldBuild = new PartitionedGraphStore(buildPages, 4096, 1);
+        assertTrue(coldBuild.verifyPublished(graph.identity(), () -> false));
+        assertEquals(Optional.of(nearLimit), coldBuild.evidence(graph.identity(), nearLimit.identity()));
+        for (var row : multiRows) {
+            assertEquals(Optional.of(row), coldBuild.evidence(graph.identity(), row.identity()));
+        }
+
+        Path savePages = directory.resolve("tight-save-pages");
+        new PartitionedGraphStore(savePages, 4096, 2).save(graph, () -> false);
+        var coldSave = new PartitionedGraphStore(savePages, 4096, 1);
+        assertTrue(coldSave.verifyPublished(graph.identity(), () -> false));
+        assertEquals(Optional.of(nearLimit), coldSave.evidence(graph.identity(), nearLimit.identity()));
+
+        // An explicit rowBytes budget still rejects a row that genuinely exceeds it without publishing.
+        var overBudget = GraphEvidence.capture("fixture.over-budget", Map.of("text", "c".repeat(4200)));
+        var overEvidence = new ArrayList<>(base.evidence());
+        overEvidence.add(overBudget);
+        var overGraph = new KnowledgeGraph(base.snapshot(), base.contexts(), base.nodes(), base.edges(), overEvidence);
+        Path overPages = directory.resolve("over-pages");
+        Path overSnaps = directory.resolve("over-snaps");
+        var failure = assertThrows(java.io.IOException.class,
+                () -> new PartitionedGraphStore(overPages, 4096, 1).build(overGraph, overSnaps, () -> false, ws -> {}));
+        assertEquals("GRAPH_PARTITION_ROW_WORKER_REQUIRED", failure.getMessage());
+        assertFalse(Files.exists(overPages.resolve(overGraph.identity().value().substring(7) + ".partitions.json")));
+    }
+
+    @Test void largeRowExceedingStreamThresholdRoundTripsThroughDefaultStore() throws Exception {
+        assertTrue(PartitionedGraphStore.DEFAULT_ROW_BYTES >= 256 * 1024 * 1024,
+                "Default store must not retain the legacy 64 MB single-row ceiling");
+        var base = FileGraphStoreTest.graph();
+        var large = GraphEvidence.capture("fixture.stream-large-row", Map.of("text", "z".repeat(5_200_000)));
+        var evidence = new ArrayList<>(base.evidence());
+        evidence.add(large);
+        var graph = new KnowledgeGraph(base.snapshot(), base.contexts(), base.nodes(), base.edges(), evidence);
+        Path pages = directory.resolve("large-default-pages");
+        Path snaps = directory.resolve("large-default-snaps");
+        var published = new PartitionedGraphStore(pages).build(graph, snaps, () -> false, ws -> {});
+        assertEquals(graph.identity(), published.graph());
+        var cold = new PartitionedGraphStore(pages);
+        assertTrue(cold.verifyPublished(graph.identity(), () -> false));
+        assertEquals(Optional.of(large), cold.evidence(graph.identity(), large.identity()));
+    }
+    @Test void singlePassAssembleMatchesAuditOnPublishAndImportSnapshotAndRejectsDanglingEdges()throws Exception {
+        var graph = fixture();
+        Path fastPages = directory.resolve("singlepass-pages"), fastSnaps = directory.resolve("singlepass-snaps");
+        Path auditPages = directory.resolve("audit-pages"), auditSnaps = directory.resolve("audit-snaps");
+        Path importPages = directory.resolve("import-pages");
+        var fastPub = new PartitionedGraphStore(fastPages).build(graph, fastSnaps, () -> false, ws -> {});
+        String prev = System.getProperty("evo.graph.auditOnPublish");
+        PartitionedGraphStore.Publication auditPub;
+        try {
+            System.setProperty("evo.graph.auditOnPublish", "true");
+            auditPub = new PartitionedGraphStore(auditPages).build(graph, auditSnaps, () -> false, ws -> {});
+        } finally {
+            if (prev == null) System.clearProperty("evo.graph.auditOnPublish");
+            else System.setProperty("evo.graph.auditOnPublish", prev);
+        }
+        assertEquals(graph.identity(), fastPub.graph());
+        assertEquals(auditPub.graph(), fastPub.graph());
+        assertEquals(auditPub.edgeKinds(), fastPub.edgeKinds());
+        assertEquals(auditPub.nodes(), fastPub.nodes());
+        assertEquals(auditPub.edges(), fastPub.edges());
+        assertEquals(auditPub.evidence(), fastPub.evidence());
+        String snapFile = graph.identity().value().substring(7) + ".graph.json";
+        assertArrayEquals(Files.readAllBytes(auditSnaps.resolve(snapFile)), Files.readAllBytes(fastSnaps.resolve(snapFile)));
+        new PartitionedGraphStore(importPages).importSnapshot(fastSnaps.resolve(snapFile), graph.identity(), () -> false);
+        assertTrue(new PartitionedGraphStore(fastPages).verifyPublished(graph.identity(), () -> false));
+        assertTrue(new PartitionedGraphStore(importPages).verifyPublished(graph.identity(), () -> false));
+        // Dangling edge target must fail closed before snapshot or root publication.
+        Path badPages = directory.resolve("dangling-pages"), badSnaps = directory.resolve("dangling-snaps");
+        var ctx = graph.contexts().getFirst();
+        var ev = graph.evidence().getFirst();
+        var badEdge = new KnowledgeGraph.Edge(
+                KnowledgeGraph.derivedIdentity("bad-edge", List.of(1)), ctx.identity(), "graph.depends-on",
+                KnowledgeGraph.derivedIdentity("missing-node", List.of(1)),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED,
+                        List.of(KnowledgeGraph.derivedIdentity("missing-node", List.of(2))), Optional.empty()),
+                List.of(ev.identity()), Optional.empty());
+        assertEquals("GRAPH_PARTITION_DANGLING_REFERENCE", assertThrows(java.io.IOException.class, () ->
+                new PartitionedGraphStore(badPages).build(graph.snapshot(), badSnaps, () -> false, ws -> {
+                    ws.records("evidence", GraphSnapshotCodec::evidence).put(ev.identity().value(), ev);
+                    ws.records("contexts", GraphSnapshotCodec::context).put(ctx.identity(), ctx);
+                    ws.records("edges", GraphSnapshotCodec::edge).put(ctx.identity() + "|" + badEdge.identity(), badEdge);
+                })).getMessage());
+        assertFalse(Files.exists(badSnaps.resolve(snapFile)));
+    }
     static KnowledgeGraph fixture(){
         var base=FileGraphStoreTest.graph();var evidence=base.evidence().getFirst();var contexts=new ArrayList<>(base.contexts());
         String other=KnowledgeGraph.derivedIdentity("partition-context",List.of("other"));contexts.add(new KnowledgeGraph.Context(other,base.snapshot(),Optional.empty(),evidence.identity()));

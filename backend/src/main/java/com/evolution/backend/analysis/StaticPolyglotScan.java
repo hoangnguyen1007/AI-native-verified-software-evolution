@@ -9,6 +9,7 @@ import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.polyglot.*;
 import com.evolution.analysis.treesitter.TreeSitterSourceFrontend;
 import com.evolution.analysis.javaparser.JavaGrpcSourceFrontend;
+import com.evolution.analysis.javaparser.JavaServiceSyntaxExtractor;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -26,7 +27,7 @@ public final class StaticPolyglotScan {
     private static final int MEMORY_ROW_CAP = 65_536;
     private static final int PARSE_WORKERS = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), 8));
     private static final int PARSE_BATCH_LIMIT = 512;
-    static final String DECLARATIVE_PROVIDER = "source.declarative-infra:m8.4-v1";
+    static final String DECLARATIVE_PROVIDER = "source.declarative-infra:m8.4-v3";
     private static final String DECLARATIVE_TOOL_IDENTITY = ContentDigest.sha256Utf8(DECLARATIVE_PROVIDER).value();
     private static final Pattern DOCKERFILE_FROM = Pattern.compile(
             "(?i)^FROM\\s+(?:--[^\\s]+\\s+)*([^\\s#]+)(?:\\s+AS\\s+([A-Za-z0-9_.-]+))?");
@@ -91,8 +92,14 @@ public final class StaticPolyglotScan {
     private enum TaskMode {
         TREE_SITTER,
         JAVA_GRPC,
+        JAVA_SERVICE_SYNTAX,
         DECLARATIVE_INFRA,
         OPENAPI_JSON_PROBE,
+        YAML_CONFIG_PROBE,
+        PROXY_CONFIG_PROBE,
+        LOGBACK_XML_PROBE,
+        BUILD_DESCRIPTOR_PROBE,
+        UNSUPPORTED_CONFIG_DSL,
         SFC_SCRIPT
     }
 
@@ -122,7 +129,8 @@ public final class StaticPolyglotScan {
     Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
             BooleanSupplier cancelled,
             Function<ContentDigest, byte[]> verifiedBytes, boolean fastArchitecture) throws IOException {
-        return run(inventory, tables, content, scratch, cancelled, verifiedBytes, fastArchitecture, Optional.empty(), null);
+        return run(inventory, tables, content, scratch, cancelled, verifiedBytes, fastArchitecture, Optional.empty(),
+                null);
     }
 
     Result run(PolyglotInventory.Report inventory, SemanticTables tables, RepositoryContentStore content, Path scratch,
@@ -145,6 +153,7 @@ public final class StaticPolyglotScan {
         var supportedGrammars = TreeSitterSourceFrontend.languages();
         var treeSitter = new TreeSitterSourceFrontend();
         var javaGrpc = new JavaGrpcSourceFrontend();
+        var javaServiceSyntax = new JavaServiceSyntaxExtractor();
         var memoryRows = new TreeMap<String, SemanticTables.Row>();
         var spillRef = new SemanticRootCensus.Index[] { null };
         var toolIdentities = new ConcurrentHashMap<String, String>();
@@ -156,7 +165,8 @@ public final class StaticPolyglotScan {
         Iterator<SemanticTables.Row> preloadedIt = preloadedRows != null ? preloadedRows.iterator() : null;
         try {
             SemanticTables.Row row;
-            while ((row = (preloadedIt != null ? (preloadedIt.hasNext() ? preloadedIt.next() : null) : inputReader.next())) != null) {
+            while ((row = (preloadedIt != null ? (preloadedIt.hasNext() ? preloadedIt.next() : null)
+                    : inputReader.next())) != null) {
                 if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
                     throw new IOException("SYNTAX_CANCELLED");
                 if (!"FILE".equals(row.fields().get("kind")) || !"ACQUIRED".equals(row.fields().get("disposition")))
@@ -168,11 +178,14 @@ public final class StaticPolyglotScan {
                 var languages = GraphJson.array(row.fields().get("languageCandidates")).stream().map(GraphJson::string)
                         .toList();
                 var source = PolyglotScan.handle(row.fields().get("content"));
-                // Passively collect JS/TS workspace alias config files (tsconfig, jsconfig, package.json, pnpm-workspace)
-                if (isJsWorkspaceConfig(path) && jsWorkspaceConfigs.size() < 128 && source.size() > 0 && source.size() <= 512_000) {
+                // Passively collect JS/TS workspace alias config files (tsconfig, jsconfig,
+                // package.json, pnpm-workspace)
+                if (isJsWorkspaceConfig(path) && jsWorkspaceConfigs.size() < 128 && source.size() > 0
+                        && source.size() <= 512_000) {
                     try {
                         byte[] cfgBytes = source(content, source, fileBudget, verifiedBytes);
-                        jsWorkspaceConfigs.putIfAbsent(path.replace('\\', '/'), new String(cfgBytes, StandardCharsets.UTF_8));
+                        jsWorkspaceConfigs.putIfAbsent(path.replace('\\', '/'),
+                                new String(cfgBytes, StandardCharsets.UTF_8));
                     } catch (IOException | RuntimeException ignored) {
                         // Passive config read stays non-fatal.
                     }
@@ -191,9 +204,31 @@ public final class StaticPolyglotScan {
                     TaskMode mode = hinted.equals("java") ? TaskMode.JAVA_GRPC : TaskMode.TREE_SITTER;
                     batch.add(new ParseTask(document, rawPathField, path, hinted, language, provider, source, mode));
                     batchBytes += Math.max(0L, source.size());
+                    if (hinted.equals("java") && !DeclarativeTopologyParsers.isTestSourcePath(path)) {
+                        String svcDoc = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), "java-service-syntax"));
+                        batch.add(new ParseTask(svcDoc, rawPathField, path, "java-service", "java",
+                                JavaServiceSyntaxExtractor.PROVIDER, source, TaskMode.JAVA_SERVICE_SYNTAX));
+                    }
                     if (batch.size() >= PARSE_BATCH_LIMIT || batchBytes >= maxBatchBytes) {
                         flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
-                                supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities,
+                                supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache,
+                                toolIdentities,
+                                memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
+                        batch.clear();
+                        batchBytes = 0L;
+                    }
+                }
+                if (isBuildDescriptorCandidate(path, source, fileBudget)) {
+                    String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                            List.of(inventory.inventory(), row.key(), "build-descriptor"));
+                    batch.add(new ParseTask(document, rawPathField, path, "build-descriptor", "build-descriptor",
+                            DECLARATIVE_PROVIDER, source, TaskMode.BUILD_DESCRIPTOR_PROBE));
+                    batchBytes += Math.max(0L, source.size());
+                    if (batch.size() >= PARSE_BATCH_LIMIT || batchBytes >= maxBatchBytes) {
+                        flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
+                                supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache,
+                                toolIdentities,
                                 memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
                         batch.clear();
                         batchBytes = 0L;
@@ -218,13 +253,38 @@ public final class StaticPolyglotScan {
                     } else if (isOpenApiJsonCandidate(path, source, fileBudget)) {
                         String document = KnowledgeGraph.derivedIdentity("syntax-document",
                                 List.of(inventory.inventory(), row.key(), "openapi"));
-                        batch.add(new ParseTask(document, rawPathField, path, "openapi", "openapi", DECLARATIVE_PROVIDER,
-                                source, TaskMode.OPENAPI_JSON_PROBE));
+                        batch.add(
+                                new ParseTask(document, rawPathField, path, "openapi", "openapi", DECLARATIVE_PROVIDER,
+                                        source, TaskMode.OPENAPI_JSON_PROBE));
                         batchBytes += Math.max(0L, source.size());
+                    } else if (isYamlOrPropertiesConfigCandidate(path, source, fileBudget)) {
+                        String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), "yaml-config"));
+                        batch.add(new ParseTask(document, rawPathField, path, "config", "config", DECLARATIVE_PROVIDER,
+                                source, TaskMode.YAML_CONFIG_PROBE));
+                        batchBytes += Math.max(0L, source.size());
+                    } else if (isLogbackXmlCandidate(path, source, fileBudget)) {
+                        String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), "logback"));
+                        batch.add(new ParseTask(document, rawPathField, path, "config", "config", DECLARATIVE_PROVIDER,
+                                source, TaskMode.LOGBACK_XML_PROBE));
+                        batchBytes += Math.max(0L, source.size());
+                    } else if (isProxyConfigCandidate(path, source, fileBudget)) {
+                        String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), "proxy-config"));
+                        batch.add(new ParseTask(document, rawPathField, path, "config", "config", DECLARATIVE_PROVIDER,
+                                source, TaskMode.PROXY_CONFIG_PROBE));
+                        batchBytes += Math.max(0L, source.size());
+                    } else if (isUnsupportedConfigDslCandidate(path)) {
+                        String document = KnowledgeGraph.derivedIdentity("syntax-document",
+                                List.of(inventory.inventory(), row.key(), "unsupported-config"));
+                        batch.add(new ParseTask(document, rawPathField, path, "config", "config", DECLARATIVE_PROVIDER,
+                                source, TaskMode.UNSUPPORTED_CONFIG_DSL));
                     }
                     if (batch.size() >= PARSE_BATCH_LIMIT || batchBytes >= maxBatchBytes) {
                         flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
-                                supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities,
+                                supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache,
+                                toolIdentities,
                                 memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
                         batch.clear();
                         batchBytes = 0L;
@@ -233,7 +293,7 @@ public final class StaticPolyglotScan {
             }
             if (!batch.isEmpty()) {
                 flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
-                        supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities,
+                        supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache, toolIdentities,
                         memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
                 batch.clear();
             }
@@ -305,6 +365,7 @@ public final class StaticPolyglotScan {
             Set<String> supportedGrammars,
             TreeSitterSourceFrontend treeSitter,
             JavaGrpcSourceFrontend javaGrpc,
+            JavaServiceSyntaxExtractor javaServiceSyntax,
             IncrementalPolyglotCache polyglotCache,
             ConcurrentHashMap<String, String> toolIdentities,
             TreeMap<String, SemanticTables.Row> memoryRows,
@@ -319,14 +380,17 @@ public final class StaticPolyglotScan {
         if (n == 1 || PARSE_WORKERS <= 1) {
             for (int i = 0; i < n; i++) {
                 var out = parseOne(batch.get(i), content, fileBudget, verifiedBytes, fastArchitecture,
-                        supportedGrammars, treeSitter, javaGrpc, polyglotCache, toolIdentities, cancelled);
+                        supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache, toolIdentities,
+                        cancelled);
                 if (out.cancelledError())
                     throw new IOException("SYNTAX_CANCELLED");
                 results[i] = out;
             }
         } else {
-            // Dynamic work-stealing across PARSE_WORKERS with LPT (largest files first) scheduling
-            // eliminates straggler stalls on large polyglot files while outputs are still sorted deterministically.
+            // Dynamic work-stealing across PARSE_WORKERS with LPT (largest files first)
+            // scheduling
+            // eliminates straggler stalls on large polyglot files while outputs are still
+            // sorted deterministically.
             var orderedBatch = new ArrayList<>(batch);
             orderedBatch.sort(Comparator.comparingLong((ParseTask t) -> t.source().size()).reversed()
                     .thenComparing(ParseTask::document));
@@ -342,12 +406,13 @@ public final class StaticPolyglotScan {
                         while (!cancelFlag.get() && (idx = nextIndex.getAndIncrement()) < n) {
                             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
                                 cancelFlag.set(true);
-                                results[idx] = new ParseOutput(orderedBatch.get(idx), null, List.of(), "SYNTAX_CANCELLED", true, false);
+                                results[idx] = new ParseOutput(orderedBatch.get(idx), null, List.of(),
+                                        "SYNTAX_CANCELLED", true, false);
                                 return null;
                             }
                             ParseOutput out = parseOne(orderedBatch.get(idx), content, fileBudget, verifiedBytes,
-                                    fastArchitecture, supportedGrammars, treeSitter, javaGrpc, polyglotCache,
-                                    toolIdentities, cancelled);
+                                    fastArchitecture, supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax,
+                                    polyglotCache, toolIdentities, cancelled);
                             results[idx] = out;
                             if (out.cancelledError()) {
                                 cancelFlag.set(true);
@@ -393,11 +458,15 @@ public final class StaticPolyglotScan {
         var outputs = new ArrayList<ParseOutput>(n);
         for (int i = 0; i < n; i++) {
             ParseOutput out = results[i];
-            if (out == null) continue;
-            if (out.cancelledError()) throw new IOException("SYNTAX_CANCELLED");
-            if (!out.skipped()) outputs.add(out);
+            if (out == null)
+                continue;
+            if (out.cancelledError())
+                throw new IOException("SYNTAX_CANCELLED");
+            if (!out.skipped())
+                outputs.add(out);
         }
-        // Merge rows in strictly deterministic sorted document/key order so canonical digests remain identical.
+        // Merge rows in strictly deterministic sorted document/key order so canonical
+        // digests remain identical.
         outputs.sort(Comparator.comparing(o -> o.task().document()));
         for (var out : outputs) {
             var task = out.task();
@@ -424,10 +493,11 @@ public final class StaticPolyglotScan {
                     fields.put("semanticBinding", "NOT_ESTABLISHED");
                     fields.put("provider", task.provider());
                     fields.put("fact", fact.toMap());
-                    String key = CanonicalJson.sha256(fact.category().startsWith("RPC_")
-                            ? List.of(task.document(), fact.category(), fact.nodeKind(), fact.span(), fact.name(),
-                                    fact.attributes())
-                            : List.of(task.document(), fact.category(), fact.nodeKind(), fact.span())).value();
+                    String key = CanonicalJson.sha256(
+                            fact.category().startsWith("RPC_") || usesRichFactIdentity(fact.category(), task.hinted())
+                                    ? List.of(task.document(), fact.category(), fact.nodeKind(), fact.span(),
+                                            fact.name(), fact.attributes())
+                                    : List.of(task.document(), fact.category(), fact.nodeKind(), fact.span())).value();
                     var obsRow = new SemanticTables.Row(SemanticTables.Kind.OBSERVATION, key,
                             inventory.inventory(), fields);
                     putSyntaxRow(memoryRows, spillRef, scratch, key, obsRow);
@@ -458,6 +528,7 @@ public final class StaticPolyglotScan {
             Set<String> supportedGrammars,
             TreeSitterSourceFrontend treeSitter,
             JavaGrpcSourceFrontend javaGrpc,
+            JavaServiceSyntaxExtractor javaServiceSyntax,
             IncrementalPolyglotCache polyglotCache,
             ConcurrentHashMap<String, String> toolIdentities,
             BooleanSupplier cancelled) {
@@ -465,32 +536,313 @@ public final class StaticPolyglotScan {
             return new ParseOutput(task, null, List.of(), "SYNTAX_CANCELLED", true, false);
         }
         try {
-            if (task.mode() == TaskMode.JAVA_GRPC) {
-                ContentDigest probeKey = (polyglotCache != null && task.source().size() <= fileBudget)
-                        ? IncrementalPolyglotCache.probeKey("java-grpc", JavaGrpcSourceFrontend.PROVIDER,
-                                task.source().digest(), task.source().size())
+            if (task.mode() == TaskMode.UNSUPPORTED_CONFIG_DSL) {
+                return new ParseOutput(task, null, List.of(), "UNSUPPORTED_CONFIG_DSL", false, false);
+            }
+
+            if (task.mode() == TaskMode.JAVA_SERVICE_SYNTAX) {
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(JavaServiceSyntaxExtractor.PROVIDER,
+                                JavaServiceSyntaxExtractor.PROVIDER, "java-service",
+                                task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
-                if (probeKey != null) {
-                    var sentinel = polyglotCache.getProbe(probeKey);
-                    if (sentinel.isPresent() && sentinel.orElseThrow() == IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE) {
-                        return ParseOutput.skip(task);
+                if (cacheKey != null) {
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
+                        return entry.facts().isEmpty()
+                                ? ParseOutput.skip(task)
+                                : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
                 }
+                byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
+                if (!JavaServiceSyntaxExtractor.candidate(bytes)) {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                var parsedJava = javaServiceSyntax.parse(bytes,
+                        fact -> recordedFacts.add(new TreeSitterSourceFrontend.Fact(fact.category(),
+                                fact.nodeKind(), fact.name(), fact.written(), fact.span(), fact.owner(),
+                                fact.recovered(), fact.attributes())),
+                        cancelled);
+                if (recordedFacts.isEmpty()) {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var summary = new TreeSitterSourceFrontend.Summary(parsedJava.nodes(), parsedJava.facts(),
+                        parsedJava.errors(), parsedJava.grammar(), parsedJava.toolIdentity());
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.YAML_CONFIG_PROBE) {
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    return ParseOutput.skip(task);
+                }
+                var coords = new SourceCoordinates(probe, "UTF-8");
+                String text = coords.text();
+                String configKind;
+                if (DeclarativeTopologyParsers.looksLikeKubernetesYaml(text)) {
+                    if (DeclarativeTopologyParsers.isHelmTemplatePath(task.path())) {
+                        return new ParseOutput(task, null, List.of(), "UNRENDERED_HELM_TEMPLATE", false, false);
+                    }
+                    configKind = "k8s";
+                } else if (DeclarativeTopologyParsers.looksLikePrometheusYaml(task.path(), text)) {
+                    configKind = "prometheus";
+                } else if (DeclarativeTopologyParsers.looksLikeGrafanaDatasources(task.path(), text)) {
+                    configKind = "grafana";
+                } else if (DeclarativeTopologyParsers.looksLikeFilebeatYaml(task.path(), text)) {
+                    configKind = "filebeat";
+                } else if (DeclarativeTopologyParsers.looksLikeSpringConfig(task.path(), text)) {
+                    if (DeclarativeTopologyParsers.isTestSourcePath(task.path())) {
+                        return ParseOutput.skip(task);
+                    }
+                    configKind = task.path().toLowerCase(Locale.ROOT).endsWith(".properties")
+                            ? "spring-props"
+                            : "spring-yaml";
+                } else {
+                    return ParseOutput.skip(task);
+                }
+                String configRepoStem = ("spring-yaml".equals(configKind) || "spring-props".equals(configKind))
+                        ? DeclarativeTopologyParsers.configRepoFileStem(task.path())
+                        : "";
+                String cacheSlot = configRepoStem.isEmpty()
+                        ? "config-" + configKind
+                        : "config-" + configKind + "@" + configRepoStem;
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
+                                cacheSlot, task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return hit.sentinel() == IncrementalPolyglotCache.ProbeStatus.UNRENDERED_HELM_TEMPLATE
+                                    ? new ParseOutput(task, null, List.of(), "UNRENDERED_HELM_TEMPLATE", false, false)
+                                    : ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
+                        return entry.facts().isEmpty()
+                                ? ParseOutput.skip(task)
+                                : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                long[] stats = { 0L, 0L };
+                switch (configKind) {
+                    case "k8s" -> DeclarativeTopologyParsers.parseKubernetesManifest(task.path(), text, coords, recordedFacts, stats, cancelled);
+                    case "prometheus" -> DeclarativeTopologyParsers.parsePrometheusConfig(text, coords, recordedFacts, stats, cancelled);
+                    case "grafana" -> DeclarativeTopologyParsers.parseGrafanaDatasources(text, coords, recordedFacts, stats, cancelled);
+                    case "filebeat" -> DeclarativeTopologyParsers.parseFilebeatConfig(text, coords, recordedFacts, stats, cancelled);
+                    default -> DeclarativeTopologyParsers.parseSpringConfig(task.path(), text, coords, recordedFacts, stats, cancelled);
+                }
+                if (recordedFacts.isEmpty()) {
+                    if ("k8s".equals(configKind) && text.contains("{{") && text.contains("}}")) {
+                        if (cacheKey != null) {
+                            polyglotCache.putProbe(cacheKey,
+                                    IncrementalPolyglotCache.ProbeStatus.UNRENDERED_HELM_TEMPLATE);
+                        }
+                        return new ParseOutput(task, null, List.of(), "UNRENDERED_HELM_TEMPLATE", false, false);
+                    }
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var summary = new TreeSitterSourceFrontend.Summary(stats[0], recordedFacts.size(), stats[1],
+                        DECLARATIVE_PROVIDER + ":" + configKind, DECLARATIVE_TOOL_IDENTITY);
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.PROXY_CONFIG_PROBE) {
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    return ParseOutput.skip(task);
+                }
+                var coords = new SourceCoordinates(probe, "UTF-8");
+                String text = coords.text();
+                boolean apache = isApacheConfigPath(task.path());
+                if (!apache && !DeclarativeTopologyParsers.looksLikeNginxConfig(text)) {
+                    if (isUnsupportedConfigDslCandidate(task.path())) {
+                        return new ParseOutput(task, null, List.of(), "UNSUPPORTED_CONFIG_DSL", false, false);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                String kind = apache ? "apache-httpd" : "nginx";
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
+                                "proxy-" + kind, task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
+                        return entry.facts().isEmpty()
+                                ? ParseOutput.skip(task)
+                                : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                long[] stats = { 0L, 0L };
+                if (apache) {
+                    DeclarativeTopologyParsers.parseApacheHttpdConfig(text, coords, recordedFacts, stats, cancelled);
+                } else {
+                    DeclarativeTopologyParsers.parseNginxConfig(text, coords, recordedFacts, stats, cancelled);
+                }
+                if (recordedFacts.isEmpty()) {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var summary = new TreeSitterSourceFrontend.Summary(stats[0], recordedFacts.size(), stats[1],
+                        DECLARATIVE_PROVIDER + ":" + kind, DECLARATIVE_TOOL_IDENTITY);
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.LOGBACK_XML_PROBE) {
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
+                                "config-logback", task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
+                        return entry.facts().isEmpty()
+                                ? ParseOutput.skip(task)
+                                : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    return ParseOutput.skip(task);
+                }
+                var coords = new SourceCoordinates(probe, "UTF-8");
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                long[] stats = { 0L, 0L };
+                DeclarativeTopologyParsers.parseLogbackXml(coords.text(), coords, recordedFacts, stats, cancelled);
+                if (recordedFacts.isEmpty()) {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var summary = new TreeSitterSourceFrontend.Summary(stats[0], recordedFacts.size(), stats[1],
+                        DECLARATIVE_PROVIDER + ":logback", DECLARATIVE_TOOL_IDENTITY);
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.BUILD_DESCRIPTOR_PROBE) {
+                String lowerPath = task.path().toLowerCase(Locale.ROOT);
+                String descKind = lowerPath.endsWith("pom.xml")
+                        ? "maven"
+                        : (lowerPath.endsWith("build.gradle") || lowerPath.endsWith("build.gradle.kts"))
+                                ? "gradle"
+                                : "other";
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
+                                "build-" + descKind, task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
+                        return entry.facts().isEmpty()
+                                ? ParseOutput.skip(task)
+                                : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    return ParseOutput.skip(task);
+                }
+                var coords = new SourceCoordinates(probe, "UTF-8");
+                var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+                long[] stats = { 0L, 0L };
+                DeclarativeTopologyParsers.parseBuildDescriptorStarters(
+                        task.path(), coords.text(), coords, recordedFacts, stats, cancelled);
+                if (recordedFacts.isEmpty()) {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
+                }
+                var summary = new TreeSitterSourceFrontend.Summary(stats[0], recordedFacts.size(), stats[1],
+                        DECLARATIVE_PROVIDER + ":build-" + descKind, DECLARATIVE_TOOL_IDENTITY);
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
+            }
+
+            if (task.mode() == TaskMode.JAVA_GRPC) {
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(JavaGrpcSourceFrontend.PROVIDER, JavaGrpcSourceFrontend.PROVIDER,
                                 "java", task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
                 if (cacheKey != null) {
-                    var cachedEntry = polyglotCache.get(cacheKey);
-                    if (cachedEntry.isPresent()) {
-                        var entry = cachedEntry.orElseThrow();
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
                         return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
                 }
                 byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
                 if (!JavaGrpcSourceFrontend.candidate(bytes)) {
-                    if (probeKey != null) {
-                        polyglotCache.putProbe(probeKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
                     }
                     return ParseOutput.skip(task);
                 }
@@ -510,24 +862,18 @@ public final class StaticPolyglotScan {
             }
 
             if (task.mode() == TaskMode.OPENAPI_JSON_PROBE) {
-                ContentDigest probeKey = (polyglotCache != null && task.source().size() <= fileBudget)
-                        ? IncrementalPolyglotCache.probeKey("openapi-json", DECLARATIVE_PROVIDER,
-                                task.source().digest(), task.source().size())
-                        : null;
-                if (probeKey != null) {
-                    var sentinel = polyglotCache.getProbe(probeKey);
-                    if (sentinel.isPresent() && sentinel.orElseThrow() == IncrementalPolyglotCache.ProbeStatus.NOT_OPENAPI) {
-                        return ParseOutput.skip(task);
-                    }
-                }
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
-                                "openapi", task.source().digest(), task.source().size(), fastArchitecture)
+                                "openapi-json-probe", task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
                 if (cacheKey != null) {
-                    var cachedEntry = polyglotCache.get(cacheKey);
-                    if (cachedEntry.isPresent()) {
-                        var entry = cachedEntry.orElseThrow();
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
                         return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
                 }
@@ -535,17 +881,20 @@ public final class StaticPolyglotScan {
                 try {
                     probe = source(content, task.source(), fileBudget, verifiedBytes);
                 } catch (IOException ignored) {
-                    /* Non-OpenAPI or unreadable JSON stays in inventory without failing syntax scan. */
+                    /*
+                     * Non-OpenAPI or unreadable JSON stays in inventory without failing syntax
+                     * scan.
+                     */
                     return ParseOutput.skip(task);
                 }
                 if (!containsAscii(probe, "\"openapi\"") && !containsAscii(probe, "\"swagger\"")) {
-                    if (probeKey != null) {
-                        polyglotCache.putProbe(probeKey, IncrementalPolyglotCache.ProbeStatus.NOT_OPENAPI);
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_OPENAPI);
                     }
                     return ParseOutput.skip(task);
                 }
                 var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
-                var summary = parseDeclarativeInfra("openapi", probe, recordedFacts, cancelled);
+                var summary = parseDeclarativeInfra("openapi", task.path(), probe, recordedFacts, cancelled);
                 var immutableFacts = List.copyOf(recordedFacts);
                 if (cacheKey != null) {
                     polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
@@ -554,10 +903,35 @@ public final class StaticPolyglotScan {
             }
 
             if (task.mode() == TaskMode.SFC_SCRIPT) {
+                String jsToolId = toolIdentities.computeIfAbsent("javascript",
+                        lang -> TreeSitterSourceFrontend.toolIdentity(lang).orElse(""));
+                String tsToolId = toolIdentities.computeIfAbsent("typescript",
+                        lang -> TreeSitterSourceFrontend.toolIdentity(lang).orElse(""));
+                String tsxToolId = toolIdentities.computeIfAbsent("tsx",
+                        lang -> TreeSitterSourceFrontend.toolIdentity(lang).orElse(""));
+                String sfcToolId = "js=" + jsToolId + "|ts=" + tsToolId + "|tsx=" + tsxToolId;
+                ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
+                        ? IncrementalPolyglotCache.key(task.provider(), sfcToolId, "sfc-" + task.language(),
+                                task.source().digest(), task.source().size(), fastArchitecture)
+                        : null;
+                if (cacheKey != null) {
+                    var cachedSlot = polyglotCache.lookup(cacheKey);
+                    if (cachedSlot.isPresent()) {
+                        var hit = cachedSlot.orElseThrow();
+                        if (hit.isSentinel()) {
+                            return ParseOutput.skip(task);
+                        }
+                        var entry = hit.entry();
+                        return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                    }
+                }
                 byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
                 String text = new String(bytes, StandardCharsets.UTF_8);
                 var scripts = JsWorkspaceAliasResolver.extractSfcScripts(text);
                 if (scripts.isEmpty()) {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
                     return ParseOutput.skip(task);
                 }
                 var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
@@ -565,9 +939,12 @@ public final class StaticPolyglotScan {
                 String lastGrammar = task.language();
                 String lastToolId = "";
                 for (var script : scripts) {
-                    String grammarLang = supportedGrammars.contains(script.language()) ? script.language() : "javascript";
-                    if (!supportedGrammars.contains(grammarLang)) continue;
-                    // Preserve exact 1-based line numbers from the enclosing .vue/.svelte file and avoid
+                    String grammarLang = supportedGrammars.contains(script.language()) ? script.language()
+                            : "javascript";
+                    if (!supportedGrammars.contains(grammarLang))
+                        continue;
+                    // Preserve exact 1-based line numbers from the enclosing .vue/.svelte file and
+                    // avoid
                     // span collisions across multiple <script> blocks in the same SFC.
                     String paddedCode = script.startLine() > 1
                             ? "\n".repeat(script.startLine() - 1) + script.code()
@@ -580,8 +957,13 @@ public final class StaticPolyglotScan {
                     lastGrammar = sSum.grammar();
                     lastToolId = sSum.toolIdentity();
                 }
-                var summary = new TreeSitterSourceFrontend.Summary(totalNodes, totalFacts, totalErrors, lastGrammar, lastToolId);
-                return new ParseOutput(task, summary, List.copyOf(recordedFacts), null, false, false);
+                var summary = new TreeSitterSourceFrontend.Summary(totalNodes, totalFacts, totalErrors, lastGrammar,
+                        lastToolId);
+                var immutableFacts = List.copyOf(recordedFacts);
+                if (cacheKey != null) {
+                    polyglotCache.put(cacheKey, new IncrementalPolyglotCache.Entry(summary, immutableFacts));
+                }
+                return new ParseOutput(task, summary, immutableFacts, null, false, false);
             }
 
             if (task.mode() == TaskMode.TREE_SITTER && !supportedGrammars.contains(task.language())) {
@@ -591,24 +973,28 @@ public final class StaticPolyglotScan {
                     ? DECLARATIVE_TOOL_IDENTITY
                     : toolIdentities.computeIfAbsent(task.language(),
                             lang -> TreeSitterSourceFrontend.toolIdentity(lang).orElse(""));
+            String cacheLanguage = task.mode() == TaskMode.DECLARATIVE_INFRA && "docker-compose".equals(task.language())
+                    ? "docker-compose@" + parentDir(task.path())
+                    : task.language();
             ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
-                    ? IncrementalPolyglotCache.key(task.provider(), toolId, task.language(),
+                    ? IncrementalPolyglotCache.key(task.provider(), toolId, cacheLanguage,
                             task.source().digest(), task.source().size(), fastArchitecture)
                     : null;
             ContentDigest legacyKey = cacheKey == null ? null
-                    : IncrementalPolyglotCache.legacyV2Key(task.provider(), toolId, task.language(),
+                    : IncrementalPolyglotCache.legacyV2Key(task.provider(), toolId, cacheLanguage,
                             task.source().digest(), task.source().size(), fastArchitecture);
-            var cachedEntry = cacheKey == null ? Optional.<IncrementalPolyglotCache.Entry>empty()
-                    : polyglotCache.get(cacheKey, legacyKey);
-            if (cachedEntry.isPresent()) {
-                var entry = cachedEntry.orElseThrow();
-                return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+            if (cacheKey != null) {
+                var cachedSlot = polyglotCache.lookup(cacheKey, legacyKey);
+                if (cachedSlot.isPresent() && cachedSlot.orElseThrow().isEntry()) {
+                    var entry = cachedSlot.orElseThrow().entry();
+                    return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
+                }
             }
             byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
             var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
             TreeSitterSourceFrontend.Summary summary;
             if (task.mode() == TaskMode.DECLARATIVE_INFRA) {
-                summary = parseDeclarativeInfra(task.language(), bytes, recordedFacts, cancelled);
+                summary = parseDeclarativeInfra(task.language(), task.path(), bytes, recordedFacts, cancelled);
             } else {
                 summary = treeSitter.parse(task.language(), bytes, recordedFacts::add, cancelled, fastArchitecture);
             }
@@ -647,7 +1033,8 @@ public final class StaticPolyglotScan {
     }
 
     private static boolean isSfcFile(String path) {
-        if (path == null) return false;
+        if (path == null)
+            return false;
         String lower = path.toLowerCase(Locale.ROOT);
         return lower.endsWith(".vue") || lower.endsWith(".svelte");
     }
@@ -657,6 +1044,75 @@ public final class StaticPolyglotScan {
         int slash = norm.lastIndexOf('/');
         String lower = (slash < 0 ? norm : norm.substring(slash + 1)).toLowerCase(Locale.ROOT);
         return lower.endsWith(".json") && source.size() > 10 && source.size() <= Math.min(fileBudget, 4_000_000L);
+    }
+
+    private static boolean usesRichFactIdentity(String category, String language) {
+        return "java-service".equals(language) || Set.of(
+                "INFRA_SCRAPE_TARGET", "INFRA_CONFIG_REF", "GATEWAY_ROUTE",
+                "SPRING_CLOUD_ROLE", "CONFIG_SERVICE_IDENTITY", "CONFIG_PROPERTY",
+                "INFRA_DEPENDENCY_STARTER")
+                .contains(category);
+    }
+
+    private static boolean isYamlOrPropertiesConfigCandidate(String path, ContentHandle source, int fileBudget) {
+        if (path == null) return false;
+        String lower = path.toLowerCase(Locale.ROOT);
+        return (lower.endsWith(".yml") || lower.endsWith(".yaml") || lower.endsWith(".properties"))
+                && source.size() > 0 && source.size() <= Math.min(fileBudget, 4_000_000L);
+    }
+
+    private static boolean isLogbackXmlCandidate(String path, ContentHandle source, int fileBudget) {
+        if (path == null || DeclarativeTopologyParsers.isTestSourcePath(path)) return false;
+        String norm = path.replace('\\', '/');
+        int slash = norm.lastIndexOf('/');
+        String base = (slash < 0 ? norm : norm.substring(slash + 1)).toLowerCase(Locale.ROOT);
+        return base.startsWith("logback") && base.endsWith(".xml") && !base.contains("test")
+                && source.size() > 0 && source.size() <= Math.min(fileBudget, 4_000_000L);
+    }
+
+    private static boolean isApacheConfigPath(String path) {
+        if (path == null) return false;
+        String norm = "/" + path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        int slash = norm.lastIndexOf('/');
+        String base = norm.substring(slash + 1);
+        if (!base.endsWith(".conf")) return false;
+        return base.startsWith("httpd") || base.equals("apache.conf") || base.equals("apache2.conf")
+                || norm.contains("/httpd/") || norm.contains("/apache/") || norm.contains("/apache2/");
+    }
+
+    private static boolean isProxyConfigCandidate(String path, ContentHandle source, int fileBudget) {
+        if (path == null || DeclarativeTopologyParsers.isTestSourcePath(path)) return false;
+        if (source.size() <= 0 || source.size() > Math.min(fileBudget, 4_000_000L)) return false;
+        if (isApacheConfigPath(path)) return true;
+        String norm = "/" + path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        int slash = norm.lastIndexOf('/');
+        String base = norm.substring(slash + 1);
+        if (!base.endsWith(".conf")) return false;
+        return base.startsWith("nginx") || base.equals("default.conf") || norm.contains("/nginx/");
+    }
+
+    private static boolean isBuildDescriptorCandidate(String path, ContentHandle source, int fileBudget) {
+        if (path == null || DeclarativeTopologyParsers.isTestSourcePath(path)) return false;
+        if (source.size() <= 0 || source.size() > Math.min(fileBudget, 4_000_000L)) return false;
+        String norm = path.replace('\\', '/');
+        int slash = norm.lastIndexOf('/');
+        String base = (slash < 0 ? norm : norm.substring(slash + 1)).toLowerCase(Locale.ROOT);
+        return base.equals("pom.xml") || base.equals("build.gradle") || base.equals("build.gradle.kts");
+    }
+
+    private static String parentDir(String path) {
+        if (path == null || path.isEmpty()) return "";
+        String norm = path.replace('\\', '/');
+        int slash = norm.lastIndexOf('/');
+        return slash <= 0 ? "" : norm.substring(0, slash);
+    }
+
+    private static boolean isUnsupportedConfigDslCandidate(String path) {
+        if (path == null) return false;
+        String norm = "/" + path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        if (!norm.endsWith(".conf")) return false;
+        return norm.contains("/pipeline/") || norm.contains("/logging/") || norm.contains("/conf/")
+                || norm.contains("/config/") || norm.contains("/etc/") || norm.contains("/ops/");
     }
 
     private static boolean containsAscii(byte[] bytes, String token) {
@@ -675,6 +1131,7 @@ public final class StaticPolyglotScan {
 
     private static TreeSitterSourceFrontend.Summary parseDeclarativeInfra(
             String language,
+            String path,
             byte[] bytes,
             List<TreeSitterSourceFrontend.Fact> out,
             BooleanSupplier cancelled) throws IOException {
@@ -685,7 +1142,7 @@ public final class StaticPolyglotScan {
         long[] stats = { 0L, 0L }; // [nodes, errors]
         switch (language) {
             case "dockerfile" -> parseDockerfile(text, coordinates, out, stats, cancelled);
-            case "docker-compose" -> parseDockerCompose(text, coordinates, out, stats, cancelled);
+            case "docker-compose" -> parseDockerCompose(path, text, coordinates, out, stats, cancelled);
             case "openapi" -> parseOpenApi(text, coordinates, out, stats, cancelled);
             case "graphql" -> parseGraphQl(text, coordinates, out, stats, cancelled);
             default -> {
@@ -753,14 +1210,100 @@ public final class StaticPolyglotScan {
         }
     }
 
-    private static void parseDockerCompose(String text, SourceCoordinates coords,
-            List<TreeSitterSourceFrontend.Fact> out, long[] stats, BooleanSupplier cancelled) throws IOException {
+    private static final Set<String> COMPOSE_RESERVED_SECTIONS = Set.of(
+            "networks", "volumes", "configs", "secrets");
+    private static final Pattern COMPOSE_FLOW_CONTEXT = Pattern.compile(
+            "\\bcontext\\s*:\\s*(['\"]?[^,}\\s'\"]+['\"]?)");
+
+    private static final class ComposeServiceBuffer {
+        final String name;
+        final String written;
+        final SourceCoordinates.Range span;
+        final String slot;
+        final List<TreeSitterSourceFrontend.Fact> children = new ArrayList<>();
+        String buildDir = "";
+        String containerName = "";
+        boolean dockerSocket;
+        boolean hasImage;
+        boolean hasBuild;
+        boolean hasPorts;
+        boolean hasCommand;
+        boolean hasServiceProps;
+
+        ComposeServiceBuffer(String name, String written, SourceCoordinates.Range span) {
+            this.name = name;
+            this.written = written;
+            this.span = span;
+            this.slot = span.start() + ":" + span.end();
+        }
+
+        void flush(boolean v1Mode, List<TreeSitterSourceFrontend.Fact> out) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            boolean reserved = COMPOSE_RESERVED_SECTIONS.contains(lower) || lower.startsWith("x-");
+            boolean hasCoreSignal = hasImage || hasBuild || hasPorts || hasCommand;
+            if (reserved && !hasCoreSignal) {
+                return;
+            }
+            if (v1Mode && !hasCoreSignal && !hasServiceProps) {
+                return;
+            }
+            var attrs = new TreeMap<String, String>();
+            attrs.put("role", "service");
+            attrs.put("spec", "docker-compose");
+            if (!buildDir.isEmpty()) attrs.put("buildDir", buildDir);
+            if (!containerName.isEmpty()) attrs.put("containerName", containerName);
+            if (dockerSocket) attrs.put("dockerSocket", "true");
+            out.add(new TreeSitterSourceFrontend.Fact("DECLARATION", "compose_service", name,
+                    written, span, "", false, attrs));
+            out.addAll(children);
+        }
+    }
+
+    private static boolean hasTopLevelServicesSection(String text) {
         int len = text.length();
         int offset = 0;
-        boolean inServices = false;
-        int serviceIndent = -1;
+        while (offset < len) {
+            int nl = text.indexOf('\n', offset);
+            int lineEnd = nl < 0 ? len : nl;
+            int contentEnd = (lineEnd > offset && text.charAt(lineEnd - 1) == '\r') ? lineEnd - 1 : lineEnd;
+            String rawLine = text.substring(offset, contentEnd);
+            String trimmed = stripYamlComment(rawLine).trim();
+            if (!trimmed.isEmpty() && leadingSpaces(rawLine) == 0
+                    && (trimmed.equals("services:") || trimmed.startsWith("services: "))) {
+                return true;
+            }
+            offset = nl < 0 ? len : nl + 1;
+        }
+        return false;
+    }
+
+    private static String resolveComposeBuildDir(String composeParentDir, String rawBuild) {
+        if (rawBuild == null || rawBuild.isBlank()) return "";
+        String cleaned = DeclarativeTopologyParsers.resolvePlaceholderOrValue(unquoteYaml(rawBuild.trim()));
+        if (cleaned.isEmpty()) return "";
+        String lower = cleaned.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("git@")) {
+            return "";
+        }
+        String normRel = cleaned.replace('\\', '/');
+        while (normRel.endsWith("/") && normRel.length() > 1) {
+            normRel = normRel.substring(0, normRel.length() - 1);
+        }
+        String resolved = normalizeRelativePath(composeParentDir, normRel);
+        return resolved.isEmpty() ? "." : resolved;
+    }
+
+    static void parseDockerCompose(String path, String text, SourceCoordinates coords,
+            List<TreeSitterSourceFrontend.Fact> out, long[] stats, BooleanSupplier cancelled) throws IOException {
+        String composeParentDir = parentDir(path);
+        boolean hasServicesKey = hasTopLevelServicesSection(text);
+        boolean v1Mode = !hasServicesKey;
+        int len = text.length();
+        int offset = 0;
+        boolean inServices = v1Mode;
+        int serviceIndent = v1Mode ? 0 : -1;
         int propIndent = -1;
-        String currentServiceSlot = "";
+        ComposeServiceBuffer current = null;
         String currentSection = "";
         while (offset < len) {
             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
@@ -774,49 +1317,149 @@ public final class StaticPolyglotScan {
             if (!trimmed.isEmpty()) {
                 int indent = leadingSpaces(rawLine);
                 int start = offset + indent;
-                if (indent == 0) {
+                if (!v1Mode && indent == 0) {
+                    if (current != null) {
+                        current.flush(false, out);
+                        current = null;
+                    }
                     inServices = trimmed.equals("services:") || trimmed.startsWith("services: ");
                     serviceIndent = -1;
                     propIndent = -1;
-                    currentServiceSlot = "";
                     currentSection = "";
                 } else if (inServices) {
                     if (serviceIndent < 0)
                         serviceIndent = indent;
                     if (indent == serviceIndent && !trimmed.startsWith("-")) {
+                        if (current != null) {
+                            current.flush(v1Mode, out);
+                            current = null;
+                        }
                         var m = YAML_KEY.matcher(trimmed);
                         if (m.matches()) {
                             String serviceName = m.group(1);
-                            var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
-                            currentServiceSlot = span.start() + ":" + span.end();
-                            propIndent = -1;
-                            currentSection = "";
-                            out.add(new TreeSitterSourceFrontend.Fact("DECLARATION", "compose_service", serviceName,
-                                    truncate(trimmed, 1024), span, "", false,
-                                    Map.of("role", "service", "spec", "docker-compose")));
+                            String lowerSvc = serviceName.toLowerCase(Locale.ROOT);
+                            if (v1Mode && (lowerSvc.equals("version") || lowerSvc.equals("services")
+                                    || COMPOSE_RESERVED_SECTIONS.contains(lowerSvc) || lowerSvc.startsWith("x-"))) {
+                                propIndent = -1;
+                                currentSection = "";
+                            } else {
+                                var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
+                                current = new ComposeServiceBuffer(serviceName, truncate(trimmed, 1024), span);
+                                propIndent = -1;
+                                currentSection = "";
+                            }
                         }
-                    } else if (indent > serviceIndent && !currentServiceSlot.isEmpty()) {
+                    } else if (indent > serviceIndent && current != null) {
                         if (propIndent < 0 || indent < propIndent)
                             propIndent = indent;
                         if (indent == propIndent && !trimmed.startsWith("-")) {
                             var m = YAML_KEY.matcher(trimmed);
                             if (m.matches()) {
                                 String key = m.group(1);
-                                String val = m.group(2) == null ? "" : unquoteYaml(m.group(2).trim());
+                                String rawVal = m.group(2) == null ? "" : m.group(2).trim();
+                                String val = unquoteYaml(rawVal);
                                 currentSection = key;
-                                if (key.equals("image") && !val.isEmpty()) {
-                                    var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
-                                    out.add(new TreeSitterSourceFrontend.Fact("INFRA_BASE_IMAGE", "compose_image", val,
-                                            truncate(trimmed, 1024), span, currentServiceSlot, false,
-                                            Map.of("image", val, "spec", "docker-compose")));
+                                switch (key) {
+                                    case "image" -> {
+                                        current.hasImage = true;
+                                        if (!val.isEmpty()) {
+                                            var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
+                                            current.children.add(new TreeSitterSourceFrontend.Fact(
+                                                    "INFRA_BASE_IMAGE", "compose_image", val,
+                                                    truncate(trimmed, 1024), span, current.slot, false,
+                                                    Map.of("image", val, "spec", "docker-compose")));
+                                        }
+                                    }
+                                    case "build" -> {
+                                        current.hasBuild = true;
+                                        if (!rawVal.isEmpty()) {
+                                            if (rawVal.startsWith("{")) {
+                                                var cm = COMPOSE_FLOW_CONTEXT.matcher(rawVal);
+                                                if (cm.find()) {
+                                                    String bd = resolveComposeBuildDir(composeParentDir, cm.group(1));
+                                                    if (!bd.isEmpty()) current.buildDir = bd;
+                                                }
+                                            } else {
+                                                String bd = resolveComposeBuildDir(composeParentDir, val);
+                                                if (!bd.isEmpty()) current.buildDir = bd;
+                                            }
+                                        }
+                                    }
+                                    case "container_name" -> {
+                                        current.hasServiceProps = true;
+                                        String cn = DeclarativeTopologyParsers.resolvePlaceholderOrValue(val);
+                                        if (!cn.isEmpty()) current.containerName = cn;
+                                    }
+                                    case "command", "entrypoint" -> current.hasCommand = true;
+                                    case "ports" -> {
+                                        current.hasPorts = true;
+                                        if (rawVal.startsWith("[") && rawVal.endsWith("]")) {
+                                            for (String item : rawVal.substring(1, rawVal.length() - 1).split(",")) {
+                                                String portSpec = unquoteYaml(item.trim());
+                                                if (!portSpec.isEmpty() && portSpec.length() <= 128) {
+                                                    var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
+                                                    current.children.add(new TreeSitterSourceFrontend.Fact(
+                                                            "INFRA_PORT", "compose_port", portSpec,
+                                                            truncate(trimmed, 1024), span, current.slot, false,
+                                                            Map.of("port", portSpec, "spec", "docker-compose")));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    case "volumes" -> {
+                                        current.hasServiceProps = true;
+                                        if (rawVal.contains("/var/run/docker.sock")) {
+                                            current.dockerSocket = true;
+                                        }
+                                    }
+                                    case "depends_on" -> {
+                                        current.hasServiceProps = true;
+                                        if (rawVal.startsWith("[") && rawVal.endsWith("]")) {
+                                            for (String item : rawVal.substring(1, rawVal.length() - 1).split(",")) {
+                                                String dep = unquoteYaml(item.trim());
+                                                if (!dep.isEmpty() && dep.length() <= 128) {
+                                                    var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
+                                                    current.children.add(new TreeSitterSourceFrontend.Fact(
+                                                            "INFRA_DEPENDENCY", "compose_depends_on", dep,
+                                                            truncate(trimmed, 1024), span, current.slot, false,
+                                                            Map.of("target", dep, "spec", "docker-compose")));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    case "links", "external_links" -> {
+                                        current.hasServiceProps = true;
+                                        if (rawVal.startsWith("[") && rawVal.endsWith("]")) {
+                                            for (String item : rawVal.substring(1, rawVal.length() - 1).split(",")) {
+                                                DeclarativeTopologyParsers.emitComposeLinkTarget(
+                                                        item, trimmed, start, contentEnd, current.slot, coords,
+                                                        current.children);
+                                            }
+                                        }
+                                    }
+                                    case "environment", "expose", "restart", "env_file" ->
+                                            current.hasServiceProps = true;
+                                    default -> {
+                                    }
                                 }
                             }
+                        } else if (currentSection.equals("build") && indent > propIndent) {
+                            var m = YAML_KEY.matcher(trimmed);
+                            if (m.matches() && "context".equals(m.group(1)) && m.group(2) != null) {
+                                String bd = resolveComposeBuildDir(composeParentDir, m.group(2).trim());
+                                if (!bd.isEmpty()) current.buildDir = bd;
+                            }
+                        } else if (currentSection.equals("volumes")) {
+                            if (trimmed.contains("/var/run/docker.sock")) {
+                                current.dockerSocket = true;
+                            }
                         } else if (currentSection.equals("ports") && trimmed.startsWith("-")) {
+                            current.hasPorts = true;
                             String portSpec = unquoteYaml(trimmed.substring(1).trim());
                             if (!portSpec.isEmpty() && portSpec.length() <= 128) {
                                 var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
-                                out.add(new TreeSitterSourceFrontend.Fact("INFRA_PORT", "compose_port", portSpec,
-                                        truncate(trimmed, 1024), span, currentServiceSlot, false,
+                                current.children.add(new TreeSitterSourceFrontend.Fact("INFRA_PORT", "compose_port", portSpec,
+                                        truncate(trimmed, 1024), span, current.slot, false,
                                         Map.of("port", portSpec, "spec", "docker-compose")));
                             }
                         } else if (currentSection.equals("depends_on")) {
@@ -831,15 +1474,23 @@ public final class StaticPolyglotScan {
                             }
                             if (!dep.isEmpty() && dep.length() <= 128) {
                                 var span = coords.range(start, contentEnd, SourceCoordinates.Encoding.UTF16);
-                                out.add(new TreeSitterSourceFrontend.Fact("INFRA_DEPENDENCY", "compose_depends_on", dep,
-                                        truncate(trimmed, 1024), span, currentServiceSlot, false,
+                                current.children.add(new TreeSitterSourceFrontend.Fact("INFRA_DEPENDENCY", "compose_depends_on", dep,
+                                        truncate(trimmed, 1024), span, current.slot, false,
                                         Map.of("target", dep, "spec", "docker-compose")));
                             }
+                        } else if (currentSection.equals("environment") || currentSection.equals("links")
+                                || currentSection.equals("external_links")) {
+                            DeclarativeTopologyParsers.parseDockerComposeEnvOrLinksLine(
+                                    currentSection, trimmed, indent, propIndent, start, contentEnd,
+                                    current.slot, coords, current.children);
                         }
                     }
                 }
             }
             offset = nl < 0 ? len : nl + 1;
+        }
+        if (current != null) {
+            current.flush(v1Mode, out);
         }
     }
 
@@ -1168,7 +1819,8 @@ public final class StaticPolyglotScan {
 
     private record CallSite(String siteId, String document, String langGroup, String language, String normPath,
             String rawPathField, Object contentHandle,
-            String dirPath, String nodeKind, String spanSlot, Map<String, Object> spanMap, String ownerSlot, String name, String written,
+            String dirPath, String nodeKind, String spanSlot, Map<String, Object> spanMap, String ownerSlot,
+            String name, String written,
             Map<Integer, String> litArgs, Map<Integer, Integer> forwardParams, ContentDigest proof) {
     }
 
@@ -1214,14 +1866,15 @@ public final class StaticPolyglotScan {
                 var fact = GraphJson.object(fields.get("fact"));
                 var span = GraphJson.object(fact.get("span"));
                 String category = GraphJson.string(fact.get("category"));
+                String language = GraphJson.string(fields.get("language"));
                 String slot = span.get("start") + ":" + span.get("end");
                 String id = category.equals("DECLARATION") ? declaration(document, slot)
                         : KnowledgeGraph.derivedIdentity("syntax-site",
-                                category.startsWith("RPC_") && !category.equals("RPC_METHOD")
-                                        ? List.of(document, category, fact.get("nodeKind"), span, fact.get("name"),
-                                                fact.get("attributes"))
-                                        : List.of(document, category, fact.get("nodeKind"), span));
-                String language = GraphJson.string(fields.get("language"));
+                                (category.startsWith("RPC_") && !category.equals("RPC_METHOD"))
+                                        || usesRichFactIdentity(category, language)
+                                                ? List.of(document, category, fact.get("nodeKind"), span,
+                                                        fact.get("name"), fact.get("attributes"))
+                                                : List.of(document, category, fact.get("nodeKind"), span));
                 node(nodes, context, id, switch (category) {
                     case "DECLARATION" -> language.equals("protobuf")
                             ? "PROTOBUF_" + GraphJson.string(fact.get("nodeKind")).toUpperCase(Locale.ROOT)
@@ -1325,7 +1978,8 @@ public final class StaticPolyglotScan {
                                         : Map.of();
                                 wrapperCalls.add(new CallSite(id, document, group, language, rawPath,
                                         rawField, fields.get("content"), dir,
-                                        GraphJson.string(fact.get("nodeKind")), slot, copiedSpan, ownerKey, name, written,
+                                        GraphJson.string(fact.get("nodeKind")), slot, copiedSpan, ownerKey, name,
+                                        written,
                                         Map.copyOf(litArgs), Map.copyOf(forwardParams), artifact.identity()));
                             }
                         }
@@ -1371,7 +2025,8 @@ public final class StaticPolyglotScan {
                 Map<String, Object> symbol = lookupProtoSymbol(protoSymbols,
                         GraphJson.string(rpc.getValue().get("document")) + "|", initialPrefix, type);
                 if (symbol == null) {
-                    // Cross-file Protobuf symbol fallback across all captured .proto files in the repository.
+                    // Cross-file Protobuf symbol fallback across all captured .proto files in the
+                    // repository.
                     symbol = lookupProtoSymbol(protoSymbols, "", initialPrefix, type);
                 }
                 var targets = symbol == null ? List.<String>of()
@@ -1448,7 +2103,8 @@ public final class StaticPolyglotScan {
             return;
 
         // Bounded 4-hop fixpoint propagation across wrapper functions passing caller
-        // parameters cleanly; each declaration retains multiple specs (e.g. HTTP + Event).
+        // parameters cleanly; each declaration retains multiple specs (e.g. HTTP +
+        // Event).
         for (int hop = 1; hop < 4; hop++) {
             boolean changed = false;
             for (var site : wrapperCalls) {
@@ -1849,7 +2505,8 @@ public final class StaticPolyglotScan {
     }
 
     private static boolean isJsWorkspaceConfig(String path) {
-        if (path == null || path.isEmpty()) return false;
+        if (path == null || path.isEmpty())
+            return false;
         String norm = path.replace('\\', '/');
         int slash = norm.lastIndexOf('/');
         String base = (slash < 0 ? norm : norm.substring(slash + 1)).toLowerCase(Locale.ROOT);
@@ -1860,7 +2517,8 @@ public final class StaticPolyglotScan {
     }
 
     private static String stripJsExtension(String path) {
-        if (path == null) return "";
+        if (path == null)
+            return "";
         for (String ext : List.of(".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".vue", ".svelte")) {
             if (path.endsWith(ext) && path.length() > ext.length()) {
                 return path.substring(0, path.length() - ext.length());

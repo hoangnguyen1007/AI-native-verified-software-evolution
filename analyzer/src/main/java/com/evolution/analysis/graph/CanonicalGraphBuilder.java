@@ -254,6 +254,24 @@ public final class CanonicalGraphBuilder {
                     }
                 });
             }
+            var jaxRsUnits = new ArrayList<com.evolution.analysis.jaxrs.JaxRsRouteMapper.UnitInput>();
+            for (var unit : ingestion.units()) {
+                var outcome = outcomesBySet.get(unit.sourceSet());
+                if (outcome != null && outcome.request().isPresent() && unit.frontend().isPresent()) {
+                    jaxRsUnits.add(new com.evolution.analysis.jaxrs.JaxRsRouteMapper.UnitInput(
+                            outcome.request().orElseThrow(), unit.frontend().orElseThrow()));
+                }
+            }
+            if (!jaxRsUnits.isEmpty()) {
+                var jaxRsByAnalysis = com.evolution.analysis.jaxrs.JaxRsRouteMapper.mapAll(jaxRsUnits, 100_000);
+                for (var jaxRsUnit : jaxRsUnits) {
+                    var req = jaxRsUnit.request();
+                    var res = jaxRsByAnalysis.get(req.manifest().identity());
+                    if (res != null && !res.routes().isEmpty()) {
+                        p.jaxRsRoutes(req, res.routes());
+                    }
+                }
+            }
             // Index the lossless records instead of nesting the full repeated ledger in one
             // giant payload.
             // Individual issues/gaps retain their own canonical evidence and original
@@ -339,6 +357,31 @@ public final class CanonicalGraphBuilder {
             nativeSupports
                     .computeIfAbsent(ContentDigest.sha256Utf8(value.canonicalJson()).value(), key -> new TreeSet<>())
                     .add(value.identity());
+        }
+
+        void jaxRsRoutes(com.evolution.analysis.frontend.FrontendRequest request,
+                List<com.evolution.analysis.jaxrs.JaxRsRouteMapper.Route> routes) {
+            String context = request.manifest().identity().value();
+            for (var route : routes) {
+                String family = route.kind() == com.evolution.analysis.jaxrs.JaxRsRouteMapper.Kind.SERVLET
+                        ? "servlet.endpoint-declaration"
+                        : "jaxrs.endpoint-declaration";
+                var payload = artifact(family, Map.of(
+                        "schema", family + ":m8.4-v1",
+                        "route", route,
+                        "module", route.module(),
+                        "sourceSet", request.sourceSet(),
+                        "scope", "DECLARATION_ONLY",
+                        "activation", "UNKNOWN",
+                        "runtimeObserved", false));
+                String endpoint = derivedIdentity("endpoint-declaration",
+                        List.of(family + ":m8.4-v1", context, route.identity()));
+                node(endpoint, context, "ENDPOINT", payload);
+                String anchor = nodes.containsKey(key(context, route.handler().value()))
+                        ? route.handler().value()
+                        : route.controller().value();
+                link(context, "graph.contains", anchor, endpoint, payload);
+            }
         }
 
         void sourceWiring(com.evolution.analysis.frontend.FrontendRequest request,
@@ -1168,14 +1211,15 @@ public final class CanonicalGraphBuilder {
             });
             slice.symbolicTruth().ifPresent(truth -> {
                 truth.gaps().forEach(g -> gapRecord(context, g));
-                artifact("spring.symbolic-result", truth);
                 truth.formulas().forEach(f -> {
                     var payload = artifact("spring.formula", f);
                     node(f.identity().value(), context, "REGION_FORMULA", payload);
                     f.children().forEach(child -> link(context, "spring.formula-input", f.identity().value(),
                             child.value(), payload));
                 });
+                var regionDigests = new ArrayList<String>(truth.regions().size());
                 for (var region : truth.regions()) {
+                    regionDigests.add(CanonicalJson.sha256(region).value());
                     var payload = artifact("spring.symbolic-region",
                             Map.of("encoding", "symbolic-dag-m4u.2-v1", "space", slice.space().orElseThrow().identity(),
                                     "evaluationInput", truth.inputIdentity(), "region", region));
@@ -1186,7 +1230,48 @@ public final class CanonicalGraphBuilder {
                     link(context, "spring.false-formula", id, region.falseRegion().value(), payload);
                     link(context, "spring.unknown-formula", id, region.unknownRegion().value(), payload);
                 }
-                truth.traces().forEach(t -> artifact("spring.symbolic-trace", t));
+                var traceEvidenceIds = new ArrayList<ContentDigest>(truth.traces().size());
+                for (var trace : truth.traces()) {
+                    traceEvidenceIds.add(artifact("spring.symbolic-trace", trace));
+                }
+                var queryPages = new ArrayList<ContentDigest>();
+                var queries = truth.queries();
+                for (int start = 0; start < queries.size(); start += 64) {
+                    queryPages.add(artifact("spring.symbolic-query-page",
+                            Map.of("page", queryPages.size(), "queries",
+                                    queries.subList(start, Math.min(queries.size(), start + 64)))));
+                }
+                var issuePages = new ArrayList<ContentDigest>();
+                var issues = truth.issues();
+                for (int start = 0; start < issues.size(); start += 256) {
+                    issuePages.add(artifact("spring.symbolic-issue-page",
+                            Map.of("page", issuePages.size(), "issues",
+                                    issues.subList(start, Math.min(issues.size(), start + 256)))));
+                }
+                // Index lossless symbolic result records into bounded pages instead of duplicating
+                // every trace, region, formula, query and gap inside one monolithic JSON payload.
+                var resultPayload = new TreeMap<String, Object>();
+                resultPayload.put("schema", "spring.symbolic-result:m8.4-paged-v1");
+                resultPayload.put("inputIdentity", truth.inputIdentity());
+                resultPayload.put("resultIdentity", truth.identity());
+                resultPayload.put("signaturesComplete", truth.signaturesComplete());
+                resultPayload.put("regionsCount", truth.regions().size());
+                resultPayload.put("tracesCount", truth.traces().size());
+                resultPayload.put("formulasCount", truth.formulas().size());
+                resultPayload.put("queriesCount", truth.queries().size());
+                resultPayload.put("issuesCount", truth.issues().size());
+                resultPayload.put("gapsCount", truth.gaps().size());
+                resultPayload.put("regionDigestPages",
+                        indexPages("spring.symbolic-region-digest-page", regionDigests, s -> s));
+                resultPayload.put("traceEvidencePages",
+                        indexPages("spring.symbolic-trace-index-page", traceEvidenceIds, ContentDigest::value));
+                resultPayload.put("formulaPages",
+                        indexPages("spring.symbolic-formula-index-page", truth.formulas(), f -> f.identity().value()));
+                resultPayload.put("queryPages", List.copyOf(queryPages));
+                resultPayload.put("issuePages", List.copyOf(issuePages));
+                resultPayload.put("gapPages",
+                        indexPages("spring.symbolic-gap-index-page", truth.gaps(), g -> g.gapIdentity().value()));
+                artifact("spring.symbolic-result", resultPayload);
             });
         }
 

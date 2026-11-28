@@ -187,4 +187,58 @@ class ConditionLoweringTest {
         var deep = fixture(List.of(new Spec(PROFILE, "@Profile(\"" + "(".repeat(1000) + "dev" + ")".repeat(1000) + "\")")));
         assertEquals(1, lower(deep).coverage().opaqueRows());
     }
+
+    @Test void modularBoot4AndSpringCloudArtifactsResolveInCompatibleMode() throws Exception {
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/s2-boot4-cloud.git");
+        var module = ModuleDescriptor.create(repo, ".", "app");
+        String src = "package demo;\n@ConditionalOnProperty(name=\"app.enabled\")\n@ConditionalOnDiscoveryEnabled\nclass Cfg {}\n";
+        var doc = SourceDocument.create(repo, module, "Cfg.java", ContentDigest.sha256Utf8(src), SourceClassification.MAIN);
+
+        var framework = new SpringFrameworkEvidence(true, Optional.of(ContentDigest.sha256Utf8("s2-cp")), List.of(
+                new SpringFrameworkEvidence.Artifact("org.springframework:spring-core:7.0.2", ContentDigest.sha256Utf8("c")),
+                new SpringFrameworkEvidence.Artifact("org.springframework:spring-beans:7.0.2", ContentDigest.sha256Utf8("b")),
+                new SpringFrameworkEvidence.Artifact("org.springframework:spring-context:7.0.2", ContentDigest.sha256Utf8("ctx")),
+                new SpringFrameworkEvidence.Artifact("org.springframework.boot:spring-boot:4.1.2", ContentDigest.sha256Utf8("sb")),
+                new SpringFrameworkEvidence.Artifact("org.springframework.boot:spring-boot-webmvc:4.1.2", ContentDigest.sha256Utf8("sbw")),
+                new SpringFrameworkEvidence.Artifact("org.springframework.cloud:spring-cloud-commons:4.3.0", ContentDigest.sha256Utf8("scc"))));
+
+        String propKey = JavaSymbolName.topLevelType("org.springframework.boot.autoconfigure.condition", "ConditionalOnProperty").canonicalName();
+        String cloudKey = JavaSymbolName.topLevelType("org.springframework.cloud.client", "ConditionalOnDiscoveryEnabled").canonicalName();
+        var webmvcScope = framework.artifacts().stream().filter(a -> a.artifactId().equals("spring-boot-webmvc")).findFirst().orElseThrow().entityScope();
+        var cloudScope = framework.artifacts().stream().filter(a -> a.artifactId().equals("spring-cloud-commons")).findFirst().orElseThrow().entityScope();
+        var propTarget = Entity.create(EntityOrigin.DEPENDENCY, webmvcScope, EntityKind.TYPE, propKey, Optional.empty());
+        var cloudTarget = Entity.create(EntityOrigin.DEPENDENCY, cloudScope, EntityKind.TYPE, cloudKey, Optional.empty());
+
+        var propRaw = SpringMechanismInventory.RawObservation.create(
+                SpringMechanismInventory.RawKind.ANNOTATION_USE,
+                doc.identity(),
+                Optional.of(new SourceSpan(doc.identity(), 2, 1, 2, 42)),
+                0,
+                Optional.empty(),
+                Optional.of(propTarget.identity()),
+                SpringMechanismInventory.EvidenceState.VERIFIED,
+                propKey,
+                "@ConditionalOnProperty(name=\"app.enabled\")",
+                List.of());
+        var cloudRaw = SpringMechanismInventory.RawObservation.create(
+                SpringMechanismInventory.RawKind.ANNOTATION_USE,
+                doc.identity(),
+                Optional.of(new SourceSpan(doc.identity(), 3, 1, 3, 29)),
+                1,
+                Optional.empty(),
+                Optional.of(cloudTarget.identity()),
+                SpringMechanismInventory.EvidenceState.VERIFIED,
+                cloudKey,
+                "@ConditionalOnDiscoveryEnabled",
+                List.of());
+
+        assertEquals("org.springframework.boot.autoconfigure.condition.ConditionalOnProperty",
+                ConditionEvidenceLowering.exactAnnotationType(
+                        propRaw, framework, SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED));
+        assertEquals("org.springframework.cloud.client.ConditionalOnDiscoveryEnabled",
+                ConditionEvidenceLowering.exactAnnotationType(
+                        cloudRaw, framework, SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED));
+        assertNull(ConditionEvidenceLowering.exactAnnotationType(
+                cloudRaw, framework, SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED));
+    }
 }

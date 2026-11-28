@@ -82,7 +82,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             Path cacheRoot = intakeDirectory.toAbsolutePath().normalize().resolve("incremental-cache");
             this.buildDelta = new BuildDeltaCache(cacheRoot);
             this.springCache = new IncrementalSpringCache();
-            this.graphProjector = new IncrementalGraphProjector();
+            this.graphProjector = new IncrementalGraphProjector(cacheRoot.resolve("graph-templates"));
         }
 
         public BuildDeltaCache buildDelta() {
@@ -143,6 +143,13 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
 
         default AnalysisMode mode() {
             return AnalysisMode.FULL;
+        }
+
+        default com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile projectionProfile() {
+            return configuredProjectionProfile();
+        }
+
+        default void recordAcquisitionTelemetry(long acquisitionAttempts, long pomAttempts) {
         }
 
         void stage(AnalysisJobs.Stage stage);
@@ -400,6 +407,16 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             @Override
             public AnalysisMode mode() {
                 return control.mode();
+            }
+
+            @Override
+            public com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile projectionProfile() {
+                return parseProjectionProfile(control.projectionProfile());
+            }
+
+            @Override
+            public void recordAcquisitionTelemetry(long acquisitionAttempts, long pomAttempts) {
+                control.recordAcquisitionTelemetry(acquisitionAttempts, pomAttempts);
             }
 
             @Override
@@ -931,6 +948,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
         var availablePlatforms = depSetup.availablePlatforms();
         var platformLedgers = depSetup.platformLedgers();
         var dependencies = depSetup.dependencies();
+        long[] operationalAcquisition = extractOperationalAcquisitionCounts(dependencies.summary());
+        control.recordAcquisitionTelemetry(operationalAcquisition[0], operationalAcquisition[1]);
         var afterBuildStats = sharedCaches.buildDelta().stats();
         int deltaReusedBuildRoots = Math.max(0,
                 (afterBuildStats.reusedBuildRoots() - beforeBuildStats.reusedBuildRoots())
@@ -1277,12 +1296,23 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             Map<Path, ContentDigest> preverifiedMemo = deltaCache != null
                     ? deltaCache.runVerifiedDigestMemo()
                     : null;
+            var projectionProfile = control.projectionProfile();
 
             if (useDiskSpill && graphStoreDirectory.isPresent()) {
                 var storeDir = graphStoreDirectory.orElseThrow();
                 var pagesStore = new PartitionedGraphStore(storeDir.resolve("graph-pages"));
+                var beforeGraphStats = sharedCaches.graphProjector().stats();
                 var publication = pagesStore.build(canonicalInput, storeDir, control, graphLedgers,
-                        store -> new PolyglotScan().project(finalPolyglot, store, control), fast);
+                        store -> new PolyglotScan().project(finalPolyglot, store, projectionProfile, control), fast,
+                        incrementalEnabled ? sharedCaches.graphProjector() : null);
+                var afterGraphStats = sharedCaches.graphProjector().stats();
+                int deltaReusedGraphContexts = Math.max(0,
+                        afterGraphStats.reusedContexts() - beforeGraphStats.reusedContexts());
+                int deltaRebuiltGraphContexts = Math.max(0,
+                        afterGraphStats.rebuiltContexts() - beforeGraphStats.rebuiltContexts());
+                if (deltaReusedGraphContexts > 0) {
+                    control.recordCacheMetrics(Map.of("graphProjectorReused", (long) deltaReusedGraphContexts));
+                }
                 control.checkpoint();
                 var reports = new ArrayList<PublishedReports.Report>();
                 if (input.policy().isPresent()) {
@@ -1346,7 +1376,9 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         reextractedJavaFilesTotal.get(), reusedJavaFilesTotal.get(),
                         reusedModulesCount.get(), recomputedModulesCount.get(),
                         deltaReusedSpring, deltaRecomputedSpring,
-                        pHits, pMisses, 0, publication.contexts().size());
+                        pHits, pMisses, deltaReusedGraphContexts,
+                        deltaRebuiltGraphContexts > 0 || deltaReusedGraphContexts > 0
+                                ? deltaRebuiltGraphContexts : publication.contexts().size());
                 control.recordIncrementalMetrics(toIncrementalMetrics(summary));
                 if (incrementalEnabled) {
                     sharedCaches.recordPublished(input.repository(), publication.snapshot(), publication.graph(),
@@ -1373,7 +1405,7 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             var graph = new CanonicalGraphBuilder().build(
                     canonicalInput,
                     graphLedgers,
-                    store -> new PolyglotScan().project(finalPolyglot, store, control),
+                    store -> new PolyglotScan().project(finalPolyglot, store, projectionProfile, control),
                     fast,
                     incrementalEnabled ? sharedCaches.graphProjector() : null);
             var afterGraphStats = sharedCaches.graphProjector().stats();
@@ -1969,6 +2001,76 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
             filtered.add(gap);
         }
         return List.copyOf(filtered);
+    }
+
+    public static final List<String> PROJECTION_PROFILES = List.of("strict", "dfd-export");
+
+    public static com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile configuredProjectionProfile() {
+        String raw = System.getProperty("evo.projection.profile");
+        if (raw == null || raw.isBlank()) {
+            raw = System.getenv("EVO_PROJECTION_PROFILE");
+        }
+        if (raw != null && ("dfd-export".equalsIgnoreCase(raw.strip())
+                || "DFD_EXPORT".equalsIgnoreCase(raw.strip()))) {
+            return com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT;
+        }
+        return com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.STRICT;
+    }
+
+    public static String projectionProfileName(
+            com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile profile) {
+        Objects.requireNonNull(profile, "profile");
+        return profile == com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT
+                ? "dfd-export"
+                : "strict";
+    }
+
+    public static String configuredProjectionProfileName() {
+        return projectionProfileName(configuredProjectionProfile());
+    }
+
+    public static com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile parseProjectionProfile(
+            String raw) {
+        if (raw == null || raw.isBlank()) {
+            return configuredProjectionProfile();
+        }
+        String normalized = raw.strip().toLowerCase(Locale.ROOT);
+        if ("strict".equals(normalized)) {
+            return com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.STRICT;
+        }
+        if ("dfd-export".equals(normalized) || "dfd_export".equals(normalized)) {
+            return com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT;
+        }
+        throw new IllegalArgumentException("Invalid projectionProfile");
+    }
+
+    static long[] extractOperationalAcquisitionCounts(Map<String, Object> summary) {
+        if (summary == null || summary.isEmpty()) {
+            return new long[] { 0L, 0L };
+        }
+        long acquisitionAttempts = 0L;
+        long pomAttempts = 0L;
+        Object rawRoots = summary.get("roots");
+        if (rawRoots instanceof List<?> roots) {
+            for (Object entry : roots) {
+                if (entry instanceof Map<?, ?> rootMap) {
+                    acquisitionAttempts += nonNegativeLong(rootMap.get("acquisitionAttempts"));
+                    pomAttempts += nonNegativeLong(rootMap.get("pomAttempts"));
+                }
+            }
+        }
+        Object rawGradle = summary.get("gradle");
+        if (rawGradle instanceof Map<?, ?> gradleMap) {
+            acquisitionAttempts += nonNegativeLong(gradleMap.get("acquisitionAttempts"));
+        }
+        return new long[] { acquisitionAttempts, pomAttempts };
+    }
+
+    private static long nonNegativeLong(Object value) {
+        if (value instanceof Number number) {
+            return Math.max(0L, number.longValue());
+        }
+        return 0L;
     }
 
     private static String normalizeModuleDir(String path) {

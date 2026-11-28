@@ -92,6 +92,11 @@
           </span>
         </button>
       </div>
+      <button id="header-mcp-trigger" class="button subtle evo-topbar-mcp-btn" type="button" aria-label="Connect AI Agent (MCP)" title="Connect AI Agent via MCP (Streamable HTTP 2025-11-25)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+        <span class="evo-topbar-mcp-label">MCP</span>
+        <span class="evo-topbar-mcp-sub">AI Agent</span>
+      </button>
       <details class="workbench-menu" id="workspace-tools" hidden>
         <summary>Tools</summary>
         <div class="workbench-menu-items">
@@ -134,6 +139,14 @@
               </select>
             </label>
             <p id="analysis-mode-note" class="small muted" hidden>Quick analysis inventories the repository, prioritizes project code, and defers supported installed dependency trees and some Java details.</p>
+            <label class="control-field" id="projection-profile-field">
+              <span>Projection profile</span>
+              <select id="projection-profile" aria-describedby="projection-profile-note">
+                <option value="strict" selected>Strict Canonical (Direct Evidence)</option>
+                <option value="dfd-export">DFD Compatibility (Derived Flows)</option>
+              </select>
+            </label>
+            <p id="projection-profile-note" class="small muted">Strict Canonical emits direct evidence only; DFD Compatibility adds derived cross-service flows.</p>
             <p id="artifact-recovery-note" class="small muted" hidden>Online recovery checks the dependency cache and fetches missing artifacts from approved repositories.</p>
             <button id="analyze-force" class="button subtle" hidden disabled>Recompute</button>
             <button id="disconnect-repo" class="button subtle" type="button" hidden>Disconnect repository…</button>
@@ -163,6 +176,7 @@
             <summary>
               <span id="job-description" role="status"></span>
               <span id="job-status-pill" class="u083-pill" hidden aria-hidden="true"></span>
+              <span id="job-profile-pill" class="evo-profile-pill" hidden></span>
               <span id="job-elapsed" class="run-elapsed" aria-hidden="true"></span>
               <span class="run-activity-label">Activity log</span>
             </summary>
@@ -417,6 +431,13 @@
   <label class="gh-auto-policy-row">
     <input id="connect-auto-policy" type="checkbox" checked>
     <span>Auto-detect architecture rules (recommended when Policy YAML is empty)</span>
+  </label>
+  <label class="control-field evo-connect-profile-field" id="connect-projection-profile-field" for="connect-projection-profile">
+    <span>Projection profile</span>
+    <select id="connect-projection-profile">
+      <option value="strict" selected>Strict Canonical (Direct Evidence)</option>
+      <option value="dfd-export">DFD Compatibility (Derived Flows)</option>
+    </select>
   </label>
   <details id="policy-settings" style="margin-top:14px;">
     <summary>Architecture rules &amp; scoring <span class="muted small">(optional custom YAML)</span></summary>

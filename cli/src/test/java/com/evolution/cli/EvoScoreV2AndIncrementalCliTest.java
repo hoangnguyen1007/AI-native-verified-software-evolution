@@ -140,6 +140,9 @@ class EvoScoreV2AndIncrementalCliTest {
         assertEquals(0L, ((Number) warmInc.get("modifiedFiles")).longValue());
         assertEquals(1, ((Number) warmInc.get("reusedModules")).intValue());
         assertNotNull(warmInc.get("baseSnapshotId"));
+        assertNotNull(warmInc.get("baseGraphId"));
+        assertTrue(((Number) warmInc.get("reusedGraphContexts")).intValue() >= 1);
+        assertEquals(0, ((Number) warmInc.get("rebuiltGraphContexts")).intValue());
         assertTrue(warm.err().contains("[evo] Incremental (NO_CHANGE):"), warm::err);
 
         // 3. Edit 1 Java file -> INCREMENTAL
@@ -170,6 +173,306 @@ class EvoScoreV2AndIncrementalCliTest {
         assertEquals("NO_INCREMENTAL_FLAG", cleanInc.get("fallbackReason"));
         assertTrue(clean.err().contains("[evo] Cache: javaHits=0 javaMisses=1"), clean::err);
         assertTrue(clean.err().contains("reason=NO_INCREMENTAL_FLAG"), clean::err);
+    }
+
+    @Test void noChangeFastPathInvalidatesOnOptionChangeAndSingleByteEdit(@TempDir Path temp) throws Exception {
+        Path repo = Files.createDirectory(temp.resolve("fp-repo"));
+        Path ws = Files.createDirectory(temp.resolve("fp-ws"));
+        Path cache = Files.createDirectory(temp.resolve("fp-m2"));
+        Files.writeString(repo.resolve("pom.xml"), """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>cli-fp</artifactId>
+                  <version>1.0.0</version>
+                  <properties>
+                    <maven.compiler.release>21</maven.compiler.release>
+                    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  </properties>
+                </project>
+                """);
+        Path src = Files.createDirectories(repo.resolve("src/main/java/demo"));
+        Files.writeString(src.resolve("App.java"), """
+                package demo;
+                public class App {
+                    public int run() { return 1; }
+                }
+                """);
+
+        // 1. Cold --fast
+        var coldFast = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--json");
+        assertTrue(coldFast.code() == 0 || coldFast.code() == 3, coldFast::err);
+        assertFalse(coldFast.data().containsKey("springSatMode"));
+
+        // 2. Warm --fast -> NO_CHANGE fast-path
+        var warmFast = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--json");
+        assertEquals(coldFast.code(), warmFast.code());
+        assertEquals(coldFast.out(), warmFast.out());
+
+        // 3. Changing --spring-sat on identical files MUST invalidate fast-path receipt
+        var satScan = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--spring-sat", "--json");
+        assertTrue(satScan.code() == 0 || satScan.code() == 3, satScan::err);
+        assertEquals("AUTO_MULTI_CONFIG_SAT", satScan.data().get("springSatMode"));
+
+        // 4. Repeat with --spring-sat -> hits fast-path and matches step 3
+        var warmSat = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--spring-sat", "--json");
+        assertEquals(satScan.code(), warmSat.code());
+        assertEquals(satScan.out(), warmSat.out());
+
+        // 5. 1-byte edit invalidates fast-path and matches clean --no-incremental output
+        Files.writeString(src.resolve("App.java"), """
+                package demo;
+                public class App {
+                    public int run() { return 2; }
+                }
+                """);
+        var editedInc = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--spring-sat", "--json");
+        var editedClean = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--spring-sat", "--no-incremental", "--json");
+        assertEquals(editedClean.code(), editedInc.code());
+        assertEquals(editedClean.out(), editedInc.out());
+
+        // 6. --projection-profile=dfd-export invalidates fast-path and invalid option exits with code 2
+        var dfdScan = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off", "--fast", "--projection-profile", "dfd-export", "--json");
+        assertTrue(dfdScan.code() == 0 || dfdScan.code() == 3, dfdScan::err);
+        assertEquals("dfd-export", dfdScan.data().get("projectionProfile"));
+        var invalidProfile = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--offline", "--build", "off", "--projection-profile", "bogus", "--json");
+        assertEquals(2, invalidProfile.code());
+    }
+
+    @Test void multiModuleOneFileEditReusesUnchangedGraphContextAndMatchesCleanRun(@TempDir Path temp) throws Exception {
+        Path repo = Files.createDirectory(temp.resolve("mm-repo"));
+        Path ws = Files.createDirectory(temp.resolve("mm-ws"));
+        Path cache = Files.createDirectory(temp.resolve("mm-m2"));
+        Files.writeString(repo.resolve("pom.xml"), """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>mm-parent</artifactId>
+                  <version>1.0.0</version>
+                  <packaging>pom</packaging>
+                  <modules>
+                    <module>mod-a</module>
+                    <module>mod-b</module>
+                  </modules>
+                </project>
+                """);
+        for (String mod : List.of("mod-a", "mod-b")) {
+            Path modDir = Files.createDirectory(repo.resolve(mod));
+            Files.writeString(modDir.resolve("pom.xml"), """
+                    <project>
+                      <modelVersion>4.0.0</modelVersion>
+                      <parent>
+                        <groupId>demo</groupId>
+                        <artifactId>mm-parent</artifactId>
+                        <version>1.0.0</version>
+                      </parent>
+                      <artifactId>%s</artifactId>
+                      <properties>
+                        <maven.compiler.release>21</maven.compiler.release>
+                        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                      </properties>
+                    </project>
+                    """.formatted(mod));
+        }
+        Path srcA = Files.createDirectories(repo.resolve("mod-a/src/main/java/a"));
+        Files.writeString(srcA.resolve("AlphaService.java"), """
+                package a;
+                public class AlphaService { public String hello() { return "a"; } }
+                """);
+        Path srcB = Files.createDirectories(repo.resolve("mod-b/src/main/java/b"));
+        Files.writeString(srcB.resolve("BetaService.java"), """
+                package b;
+                public class BetaService { public String hello() { return "b1"; } }
+                """);
+
+        Path summaryFile = ws.resolve(".evo/last-incremental-summary.json");
+        var cold = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off",
+                "--fast", "--telemetry", "--json");
+        assertTrue(cold.code() == 0 || cold.code() == 3, cold::err);
+        var coldInc = readJsonFile(summaryFile);
+        assertEquals("COLD", coldInc.get("mode"));
+        assertTrue(((Number) coldInc.get("rebuiltGraphContexts")).intValue() >= 2);
+
+        // Edit only mod-b -> mod-a must reuse its graph template and Java module cache!
+        Files.writeString(srcB.resolve("BetaService.java"), """
+                package b;
+                public class BetaService {
+                    public String hello() { return "b2"; }
+                    public int count() { return 42; }
+                }
+                """);
+        var inc = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off",
+                "--fast", "--telemetry", "--json");
+        assertTrue(inc.code() == 0 || inc.code() == 3, inc::err);
+        var incSum = readJsonFile(summaryFile);
+        assertEquals("INCREMENTAL", incSum.get("mode"));
+        assertEquals(1L, ((Number) incSum.get("modifiedFiles")).longValue());
+        assertNotNull(incSum.get("baseGraphId"));
+        assertTrue(((Number) incSum.get("reusedModules")).intValue() >= 1, () -> "summary=" + incSum);
+        assertTrue(((Number) incSum.get("recomputedModules")).intValue() >= 1, () -> "summary=" + incSum);
+        assertTrue(((Number) incSum.get("reusedGraphContexts")).intValue() >= 1, () -> "summary=" + incSum);
+        assertTrue(((Number) incSum.get("rebuiltGraphContexts")).intValue() >= 1, () -> "summary=" + incSum);
+        assertTrue(inc.err().contains("reusedGraphContexts="), inc::err);
+
+        // Clean --no-incremental run on edited repo must yield bit-for-bit identical canonical receipt & graph digest
+        var clean = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off",
+                "--fast", "--no-incremental", "--json");
+        assertEquals(clean.code(), inc.code(), clean::err);
+        assertEquals(clean.out(), inc.out());
+    }
+
+    @Test void springSpikeExtractsStarterJarBytecodeAndReportsGoNoGoMetrics(@TempDir Path temp) throws Exception {
+        Path repo = Files.createDirectory(temp.resolve("spike-repo"));
+        Path ws = Files.createDirectory(temp.resolve("spike-ws"));
+        Path cache = Files.createDirectory(temp.resolve("spike-m2"));
+        Files.writeString(repo.resolve("pom.xml"), """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>spike-app</artifactId>
+                  <version>1.0.0</version>
+                  <properties>
+                    <maven.compiler.release>21</maven.compiler.release>
+                    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  </properties>
+                </project>
+                """);
+        Path res = Files.createDirectories(repo.resolve("src/main/resources"));
+        Files.writeString(res.resolve("application.yml"), """
+                app:
+                  cache:
+                    enabled: true
+                spring:
+                  profiles:
+                    active: prod
+                """);
+        Path src = Files.createDirectories(repo.resolve("src/main/java/demo"));
+        Files.writeString(src.resolve("AppConfig.java"), """
+                package demo;
+                import org.springframework.beans.factory.annotation.Autowired;
+                import org.springframework.context.annotation.Bean;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.stereotype.Service;
+
+                @Configuration
+                public class AppConfig {
+                    @Bean
+                    public CacheStore customCache() {
+                        return new CacheStore();
+                    }
+
+                    @Service
+                    public static class BillingService {
+                        @Autowired
+                        private MetricClient metrics;
+                        private final AlertClient alerts = null;
+                    }
+                }
+                """);
+
+        // Synthesize passive starter JAR with AutoConfiguration.imports, @ConditionalOnProperty, @ConditionalOnMissingBean, @Profile
+        Path starterJar = temp.resolve("demo-starter-1.0.0.jar");
+        try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(starterJar))) {
+            zos.putNextEntry(new java.util.zip.ZipEntry(
+                    "META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports"));
+            zos.write("com.acme.starter.DemoCacheAutoConfiguration\n"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            zos.putNextEntry(new java.util.zip.ZipEntry("com/acme/starter/DemoCacheAutoConfiguration.class"));
+            zos.write(buildStarterAutoConfigBytecode());
+            zos.closeEntry();
+        }
+
+        var first = run(ws, "spring-spike", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline",
+                "--extra-jar", starterJar.toString(), "--json");
+        assertEquals(0, first.code(), first::err);
+        var data1 = first.data();
+        assertEquals(1, ((Number) data1.get("scannedJars")).intValue());
+        assertEquals(1, ((Number) data1.get("totalConfigurations")).intValue());
+        assertEquals(3, ((Number) data1.get("totalBeans")).intValue());
+        assertTrue(((Number) data1.get("g1UserStarterInteractions")).intValue() >= 4, () -> "data=" + data1);
+        assertTrue(((Number) data1.get("g2ConditionalFindings")).intValue() >= 2, () -> "data=" + data1);
+        var coi = GraphJson.object(data1.get("g3CoiMetrics"));
+        assertTrue(((Number) coi.get("componentCount")).intValue() >= 1);
+
+        var second = run(ws, "spring-spike", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline",
+                "--extra-jar", starterJar.toString(), "--json");
+        assertEquals(0, second.code(), second::err);
+        assertEquals(data1.get("identity"), second.data().get("identity"));
+    }
+
+    private static byte[] buildStarterAutoConfigBytecode() {
+        var cw = new org.objectweb.asm.ClassWriter(0);
+        cw.visit(org.objectweb.asm.Opcodes.V21, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                "com/acme/starter/DemoCacheAutoConfiguration", null, "java/lang/Object", null);
+        cw.visitAnnotation("Lorg/springframework/boot/autoconfigure/AutoConfiguration;", true).visitEnd();
+
+        var prop = cw.visitAnnotation(
+                "Lorg/springframework/boot/autoconfigure/condition/ConditionalOnProperty;", true);
+        prop.visit("prefix", "app.cache");
+        var names = prop.visitArray("name");
+        names.visit(null, "enabled");
+        names.visitEnd();
+        prop.visit("havingValue", "true");
+        prop.visitEnd();
+
+        // Bean 1: @ConditionalOnMissingBean(demo.CacheStore.class)
+        var m1 = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "cacheStore",
+                "()Ldemo/CacheStore;", null, null);
+        m1.visitAnnotation("Lorg/springframework/context/annotation/Bean;", true).visitEnd();
+        var mb = m1.visitAnnotation(
+                "Lorg/springframework/boot/autoconfigure/condition/ConditionalOnMissingBean;", true);
+        var mba = mb.visitArray("value");
+        mba.visit(null, org.objectweb.asm.Type.getObjectType("demo/CacheStore"));
+        mba.visitEnd();
+        mb.visitEnd();
+        m1.visitCode();
+        m1.visitInsn(org.objectweb.asm.Opcodes.ACONST_NULL);
+        m1.visitInsn(org.objectweb.asm.Opcodes.ARETURN);
+        m1.visitMaxs(1, 1);
+        m1.visitEnd();
+
+        // Bean 2: demo.MetricClient @Profile("prod")
+        var m2 = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "metricClient",
+                "()Ldemo/MetricClient;", null, null);
+        m2.visitAnnotation("Lorg/springframework/context/annotation/Bean;", true).visitEnd();
+        var prof = m2.visitAnnotation("Lorg/springframework/context/annotation/Profile;", true);
+        var pa = prof.visitArray("value");
+        pa.visit(null, "prod");
+        pa.visitEnd();
+        prof.visitEnd();
+        m2.visitCode();
+        m2.visitInsn(org.objectweb.asm.Opcodes.ACONST_NULL);
+        m2.visitInsn(org.objectweb.asm.Opcodes.ARETURN);
+        m2.visitMaxs(1, 1);
+        m2.visitEnd();
+
+        // Bean 3: demo.AlertClient
+        var m3 = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "alertClient",
+                "()Ldemo/AlertClient;", null, null);
+        m3.visitAnnotation("Lorg/springframework/context/annotation/Bean;", true).visitEnd();
+        m3.visitCode();
+        m3.visitInsn(org.objectweb.asm.Opcodes.ACONST_NULL);
+        m3.visitInsn(org.objectweb.asm.Opcodes.ARETURN);
+        m3.visitMaxs(1, 1);
+        m3.visitEnd();
+
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     private static Map<String, Object> readJsonFile(Path file) throws IOException {

@@ -182,7 +182,7 @@ public final class TreeSitterSourceFrontend {
         } catch (Exception ignored) {
         }
     }
-    private static final java.util.regex.Pattern PYTHON_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:requests|httpx|session|client|aiohttp|urllib\\.request)\\.(?:get|post|put|patch|delete|head|options|urlopen|request)");
+    private static final java.util.regex.Pattern PYTHON_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:requests|httpx|session|client|aiohttp|urllib\\.request)\\.(?:get|post|put|patch|delete|head|options|urlopen|request)");
     private static final java.util.regex.Pattern GO_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:[A-Za-z_][A-Za-z0-9_]*(?:http|Http|client|Client|resty)[A-Za-z0-9_]*)\\.(?:Get|Post|Put|Patch|Delete|Head|R\\(\\)\\.Get|R\\(\\)\\.Post)");
     private static final java.util.regex.Pattern CSHARP_HTTP_CLIENT = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*\\.(?:GetAsync|PostAsync|PutAsync|PatchAsync|DeleteAsync|GetStringAsync|GetByteArrayAsync)");
     private static final java.util.regex.Pattern JS_HTTP_CLIENT = java.util.regex.Pattern.compile("(?:axios|http|this\\.http|httpClient|this\\.httpClient|api|apiClient|client|ky|got|ofetch|\\$fetch|superagent)\\.(?:get|post|put|patch|delete|head|options|request)");
@@ -609,7 +609,8 @@ public final class TreeSitterSourceFrontend {
     private static void collectBindingFromDeclaration(String language, TSNode node, byte[] utf8, FileScope scope) {
         TSNode lhs = null, rhs = null;
         String kind = node.getType();
-        if (kind.equals("variable_declarator") || kind.equals("assignment") || kind.equals("assignment_expression")) {
+        if (kind.equals("variable_declarator") || kind.equals("assignment") || kind.equals("assignment_expression")
+                || kind.equals("var_spec") || kind.equals("const_spec") || kind.equals("short_var_declaration")) {
             lhs = field(node, "name");
             if (lhs == null)
                 lhs = field(node, "left");
@@ -620,6 +621,9 @@ public final class TreeSitterSourceFrontend {
         if (lhs == null && node.getNamedChildCount() >= 2) {
             lhs = node.getNamedChild(0);
             rhs = node.getNamedChild(node.getNamedChildCount() - 1);
+        }
+        if (lhs != null && lhs.getType().equals("expression_list") && lhs.getNamedChildCount() == 1) {
+            lhs = lhs.getNamedChild(0);
         }
         int nodeBytes = node.getEndByte() - node.getStartByte();
         String rawNodeText = nodeBytes <= MAX_REGEX_NODE_LENGTH ? text(node, utf8) : "";
@@ -988,7 +992,7 @@ public final class TreeSitterSourceFrontend {
             }
             return new ResolvedString(null, sb.toString());
         }
-        if (kind.equals("parenthesized_expression") && expr.getNamedChildCount() == 1) {
+        if ((kind.equals("parenthesized_expression") || kind.equals("expression_list")) && expr.getNamedChildCount() == 1) {
             return resolveStaticString(expr.getNamedChild(0), utf8, scope, depth + 1);
         }
         return null;

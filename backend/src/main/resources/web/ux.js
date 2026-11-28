@@ -470,6 +470,7 @@
           if (wb?.askAiPrompt) wb.askAiPrompt('Inspect top architectural hotspots, cyclic dependencies, SDP violations, and coverage gaps in this snapshot and suggest safe refactoring steps.');
           else go('architecture-chat');
         }}] : []),
+        { category: 'Action', label: 'Connect AI Agent (MCP Setup)', hint: 'MCP', requiresGraph: false, run: () => wb?.openMcpSetup?.() },
         { category: 'Action', label: 'Connect Repository', hint: 'Repo', requiresGraph: false, run: () => qs('[data-action=connect]')?.click() },
         { category: 'Action', label: 'Toggle Light / Dark Theme', hint: 'Theme', requiresGraph: false, run: () => $('theme-toggle')?.click() },
         { category: 'Action', label: 'Keyboard Shortcuts Reference', hint: '?', requiresGraph: false, run: () => toggleShortcutOverlay(true) }

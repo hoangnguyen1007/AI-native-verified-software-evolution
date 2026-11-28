@@ -482,4 +482,111 @@ class CanonicalGraphPipelineIntegrationTest {
         assertEquals(2,types.stream().map(KnowledgeGraph.Node::context).distinct().count());
         assertTrue(graph.evidence().stream().anyMatch(e->e.family().equals("build.model")));
     }
+
+    @Test void pagedSymbolicSpringResultStaysBoundedSurvivesTightRowBudgetAndAuthenticatesEvolution(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        var helper = new SourceToSpringPlanTest();
+        var fixture = helper.sourceFixture(Map.of(
+                "app/App.java", """
+                        package app;
+                        @org.springframework.context.annotation.ComponentScan("app") class App {}
+                        @org.springframework.stereotype.Component @org.springframework.context.annotation.Profile("dev") class DevClient {
+                          @org.springframework.beans.factory.annotation.Autowired private Store store;
+                        }
+                        @org.springframework.stereotype.Component class ProdClient {
+                          @org.springframework.beans.factory.annotation.Autowired private Store store;
+                        }
+                        """,
+                "app/Store.java", "package app; @org.springframework.stereotype.Component public class Store {}"));
+        var plan = helper.beanPlan(fixture, true, "Store", "DevClient", "ProdClient");
+        var version = new VersionedIdentifier("graph.paged-symbolic-config", "1");
+        var proof = new ConditionEvidence.Derived(List.of(fixture.source().identity()), version, "finite-space");
+        var variable = new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE, "dev");
+        var space = new ConfigurationSpace(fixture.build(),
+                new ConfigurationEnvelope(ConfigurationEnvelope.Layer.REPOSITORY, List.of(), List.of(), fixture.source().identity()),
+                Optional.empty(),
+                List.of(new FiniteDomain(variable, List.of(FiniteDomain.Value.bool(false), FiniteDomain.Value.bool(true)), proof)),
+                List.of(),
+                new ConfigurationSpace.PrecedencePolicy(ExogenousConditionEvaluator.PRECEDENCE, List.of(), proof),
+                new ConfigurationSpace.ProfilePolicy(ExogenousConditionEvaluator.PROFILES, List.of(), Map.of(), List.of(), proof),
+                version,
+                new ConfigurationSpace.FeasibilityPolicy(version, ConfigurationSpace.Limits.conservative(), proof));
+        var baseline = new ConfigurationAssignment(Map.of(variable, FiniteDomain.Value.bool(false)), proof);
+        var limits = TruthRegionEvaluation.Limits.conservative();
+        var artifact = ContentDigest.sha256Utf8("graph-paged-symbolic-evaluator");
+        var symbolicLimits = SymbolicConfiguration.Limits.defaults();
+        var symbolic = plan.evaluateSymbolic(space, baseline, limits, artifact, 8, symbolicLimits, true).truth();
+        assertFalse(symbolic.traces().isEmpty());
+        assertTrue(symbolic.traces().stream().allMatch(SymbolicTruthRegions.Trace::replayed),
+                "Precomputed-exogenous staged evaluation must match independent witness replay bit-for-bit");
+
+        var slice = new CanonicalGraphInput.SpringSlice(fixture.key(), plan, Optional.of(space), Optional.of(baseline),
+                Optional.empty(), Optional.of(symbolic),
+                Optional.of(new CanonicalGraphInput.EvaluationParameters(limits, SatConfigurationReasoner.INSTANCE.policy(),
+                        artifact, 8, Optional.of(symbolicLimits))));
+        var graph = new CanonicalGraphBuilder().build(fixture.source().manifest(), fixture.source().frontend(), List.of(slice));
+
+        var resultEv = graph.evidence().stream().filter(e -> e.family().equals("spring.symbolic-result")).findFirst().orElseThrow();
+        assertTrue(resultEv.canonicalJson().length() < 4096,
+                "Paged spring.symbolic-result must stay compact instead of duplicating traces/regions inline, got " + resultEv.canonicalJson().length());
+        var parsedResult = GraphJson.object(GraphJson.read(resultEv.canonicalJson(), GraphJson.Limits.defaults()));
+        assertEquals("spring.symbolic-result:m8.4-paged-v1", parsedResult.get("schema"));
+        assertEquals(symbolic.identity().value(), parsedResult.get("resultIdentity"));
+        assertEquals(symbolic.inputIdentity().value(), parsedResult.get("inputIdentity"));
+        assertEquals(symbolic.signaturesComplete(), parsedResult.get("signaturesComplete"));
+        assertFalse(parsedResult.containsKey("traces"), "Must not inline full traces inside spring.symbolic-result");
+        assertFalse(parsedResult.containsKey("regions"), "Must not inline full regions inside spring.symbolic-result");
+        assertTrue(graph.evidence().stream().anyMatch(e -> e.family().equals("spring.symbolic-region-digest-page")));
+        assertTrue(graph.evidence().stream().anyMatch(e -> e.family().equals("spring.symbolic-trace-index-page")));
+        assertEquals(symbolic.traces().size(), graph.evidence().stream().filter(e -> e.family().equals("spring.symbolic-trace")).count());
+
+        // Partitioned disk projection must match in-memory canonical digest exactly even at the exact tight rowBytes
+        // of the largest remaining evidence row (exercising leaf-envelope framing too).
+        int maxRowBytes = graph.evidence().stream()
+                .mapToInt(ev -> GraphCanonicalWriter.encodeValue(ev).getBytes(StandardCharsets.UTF_8).length)
+                .max().orElse(4096);
+        int tightBudget = Math.max(4096, maxRowBytes);
+        var pagesDir = dir.resolve("paged-spring-pages");
+        var snapsDir = dir.resolve("paged-spring-snaps");
+        var published = new PartitionedGraphStore(pagesDir, tightBudget, 1).build(graph, snapsDir, () -> false, ws -> {});
+        assertEquals(graph.identity(), published.graph());
+        assertTrue(new PartitionedGraphStore(pagesDir, tightBudget, 1).verifyPublished(graph.identity(), () -> false));
+
+        // ArchitectureQueryService / GraphRegionCatalog must query conditional regions cleanly without INVALID_REGION_EVIDENCE.
+        String springCtx = graph.nodes().stream().filter(n -> n.kind().equals("TRUTH_REGION")).findFirst().orElseThrow().context();
+        var queryReq = new com.evolution.analysis.query.ArchitectureQuery.Request(
+                graph.identity(), springCtx,
+                com.evolution.analysis.query.ArchitectureQuery.Scope.SPRING_COMPONENT,
+                com.evolution.analysis.query.ArchitectureQuery.Projection.BOUNDED_UNION,
+                com.evolution.analysis.query.ArchitectureQuery.Direction.OUTGOING,
+                Set.of("graph.depends-on"),
+                com.evolution.analysis.query.ArchitectureQuery.Population.all(),
+                false, Optional.empty(), com.evolution.analysis.query.ArchitectureQuery.Limits.defaults());
+        var configView = new ArchitectureQueryService(graph).configurations(queryReq,
+                new com.evolution.analysis.query.ArchitectureQuery.Page(50, Optional.empty()));
+        assertFalse(configView.items().isEmpty());
+        var gapReasons = configView.gaps().stream().map(com.evolution.analysis.evidence.CapabilityGapRecord::reasonCode).toList();
+        assertTrue(gapReasons.stream().noneMatch(r -> r.equals("INVALID_REGION_EVIDENCE") || r.equals("REGION_EVALUATION_UNAVAILABLE")),
+                "GraphRegionCatalog must read paged spring.symbolic-result cleanly: " + gapReasons);
+
+        // FileSnapshotComparison on PartitionedGraphStore must match in-memory SnapshotComparison identically.
+        var memCompared = conditional(graph, graph, 5);
+        try (var session = FileSnapshotComparison.compare(new PartitionedGraphStore(pagesDir, tightBudget, 1),
+                dir.resolve("cmp-scratch"), conditionalRequest(graph, graph), 5, () -> false)) {
+            assertEquals(memCompared.summary(), session.result().summary());
+            assertEquals(SnapshotComparison.Status.COMPLETE, session.result().summary().status());
+        }
+
+        // Tampering with declared regionsCount on a paged spring.symbolic-result must fail closed.
+        var tamperedMap = new TreeMap<>(parsedResult);
+        tamperedMap.put("regionsCount", ((Number) parsedResult.get("regionsCount")).longValue() + 1L);
+        var tamperedEv = GraphEvidence.capture("spring.symbolic-result", tamperedMap);
+        var tamperedList = new ArrayList<GraphEvidence>();
+        for (var ev : graph.evidence()) {
+            tamperedList.add(ev.identity().equals(resultEv.identity()) ? tamperedEv : ev);
+        }
+        var tamperedGraph = new KnowledgeGraph(graph.snapshot(), graph.contexts(), graph.nodes(), graph.edges(), tamperedList);
+        var tamperedCmp = conditional(graph, tamperedGraph, 5);
+        assertNotEquals(SnapshotComparison.Status.COMPLETE, tamperedCmp.summary().status(),
+                "Tampered paged spring.symbolic-result count mismatch must fail closed");
+    }
 }

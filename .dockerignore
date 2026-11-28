@@ -1,0 +1,6 @@
+*
+!/backend
+/backend/*
+!/backend/target
+/backend/target/*
+!/backend/target/evo-workbench.jar

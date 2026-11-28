@@ -1,0 +1,4105 @@
+{
+  "schema_version": "1.1",
+  "generated_date": "2026-11-28",
+  "total_papers": 19,
+  "pillars": {
+    "P1_Microservice_RPC_SAR": "Microservice Architecture Recovery, Cross-Service Pointer Analysis, RPC Cascading Failures & Service Dependency Discovery",
+    "P2_Spring_DI_SAT_Metadata": "Java Enterprise / Spring DI & AOP Static Analysis, Metadata Consistency DSL, Pseudo-Boolean d-DNNF Feature Reasoning & Static-Guided Type Inference",
+    "P3_SKG_GraphRAG_TacitKnowledge": "Software Knowledge Graphs, Code Graph Databases, Deterministic AST Graph-RAG, Tacit Knowledge & Checklist Repo Comprehension",
+    "P4_Verified_Refactoring_Repair": "Multi-Agent Verified Software Refactoring, Repository-Level Refactoring Benchmarks & Dual-Slicing Automated Program Repair"
+  },
+  "papers": [
+    {
+      "id": "schneider2025microsar",
+      "short_name": "Schneider-MicroSAR",
+      "canonical_file": "2025_EMSE_Schneider-MicroSAR_2412.08352.pdf",
+      "original_file": "2412.08352v1.pdf",
+      "pillar": "P1_Microservice_RPC_SAR",
+      "title": "Comparison of Static Analysis Architecture Recovery Tools for Microservice Applications",
+      "authors": [
+        "Simon Schneider",
+        "Alexander Bakhtin",
+        "Xiaozhou Li",
+        "Jacopo Soldani",
+        "Antonio Brogi",
+        "Tomas Cerny",
+        "Riccardo Scandariato",
+        "Davide Taibi"
+      ],
+      "venue": "Empirical Software Engineering (EMSE)",
+      "year": 2025,
+      "doi": "10.1007/s10664-025-10686-2",
+      "arxiv_id": "2412.08352v1",
+      "pages": 40,
+      "size_bytes": 628488,
+      "sha256": "13ff9cb0b635518d15028c4bfe26720ffa673b69d943aff870fabc66a4f5b4bb",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2025_EMSE_Schneider-MicroSAR_2412.08352.txt",
+      "text_chars": 129068,
+      "pdf_metadata_note": "PDF copy is arXiv:2412.08352v1 preprint (11 Dec 2024, Springer manuscript template); accepted and published in EMSE 2025 (DOI 10.1007/s10664-025-10686-2).",
+      "section_map": [
+        {
+          "heading": "1 Introduction",
+          "page": 2
+        },
+        {
+          "heading": "2 Methodology",
+          "page": 5
+        },
+        {
+          "heading": "2.1 Identification of Tools",
+          "page": 6
+        },
+        {
+          "heading": "2.2 Tool Characterization",
+          "page": 7
+        },
+        {
+          "heading": "2.3 Extension of Dataset",
+          "page": 8
+        },
+        {
+          "heading": "2.4 Execution of Identified Tools",
+          "page": 9
+        },
+        {
+          "heading": "2.6 Evaluating Combinations of Tools",
+          "page": 10
+        },
+        {
+          "heading": "3 Tools Identified via a Multivocal Literature Review",
+          "page": 11
+        },
+        {
+          "heading": "3.1 Review of Informally Published (Gray Literature) Sources",
+          "page": 11
+        },
+        {
+          "heading": "3.2 Review of Formally Published (Academic) Literature",
+          "page": 12
+        },
+        {
+          "heading": "3.3 Identified Tools",
+          "page": 13
+        },
+        {
+          "heading": "3.4 Extracted Characteristics",
+          "page": 19
+        },
+        {
+          "heading": "4 Comparison of Tools",
+          "page": 20
+        },
+        {
+          "heading": "4.1 Individual Tools",
+          "page": 21
+        },
+        {
+          "heading": "4.2 Combinations of Tools",
+          "page": 24
+        },
+        {
+          "heading": "5 Discussion",
+          "page": 28
+        },
+        {
+          "heading": "5.2 Lessons Learned",
+          "page": 29
+        },
+        {
+          "heading": "6 Limitations",
+          "page": 31
+        },
+        {
+          "heading": "6.1 Deviations from Registered Reports",
+          "page": 31
+        },
+        {
+          "heading": "6.2 Anticipated Risks",
+          "page": 31
+        },
+        {
+          "heading": "6.3 Threats to Validity",
+          "page": 32
+        },
+        {
+          "heading": "7 Related Work",
+          "page": 34
+        },
+        {
+          "heading": "8 Conclusion",
+          "page": 36
+        },
+        {
+          "heading": "Data Availability",
+          "page": 37
+        },
+        {
+          "heading": "References",
+          "page": 37
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 8,
+          "caption": "Microservice applications in the used dataset, their numbers of compo-"
+        },
+        "Table 2": {
+          "page": 11,
+          "caption": "Definitions of true positives (TP), false negatives (FN), and false positives"
+        },
+        "Table 3": {
+          "page": 13,
+          "caption": "Identified static analysis architecture recovery tools."
+        },
+        "Table 4": {
+          "page": 20,
+          "caption": "Tool characterization matrix."
+        },
+        "Table 5": {
+          "page": 22,
+          "caption": "Tools’ extraction results for the characteristic (a)components, (b) connec-"
+        },
+        "Table 6": {
+          "page": 24,
+          "caption": "Tools’ execution times for analyzing the indicated number of applications"
+        },
+        "Table 7": {
+          "page": 25,
+          "caption": "Combinations of tools that were evaluated for each characteristic."
+        },
+        "Table 8": {
+          "page": 26,
+          "caption": "Tool combinations’ extraction results for the characteristic (a)components,"
+        },
+        "Table 9": {
+          "page": 27,
+          "caption": "Optimal tool combinations for each evaluated metric."
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 5,
+          "caption": "The methodology adopted in this study."
+        },
+        "Figure 2": {
+          "page": 11,
+          "caption": "(right side) visualizes the process of the conducted gray literature review."
+        }
+      },
+      "citation_ieee": "S. Schneider, A. Bakhtin, X. Li, J. Soldani, A. Brogi, T. Cerny, R. Scandariato, and D. Taibi, \"Comparison of Static Analysis Architecture Recovery Tools for Microservice Applications,\" Empirical Software Engineering, 2025, doi: 10.1007/s10664-025-10686-2. (Preprint: arXiv:2412.08352v1)",
+      "version_type": "preprint_of_accepted",
+      "key_benchmark_metrics": {
+        "corpus": "17 Java/Spring apps in microSecEnD (raw GT: 182 COMP, 385 CONN, 160 ENDP)",
+        "top_single_tool": "Code2DFD: F1=0.86 overall (Table 5 p.22; CONN 320 TP / 27 FP / 65 FN in v1 vs 320/18/65 F1=0.8852 in published replication), ~7.3 s/app (Table 6 p.24)",
+        "top_ensemble": "4-tool AND/OR ensemble (Code2DFD + MicroDepGraph + RAD + RAD-source): F1=0.91 (Table 8-9 p.26-27)"
+      },
+      "visual_audit_notes": "arXiv v1 Table 5 (C2D CONN 320/27/65, AGG CONN 279/432/45) differs slightly from published EMSE2025SAR replication package (C2D 320/18/65 F1=0.8852; AGG 279/420/45 F1=0.5455). Exposes Evo benchmark parser issues (norm_collapsed collapsing 182->179 COMP / 385->383 CONN and parse_emse_baselines dropping FP:/TP(k) blocks).",
+      "evo_transfer_tags": [
+        "microSecEnD-protocol",
+        "multi-layer-confidence-tiers",
+        "service-dedup",
+        "blind-holdout-eval"
+      ],
+      "evo_target_classes": [
+        "DeclarativeTopologyProjection.java",
+        "ReadinessPlanner.java",
+        "benchmarks/e0-publication-suite/run_online_microsecend_benchmark.py"
+      ],
+      "deep_takeaway": "Conducts a multivocal literature review identifying 13 static microservice architecture recovery tools and benchmarks 9 executable tools plus AND/OR ensembles across 17 Java/Spring apps in microSecEnD (182 components, 385 connections, 160 endpoints). Code2DFD leads single tools (F1=0.86, 7.3 s/app) while a 4-tool ensemble reaches F1=0.91, demonstrating that fusing deployment-manifest precision with source-code recall is essential. For Evo, this anchors the canonical microSecEnD evaluation protocol (requiring fixed FP: parsing, raw-vs-collapsed denominator disclosure, and blind unseen holdouts against dfd-export overfitting)."
+    },
+    {
+      "id": "micans2025",
+      "short_name": "Micans",
+      "canonical_file": "2025_ISSTA_Micans_3728896.pdf",
+      "original_file": "3728896.pdf",
+      "pillar": "P1_Microservice_RPC_SAR",
+      "title": "Bridge the Islands: Pointer Analysis for Microservice Systems",
+      "authors": [
+        "Teng Zhang",
+        "Yufei Liang",
+        "Ganlin Li",
+        "Tian Tan",
+        "Chang Xu",
+        "Yue Li"
+      ],
+      "venue": "Proc. ACM Softw. Eng. (ISSTA 2025)",
+      "year": 2025,
+      "doi": "10.1145/3728896",
+      "arxiv_id": null,
+      "pages": 23,
+      "size_bytes": 1433705,
+      "sha256": "0099c64f5e508b56027422b1d1339a7a1e6010de1a8c3a2954664b6a7773aede",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2025_ISSTA_Micans_3728896.txt",
+      "text_chars": 92410,
+      "pdf_metadata_note": "ISSTA 2025 camera-ready PDF (PACMSE Vol. 2, Art. ISSTA023, Jul 2025).",
+      "section_map": [
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Motivating Example",
+          "page": 3
+        },
+        {
+          "heading": "3 Methodology",
+          "page": 7
+        },
+        {
+          "heading": "3.1 Programming Paradigm Analyzer",
+          "page": 7
+        },
+        {
+          "heading": "3.2 Service Communication Analyzer",
+          "page": 8
+        },
+        {
+          "heading": "4 Formalism",
+          "page": 9
+        },
+        {
+          "heading": "4.1 Programming Paradigm Analyzer",
+          "page": 10
+        },
+        {
+          "heading": "4.2 Service Communication Analyzer",
+          "page": 10
+        },
+        {
+          "heading": "5 Evaluation",
+          "page": 12
+        },
+        {
+          "heading": "5.1 Experimental Setup",
+          "page": 12
+        },
+        {
+          "heading": "5.2 RQ1 — Effectiveness of Micans in Resolving Service Communications",
+          "page": 13
+        },
+        {
+          "heading": "5.3 RQ2 — Effectiveness of Micans in Constructing Call Graphs",
+          "page": 15
+        },
+        {
+          "heading": "5.4 RQ3 — Support of Micans for Analysis Client: A Case Study on Taint Analysis",
+          "page": 18
+        },
+        {
+          "heading": "5.5 Threat to Validity",
+          "page": 19
+        },
+        {
+          "heading": "6 Related Work",
+          "page": 19
+        },
+        {
+          "heading": "7 Conclusion",
+          "page": 20
+        },
+        {
+          "heading": "Acknowledgments",
+          "page": 20
+        },
+        {
+          "heading": "References",
+          "page": 21
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 13,
+          "caption": "Real-world microservice benchmarks. #App LoC: lines of application code. #Lib Classes (excl. JDK):"
+        },
+        "Table 2": {
+          "page": 14,
+          "caption": "Micans’ resolution result of service communications (RPC and MBC). #GT represents the ground"
+        },
+        "Table 3": {
+          "page": 16,
+          "caption": "Call graph construction results and analysis time. “Recall”, “Total” and “R/T” mean the real results"
+        },
+        "Table 4": {
+          "page": 17,
+          "caption": "Taint analysis results of different tools. #VerifiedFlow represents the ground truth taint flows. The"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 3,
+          "caption": "Pointer Analysis Perspective for Microservice Systems"
+        },
+        "Figure 2": {
+          "page": 5,
+          "caption": "A code example (left) illustrating RPC, MBC, DI, and WEC, with a runtime behavior description (right),"
+        },
+        "Figure 3": {
+          "page": 7,
+          "caption": "The overview of Micans."
+        },
+        "Figure 4": {
+          "page": 10,
+          "caption": "Domains and notations used in formalism."
+        },
+        "Figure 5": {
+          "page": 10,
+          "caption": "Rules for DI analysis (DI object creation and injection)."
+        },
+        "Figure 6": {
+          "page": 11,
+          "caption": "Rules for RPC analysis."
+        },
+        "Figure 7": {
+          "page": 12,
+          "caption": "Rules for MBC analysis."
+        },
+        "Figure 8": {
+          "page": 18,
+          "caption": "Recall rates for taint analysis achieved by different tools across 10 real-world benchmarks."
+        }
+      },
+      "citation_ieee": "T. Zhang, Y. Liang, G. Li, T. Tan, C. Xu, and Y. Li, \"Bridge the Islands: Pointer Analysis for Microservice Systems,\" Proc. ACM Softw. Eng., vol. 2, no. ISSTA, Art. ISSTA023, Jul. 2025, doi: 10.1145/3728896.",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "corpus": "10 real-world containerized Java/Spring Cloud microservice benchmarks",
+        "rpc_resolution": "94.9% recall, 99.8% precision (Table 2 p.14)",
+        "mbc_resolution": "70.8% recall & precision with selective 4-obj sensitivity; fixes 5,457 CI FPs on basemall to 0 FPs / 100% P&R (Table 2 p.14)",
+        "call_graph_and_taint": "85.53% App-App CG recall vs 53.85% JackEE / 56.02% Jasmine (Table 3 p.16); 335/335 taint recall, 64% precision (Table 4 p.17)"
+      },
+      "visual_audit_notes": "ISSTA 2025 camera-ready PDF (PACMSE Vol. 2, Art. ISSTA023). Confirmed selective 4-object sensitivity is essential for RabbitMQ/RocketMQ string-key precision (CI collapses to 0.4% precision on basemall with 5,457 FPs).",
+      "evo_transfer_tags": [
+        "amqp-binding-routing",
+        "wildcard-topic-match",
+        "callsite-string-folding",
+        "blind-10-repo-holdout"
+      ],
+      "evo_target_classes": [
+        "EventFlowProjection.java",
+        "JavaServiceSyntaxExtractor.java",
+        "HttpClientConstants.java",
+        "ConeOfInfluenceSlicer.java"
+      ],
+      "deep_takeaway": "Introduces the first whole-system Java pointer analysis for microservices on Tai-e, coupling on-the-fly DI/WEC modeling (@Bean parameter injection, stubs) with RPC (OpenFeign, Dubbo) and MBC (RabbitMQ, RocketMQ) resolution across 10 real-world containerized benchmarks. Achieves 94.9% RPC recall (99.8% precision), 70.8% MBC recall/precision under selective 4-object sensitivity (eliminating 5,457 CI false positives on basemall), 85.53% App-App call-graph recall, and 335/335 taint recall (64% precision). Transfers passive AMQP Binding/wildcard routing rules, bounded callsite-sensitive string folding, and a strictly blind 10-repo Spring Cloud holdout suite to Evo."
+    },
+    {
+      "id": "rpcshield2026",
+      "short_name": "RPCShield",
+      "canonical_file": "2026_SOSP_RPCShield_3830418.3843878.pdf",
+      "original_file": "3830418.3843878.pdf",
+      "pillar": "P1_Microservice_RPC_SAR",
+      "title": "RPCShield: Defending Microservices Against Cascading Failures",
+      "authors": [
+        "Milind Chabbi",
+        "Sonal Mahajan",
+        "Ivan Beschastnikh",
+        "René Just",
+        "Yuxin Wang",
+        "Yufan Xu",
+        "Elton Pinto",
+        "Seemanta Saha",
+        "Manu Sridharan",
+        "Abhishek Jha",
+        "Sandeep Koushik Sheshadri",
+        "Mayank Bansal"
+      ],
+      "venue": "SOSP 2026",
+      "year": 2026,
+      "doi": "10.1145/3830418.3843878",
+      "arxiv_id": null,
+      "pages": 25,
+      "size_bytes": 1157721,
+      "sha256": "b036d1adc7df4a9350008cd5c3667b66eb9ee908f0aeab0be1f9ac2875431903",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_SOSP_RPCShield_3830418.3843878.txt",
+      "text_chars": 122186,
+      "pdf_metadata_note": "SOSP '26 camera-ready PDF (Prague, Czech Republic, © 2026). pypdf CFF Type1 extraction quirk (fontTools absent): small-caps 'RPCShield' extracts as 'RPCS!\"#$%' or 'RPC&'; ligatures fi/tt/fl/ffi extract as !, \", $.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Background and Motivation",
+          "page": 2
+        },
+        {
+          "heading": "2.1 Platform Architecture",
+          "page": 2
+        },
+        {
+          "heading": "2.2 Why Fail-Close Dependencies Matter",
+          "page": 3
+        },
+        {
+          "heading": "2.3 Why Existing Approaches Are Insu!cient",
+          "page": 3
+        },
+        {
+          "heading": "3 Formal Semantics of Fail-Close Behavior",
+          "page": 3
+        },
+        {
+          "heading": "3.1 Programs, Traces, and Responses",
+          "page": 4
+        },
+        {
+          "heading": "3.2 Counterfactual Causation",
+          "page": 4
+        },
+        {
+          "heading": "3.3 Fail-Close as a Behavioral Property",
+          "page": 4
+        },
+        {
+          "heading": "4 RPCShield Design",
+          "page": 5
+        },
+        {
+          "heading": "4.1 Instantiating the Model as Static Analysis",
+          "page": 5
+        },
+        {
+          "heading": "4.2 Design Overview",
+          "page": 6
+        },
+        {
+          "heading": "4.3 Phase 1: Endpoint Detection",
+          "page": 6
+        },
+        {
+          "heading": "4.4 Phase 2: Call Graph Construction, Path Collection",
+          "page": 7
+        },
+        {
+          "heading": "4.5 Phase 3: Error Flow Analysis",
+          "page": 7
+        },
+        {
+          "heading": "4.6 Phase 4: Outbound Resolution and Reporting",
+          "page": 8
+        },
+        {
+          "heading": "5 Implementation and Deployment",
+          "page": 8
+        },
+        {
+          "heading": "5.1 Go Implementation",
+          "page": 8
+        },
+        {
+          "heading": "5.2 Java Implementation",
+          "page": 9
+        },
+        {
+          "heading": "5.3 Deployment",
+          "page": 9
+        },
+        {
+          "heading": "6 Evaluation",
+          "page": 9
+        },
+        {
+          "heading": "6.1 Methodology and Experimental Setup",
+          "page": 10
+        },
+        {
+          "heading": "6.2 Intrinsic Evaluation: Analysis Efficacy",
+          "page": 10
+        },
+        {
+          "heading": "6.3 Extrinsic Evaluation: Failover Safety",
+          "page": 11
+        },
+        {
+          "heading": "6.4 Usability and Adoption",
+          "page": 12
+        },
+        {
+          "heading": "7 Discussion and Lessons",
+          "page": 13
+        },
+        {
+          "heading": "8 Related Work",
+          "page": 14
+        },
+        {
+          "heading": "9 Conclusions",
+          "page": 14
+        },
+        {
+          "heading": "Acknowledgements",
+          "page": 14
+        },
+        {
+          "heading": "References",
+          "page": 15
+        },
+        {
+          "heading": "A Worked Fail-Close Judgments",
+          "page": 17
+        },
+        {
+          "heading": "A.1 Canonical Patterns",
+          "page": 17
+        },
+        {
+          "heading": "A.2 Realizing the Model in Static Analysis",
+          "page": 17
+        },
+        {
+          "heading": "B Production Go Fail-Close Patterns",
+          "page": 18
+        },
+        {
+          "heading": "B.1 Error Transformation Across Calls",
+          "page": 18
+        },
+        {
+          "heading": "B.2 Deferred Propagation Through Loops",
+          "page": 19
+        },
+        {
+          "heading": "B.3 Compound and Control-Dependent Attribution",
+          "page": 20
+        },
+        {
+          "heading": "B.3.1 Conjunctive Guard with Disjunctive Aggre-",
+          "page": 20
+        },
+        {
+          "heading": "B.4 Takeaways",
+          "page": 20
+        },
+        {
+          "heading": "C Production Java Fail-Close Patterns",
+          "page": 20
+        },
+        {
+          "heading": "C.1 Exception Propagation Across a Call Path",
+          "page": 21
+        },
+        {
+          "heading": "C.2 Exception Type Transformation",
+          "page": 21
+        },
+        {
+          "heading": "C.3 Takeaways",
+          "page": 21
+        },
+        {
+          "heading": "D Go",
+          "page": 21
+        },
+        {
+          "heading": "D.1 Return-Value Wait Points",
+          "page": 22
+        },
+        {
+          "heading": "D.2 Transfer-Edge Wait Points",
+          "page": 23
+        },
+        {
+          "heading": "D.3 Takeaways",
+          "page": 23
+        },
+        {
+          "heading": "E Additional Evaluation Results",
+          "page": 24
+        },
+        {
+          "heading": "F Commit-Time Detection Over Time",
+          "page": 24
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 2,
+          "caption": "Service tiers and scale. Endpoint counts are unique"
+        },
+        "Table 2": {
+          "page": 10,
+          "caption": "Corpus statistics for 2,393 Go and 1,551 Java services."
+        },
+        "Table 3": {
+          "page": 10,
+          "caption": "Inbound / outbound endpoint statistics (by call site)."
+        },
+        "Table 4": {
+          "page": 12,
+          "caption": "Cross-tier fail-close violations detected by RPC&"
+        },
+        "Table 5": {
+          "page": 12,
+          "caption": "Remediation of reported fail-close violations."
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 7,
+          "caption": "The RPCShield analysis pipeline."
+        },
+        "Figure 2": {
+          "page": 11,
+          "caption": "CDF of call path lengths – inbound (IB) to outbound (OB) – and distance at which fail-open is handled from OB for"
+        },
+        "Figure 3": {
+          "page": 11,
+          "caption": "Per-phase execution time vs. service size for the corpus of Go and Java services. Lines show rolling means; shaded"
+        },
+        "Figure 4": {
+          "page": 12,
+          "caption": "Monthly breakdown of fail-close issues detected by"
+        },
+        "Figure 5": {
+          "page": 22,
+          "caption": "cff.Flow enrichment. Before enrichment, error"
+        },
+        "Figure 7": {
+          "page": 23,
+          "caption": "errgroup enrichment. Before enrichment, Go"
+        },
+        "Figure 6": {
+          "page": 23,
+          "caption": "cff.Parallel enrichment. Before enrichment,"
+        },
+        "Figure 8": {
+          "page": 24,
+          "caption": "Channel enrichment for a raw go spawn. The"
+        },
+        "Figure 9": {
+          "page": 24,
+          "caption": "Go intra-procedural classi!cation funnel. From"
+        },
+        "Figure 10": {
+          "page": 25,
+          "caption": "Weekly fail-close issues reported by commit-time"
+        }
+      },
+      "citation_ieee": "M. Chabbi et al., \"RPCShield: Defending Microservices Against Cascading Failures,\" in Proc. ACM SIGOPS Symp. Operating Systems Principles (SOSP '26), Prague, Czech Republic, 2026, doi: 10.1145/3830418.3843878.",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "deployment_scale": "6,000+ Uber microservices (3,944 evaluated: 2,393 Go + 1,551 Java; Table 2 p.10)",
+        "impact": "3,842 cross-tier fail-close violations detected, 1,359 remediated, <5% FPR, 0 cross-tier fail-close outages in 2025, ~1M CPU cores reclaimed (Table 4-5 p.12)",
+        "analysis_efficacy": "88% infeasible paths pruned via SCCP; Go P50 155s / P95 944s, Java P50 63s / P95 162s (Fig. 2-3 p.11); 9.0% of unique Go (IB,OB) pairs carry both FC & FO paths"
+      },
+      "visual_audit_notes": "SOSP '26 camera-ready PDF. pypdf without fontTools corrupts CFF Type1 small-caps ('RPCShield' -> 'RPCS!\"#$%'/'RPC&'), ligatures (fi/tt/fl/ffi -> !/\"/$), and math symbols; visual PDF screenshot audit verified exact Def D1 causes(i,tau), Def D2 last-failure rule, Interv(O,i), Fig 2-3 stats, and Appendix E funnel (13,811 callsites -> 12,465 FC).",
+      "evo_transfer_tags": [
+        "fail-close-analysis",
+        "counterfactual-error-flow",
+        "xor-path-dedup",
+        "tier-resilience-policy"
+      ],
+      "evo_target_classes": [
+        "JavaMethodSlicer.java",
+        "VerticalTraceEngine.java",
+        "PolicyEvaluator.java",
+        "TreeSitterSourceFrontend.java"
+      ],
+      "deep_takeaway": "Formalizes cascading-failure fail-close dependencies via counterfactual ('but-for') causation as a purely local intra-service property, operationalized through extended RTA, async wait-point enrichment, SCCP infeasible-path pruning (88% pruned), and cached per-function error/exception summaries for Go and Java. Deployed across 6K+ Uber microservices (3,944 evaluated), it detected 3,842 cross-tier violations (1,359 remediated, <5% FPR), coincided with zero cross-tier fail-close outages in 2025, and helped reclaim ~1M CPU cores. Inspires a passive per-(method, callsite) fail-close/fail-open resilience analyzer, XOR path-permutation deduplication, and tier-resilience policy rules inside Evo's SKG and PolicyEvaluator."
+    },
+    {
+      "id": "semref2026",
+      "short_name": "SemRef",
+      "canonical_file": "2026_ICSE_SemRef_2607.23774.pdf",
+      "original_file": "2607.23774v1.pdf",
+      "pillar": "P1_Microservice_RPC_SAR",
+      "title": "Semantic-Enhanced Automatic Refinement of Architecture Recovery Results Using LLMs",
+      "authors": [
+        "Yiran Zhang",
+        "Chengwei Liu",
+        "Yuqiang Sun",
+        "Zhengzi Xu",
+        "Weisong Sun",
+        "Wenke Li",
+        "Wuxia Jin",
+        "Yang Liu"
+      ],
+      "venue": "ICSE 2026",
+      "year": 2026,
+      "doi": "10.1145/3744916.3773114",
+      "arxiv_id": "2607.23774v1",
+      "pages": 13,
+      "size_bytes": 1064860,
+      "sha256": "d66e85d793288679687668637a9dc2b04ff4366056f5129ff612794946eebbb7",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_ICSE_SemRef_2607.23774.txt",
+      "text_chars": 90687,
+      "pdf_metadata_note": "ICSE '26 author copy with arXiv:2607.23774v1 stamp (26 Jul 2026) and ACM DOI 10.1145/3744916.3773114.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Related Work",
+          "page": 2
+        },
+        {
+          "heading": "3 Methodology",
+          "page": 3
+        },
+        {
+          "heading": "3.1 Preprocessing of Input Modules",
+          "page": 3
+        },
+        {
+          "heading": "3.2 File-level Refinement",
+          "page": 3
+        },
+        {
+          "heading": "3.3 Hierarchy Construction",
+          "page": 4
+        },
+        {
+          "heading": "3.4 Hierarchy Refinement",
+          "page": 5
+        },
+        {
+          "heading": "4 Evaluation",
+          "page": 6
+        },
+        {
+          "heading": "4.1 Experimental Setup",
+          "page": 6
+        },
+        {
+          "heading": "4.2 RQ1: Effectiveness Analysis",
+          "page": 7
+        },
+        {
+          "heading": "4.3 RQ2: Ablation Study",
+          "page": 9
+        },
+        {
+          "heading": "4.4 RQ3: Cost Analysis",
+          "page": 10
+        },
+        {
+          "heading": "4.5 RQ4: Model Comparison",
+          "page": 10
+        },
+        {
+          "heading": "5 Discussion",
+          "page": 11
+        },
+        {
+          "heading": "5.1 Implications",
+          "page": 11
+        },
+        {
+          "heading": "5.2 Threats to Validity",
+          "page": 11
+        },
+        {
+          "heading": "6 Conclusion",
+          "page": 11
+        },
+        {
+          "heading": "Acknowledgments",
+          "page": 11
+        },
+        {
+          "heading": "References",
+          "page": 12
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 6,
+          "caption": "Information of projects in evaluation"
+        },
+        "Table 2": {
+          "page": 7,
+          "caption": "The metric scores for input architecture and architecture refined by SemRef. All metric values are timed for 100."
+        },
+        "Table 3": {
+          "page": 8,
+          "caption": "Averaged Metric Improvements"
+        },
+        "Table 4": {
+          "page": 8,
+          "caption": "P-values of ANOV A test"
+        },
+        "Table 5": {
+          "page": 9,
+          "caption": "Metrics based on top and lowest level modules (D:"
+        },
+        "Table 6": {
+          "page": 9,
+          "caption": "Accuracy of SARIF+SemRef against best baseline"
+        },
+        "Table 7": {
+          "page": 11,
+          "caption": "Averaged RDP across Different LLMs on SARIF input"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 4,
+          "caption": "Overview of SemRef"
+        },
+        "Figure 2": {
+          "page": 8,
+          "caption": "𝑅𝐷𝑃averaged over tools"
+        },
+        "Figure 3": {
+          "page": 8,
+          "caption": "𝑅𝐷𝑃averaged over projects"
+        },
+        "Figure 4": {
+          "page": 10,
+          "caption": "Case study on Bash"
+        },
+        "Figure 5": {
+          "page": 10,
+          "caption": "Acc. improvement of each stage measured by𝑅𝐷𝑃"
+        },
+        "Figure 6": {
+          "page": 10,
+          "caption": "Statistic of token usage"
+        }
+      },
+      "citation_ieee": "Y. Zhang, C. Liu, Y. Sun, Z. Xu, W. Sun, W. Li, W. Jin, and Y. Liu, \"Semantic-Enhanced Automatic Refinement of Architecture Recovery Results Using LLMs,\" in Proc. 48th IEEE/ACM Int. Conf. Software Engineering (ICSE '26), Rio de Janeiro, Brazil, Apr. 2026, doi: 10.1145/3744916.3773114.",
+      "version_type": "author_copy",
+      "key_benchmark_metrics": {
+        "corpus": "90 SAR runs (10 SAR tools x 9 projects up to 11.7M-LOC Chromium; Table 1 p.6)",
+        "accuracy_gain": "Improves all 90 runs: 43.35% avg MoJoFM RDP (0.3935 -> 0.6684; Table 2-3 p.7-8); SARIF+SemRef averages 77.6 MoJoFM vs SSAR 63 (Table 6 p.9)",
+        "cost_and_models": "Chromium refined for $2.72 on GPT-4o-mini (Sec 4.4 p.10); DeepSeek-V3 leads LLM comparison at 44.2% avg RDP (Table 7 p.11)"
+      },
+      "visual_audit_notes": "ICSE '26 author copy with arXiv:2607.23774v1 stamp and confirmed ACM DOI 10.1145/3744916.3773114. Visual check confirmed Eq. 1 inverse-in-degree utility damping (1/deg-(f)) and Table 2-7 values.",
+      "evo_transfer_tags": [
+        "utility-damping",
+        "rdp-normalized-metric",
+        "quarantined-hierarchical-refinement"
+      ],
+      "evo_target_classes": [
+        "LeidenCommunityDetector.java",
+        "GraphProjectionService.java",
+        "AdvisoryOverlayService.java",
+        "LlmTransport.java"
+      ],
+      "deep_takeaway": "Proposes a tool-agnostic 4-stage LLM + dependency refinement workflow that splits/merges flat SAR clusters, flags misplaced files via inverse-in-degree utility-damped dependency strength (Eq. 1), constructs an exclusive leaf/branch hierarchy, and refines top-down with self-consistency checks. Across 90 recovery runs spanning 10 SAR tools and 9 projects up to 11.7M-LOC Chromium, SemRef improves every single run (43.35% avg MoJoFM RDP, 0.3935 -> 0.6684; $2.72 on Chromium with GPT-4o-mini; DeepSeek-V3 leads at 44.2% RDP). Transfers deterministic inverse-in-degree utility damping directly into Evo's LeidenCommunityDetector, RDP normalized-gain metrics into benchmarks, and quarantined hierarchical summarization into AdvisoryOverlayService."
+    },
+    {
+      "id": "ssar2026",
+      "short_name": "SSAR",
+      "canonical_file": "2026_ICSE_SSAR_3744916.3773263.pdf",
+      "original_file": "3744916.3773263.pdf",
+      "pillar": "P1_Microservice_RPC_SAR",
+      "title": "SSAR: A Novel Software Architecture Recovery Approach Enhancing Accuracy and Scalability",
+      "authors": [
+        "Wei Ding",
+        "Ran Mo",
+        "Chaochao Wu",
+        "Haopeng Song"
+      ],
+      "venue": "ICSE 2026",
+      "year": 2026,
+      "doi": "10.1145/3744916.3773263",
+      "arxiv_id": null,
+      "pages": 13,
+      "size_bytes": 1284550,
+      "sha256": "461269b7c4bd6b80d094ec443a559d5d31f78fc1b90cfdd0232a0992c4386aba",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_ICSE_SSAR_3744916.3773263.txt",
+      "text_chars": 82788,
+      "pdf_metadata_note": "ICSE '26 camera-ready PDF (Rio de Janeiro, Brazil, Apr 2026, pp. 1713-1725).",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 INTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "2 RELATED WORK",
+          "page": 2
+        },
+        {
+          "heading": "2.1 Software Architecture Recovery",
+          "page": 2
+        },
+        {
+          "heading": "2.2 Application of Code Pre-Trained Models in",
+          "page": 3
+        },
+        {
+          "heading": "3 METHODOLOGY",
+          "page": 3
+        },
+        {
+          "heading": "3.1 Code Representation",
+          "page": 3
+        },
+        {
+          "heading": "3.2 Weighted Graph Construction",
+          "page": 4
+        },
+        {
+          "heading": "3.3 Clustering",
+          "page": 5
+        },
+        {
+          "heading": "4 STUDY DESIGN",
+          "page": 5
+        },
+        {
+          "heading": "4.1 Data Collection",
+          "page": 5
+        },
+        {
+          "heading": "4.2 Evaluation Metrics",
+          "page": 5
+        },
+        {
+          "heading": "4.3 Research Questions",
+          "page": 6
+        },
+        {
+          "heading": "5 EVALUATION",
+          "page": 6
+        },
+        {
+          "heading": "5.1 Accuracy of Architecture Recovery",
+          "page": 6
+        },
+        {
+          "heading": "5.2 The Scalability of Architecture Recovery",
+          "page": 7
+        },
+        {
+          "heading": "5.3 The contribution of semantic similarity and",
+          "page": 8
+        },
+        {
+          "heading": "6 DISCUSSION",
+          "page": 10
+        },
+        {
+          "heading": "6.1 Results Analysis and Findings",
+          "page": 10
+        },
+        {
+          "heading": "6.2 Future Work",
+          "page": 11
+        },
+        {
+          "heading": "7 THREATS TO VALIDITY",
+          "page": 11
+        },
+        {
+          "heading": "8 CONCLUSION",
+          "page": 11
+        },
+        {
+          "heading": "Acknowledgments",
+          "page": 11
+        },
+        {
+          "heading": "References",
+          "page": 12
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 5,
+          "caption": "Basic facts of our studied projects"
+        },
+        "Table 2": {
+          "page": 8,
+          "caption": "Results of architecture recovery approach (%), (M- 𝑀𝑜𝐽𝑜𝐹𝑀 , A-𝑎2𝑎, C-𝑐2𝑐𝑐𝑣𝑔 ). The first and second ranked values of eac"
+        },
+        "Table 3": {
+          "page": 8,
+          "caption": "The average values of the metrics"
+        },
+        "Table 4": {
+          "page": 8,
+          "caption": "Cliff’s 𝛿 effect size test"
+        },
+        "Table 5": {
+          "page": 9,
+          "caption": "Execution time of architecture recovery techniques (in seconds)"
+        },
+        "Table 6": {
+          "page": 9,
+          "caption": "Execution time of all approaches when processing projects with different scales (in seconds)"
+        },
+        "Table 7": {
+          "page": 10,
+          "caption": "Ablation studies on recovery accuracy"
+        },
+        "Table 8": {
+          "page": 10,
+          "caption": "Ablation studies on execution time (in seconds)"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 3,
+          "caption": "Overview of our architecture recovery approach"
+        },
+        "Figure 2": {
+          "page": 4,
+          "caption": "Flowchart of the SEA method"
+        },
+        "Figure 3": {
+          "page": 8,
+          "caption": "SSAR’s execution time as project size grows"
+        },
+        "Figure 4": {
+          "page": 9,
+          "caption": "Different recovery methods’ execution time as"
+        }
+      },
+      "citation_ieee": "W. Ding, R. Mo, C. Wu, and H. Song, \"SSAR: A Novel Software Architecture Recovery Approach Enhancing Accuracy and Scalability,\" in Proc. 48th IEEE/ACM Int. Conf. Software Engineering (ICSE '26), Rio de Janeiro, Brazil, Apr. 2026, pp. 1713-1725, doi: 10.1145/3744916.3773263.",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "corpus": "9 ground-truth OSS projects + 5M-15M LOC Wireshark/AOSP scalability benchmarks (Table 1 p.5, Table 6 p.9)",
+        "accuracy": "Avg MoJoFM=63, a2a=83, c2c_cvg=18 across 9 projects (Table 2-3 p.8); ablation shows structural edges (-31.1%) outweigh semantic embeddings (-20.9%) (Table 7 p.10)",
+        "scalability": "842.3 s on 15M-LOC AOSP (-81% vs ACDC; Table 6 p.9), with UniXcoder taking 88.2% of runtime (85.3s -> 10.1s w/o semantic; Table 8 p.10)"
+      },
+      "visual_audit_notes": "ICSE '26 camera-ready PDF (pp. 1713-1725). Forensic audit exposed two major methodological caveats: (1) Sec 3.3 p.5 sets Leiden resolution gamma using the ground-truth cluster count (oracle leak), and (2) Sec 5.2 p.7 excludes commercial SciTools Understand dependency extraction time from reported runtimes.",
+      "evo_transfer_tags": [
+        "cyclic-pair-2x-boost",
+        "deterministic-lexical-fusion",
+        "oracle-free-leiden-sweep"
+      ],
+      "evo_target_classes": [
+        "LeidenCommunityDetector.java",
+        "GraphProjectionService.java",
+        "DsmMatrixBuilder.java"
+      ],
+      "deep_takeaway": "Combines sliding-window UniXcoder embeddings (SEA 512/256-token self-attention + mean pooling) with Understand structural dependencies (assigning 2x weight to mutual cyclic pairs, Eq. 6) and partitions the fused graph via Leiden community detection. Achieves strong average accuracy (MoJoFM=63, a2a=83, c2c_cvg=18) and near-linear scaling (842.3 s on 15M-LOC AOSP), though forensic audit uncovered that SSAR leaks ground-truth cluster count into Leiden's gamma, excludes Understand extraction time, and spends 88.2% of runtime in UniXcoder. Transfers cyclic-pair 2x edge boosting, lightweight deterministic BM25/TF-IDF lexical-structural fusion, and oracle-free multi-gamma sweeps into Evo's LeidenCommunityDetector."
+    },
+    {
+      "id": "ripple2025",
+      "short_name": "Ripple",
+      "canonical_file": "2025_arXiv_Ripple_2510.15490.pdf",
+      "original_file": "2510.15490v2.pdf",
+      "pillar": "P1_Microservice_RPC_SAR",
+      "title": "Seeing Through NAT with Ripple: Retrofitting Service Dependency Discovery in Networked Distributed Systems",
+      "authors": [
+        "Diogo Landau",
+        "Gijs Blanken",
+        "Jorge Barbosa",
+        "Nishant Saurabh"
+      ],
+      "venue": "arXiv (cs.DC)",
+      "year": 2025,
+      "doi": null,
+      "arxiv_id": "2510.15490v2",
+      "pages": 17,
+      "size_bytes": 686903,
+      "sha256": "c3ee063d92ccc72ba5667e72f03b7064ae9802daa0c293a34474d2477a4679d1",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2025_arXiv_Ripple_2510.15490.txt",
+      "text_chars": 97106,
+      "pdf_metadata_note": "Original arXiv submission Oct 2025 (2510.15490); v2 revision stamped 24 Oct 2026 on Page 1. Embedded PDF /Title is shorter ('Retrofitting Service Dependency Discovery in Distributed Systems') than Page-1 title.",
+      "section_map": [
+        {
+          "heading": "I. INTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "II. RELATEDWORK",
+          "page": 2
+        },
+        {
+          "heading": "A. Build-time Instrumentation",
+          "page": 2
+        },
+        {
+          "heading": "B. Deploy-time Instrumentation",
+          "page": 2
+        },
+        {
+          "heading": "C. Run-time Instrumentation",
+          "page": 3
+        },
+        {
+          "heading": "III. PROBLEMFORMULATION",
+          "page": 3
+        },
+        {
+          "heading": "A. Networking in NAT-Free Environments",
+          "page": 4
+        },
+        {
+          "heading": "C. Cross-Network Connectivity via NAT",
+          "page": 4
+        },
+        {
+          "heading": "IV. DESIGN",
+          "page": 5
+        },
+        {
+          "heading": "V. IMPLEMENTATION",
+          "page": 6
+        },
+        {
+          "heading": "A. Egress",
+          "page": 6
+        },
+        {
+          "heading": "B. Ingress",
+          "page": 7
+        },
+        {
+          "heading": "C. Metric Collection",
+          "page": 7
+        },
+        {
+          "heading": "VI. EVALUATION",
+          "page": 8
+        },
+        {
+          "heading": "A. Service Map Reconstruction",
+          "page": 9
+        },
+        {
+          "heading": "B. Overhead",
+          "page": 11
+        },
+        {
+          "heading": "C. Scalability",
+          "page": 11
+        },
+        {
+          "heading": "D. Motivating Use Case",
+          "page": 12
+        },
+        {
+          "heading": "VII. DISCUSSION",
+          "page": 12
+        },
+        {
+          "heading": "VIII. CONCLUSION",
+          "page": 13
+        },
+        {
+          "heading": "ACKNOWLEDGMENT",
+          "page": 13
+        },
+        {
+          "heading": "APPENDIX",
+          "page": 13
+        },
+        {
+          "heading": "REFERENCES",
+          "page": 15
+        }
+      ],
+      "key_tables_pages": {
+        "Table I": {
+          "page": 10,
+          "caption": "Service map reconstruction correctness across tools, benchmarks, network configurations using precision, recall, F 1"
+        },
+        "Table II": {
+          "page": 11,
+          "caption": "Request latency average and standardard deviation"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 4,
+          "caption": "NAT-free network configuration.Services A and B"
+        },
+        "Figure 2": {
+          "page": 4,
+          "caption": "Internal NAT network configuration.Services A and"
+        },
+        "Figure 3": {
+          "page": 5,
+          "caption": "External NAT network configuration.Services A and"
+        },
+        "Figure 4": {
+          "page": 7,
+          "caption": "Overview of Ripple’s discovery process.A packet transmitted through a connection associated with socketS1, owned"
+        },
+        "Figure 5": {
+          "page": 8,
+          "caption": "Ripple service map reconstruction for the NAT-free network configuration. (a) Online Boutique [27]; (b) Media [26];"
+        },
+        "Figure 6": {
+          "page": 10,
+          "caption": "Online Boutique dependency graph in the internal NAT"
+        },
+        "Figure 7": {
+          "page": 11,
+          "caption": "Time to complete service dependency discovery with"
+        },
+        "Figure 8": {
+          "page": 12,
+          "caption": "(a)frontendthroughput measured in requests per"
+        },
+        "Figure 9": {
+          "page": 12,
+          "caption": "Service dependency graph of Online Boutique dis-"
+        }
+      },
+      "citation_ieee": "D. Landau, G. Blanken, J. Barbosa, and N. Saurabh, \"Seeing Through NAT with Ripple: Retrofitting Service Dependency Discovery in Networked Distributed Systems,\" arXiv:2510.15490v2 [cs.DC], Oct. 2025 (rev. Oct. 2026).",
+      "version_type": "arxiv_preprint",
+      "key_benchmark_metrics": {
+        "corpus": "3 microservice benchmarks (Online Boutique 12N/16E, DeathStarBench Social 21N/25E & Media 29N/34E) x 3 network modes (NAT-free, internal-NAT, external-NAT)",
+        "accuracy": "F1=1.00 across all 3 NAT modes on Social & Online Boutique; F1=0.83 (0.71 R) on Media due to 3 unbootstrapped subgraphs (Table I p.10)",
+        "overhead": "+0.7 to +3.1 ms request latency overhead via eBPF 16-byte TCP experimental option (Table II p.11)"
+      },
+      "visual_audit_notes": "Original arXiv submission Oct 2025 (2510.15490); v2 stamped 24 Oct 2026; embedded PDF /Title omits 'Seeing Through NAT with Ripple:' prefix. Visual audit caught a p.11 prose typo labeling Coroot's F1 score as 'precision'.",
+      "evo_transfer_tags": [
+        "online-boutique-12N-16E-oracle",
+        "runtime-observed-drift-overlay",
+        "deathstarbench-polyglot-holdout"
+      ],
+      "evo_target_classes": [
+        "DeclarativeTopologyProjection.java",
+        "ReadinessPlanner.java",
+        "AdvisoryOverlayService.java"
+      ],
+      "deep_takeaway": "Introduces a non-intrusive eBPF runtime service-dependency discovery system injecting a 16-byte ID into an experimental TCP option once per connection on egress and virally registering receiving processes on ingress, surviving both internal container NAT and external gateway NAT. Across 9 benchmark-topology scenarios, Ripple is the only system maintaining F1=1.00 on Social Network and Online Boutique (0.83 on Media) at +0.7-3.1 ms latency overhead while exposing L7 proxies such as docker-proxy. Supplies Evo with an exact 12-service/16-edge Online Boutique static-vs-runtime oracle (exposing cartservice dedup and redis-cart gaps), DeathStarBench polyglot holdouts, and a quarantined RUNTIME_OBSERVED architectural drift overlay blueprint."
+    },
+    {
+      "id": "jackee2020",
+      "short_name": "JackEE",
+      "canonical_file": "2020_PLDI_JackEE_3385412.3386026.pdf",
+      "original_file": "3385412.3386026.pdf",
+      "pillar": "P2_Spring_DI_SAT_Metadata",
+      "title": "Static Analysis of Java Enterprise Applications: Frameworks and Caches, the Elephants in the Room",
+      "authors": [
+        "Anastasios Antoniadis",
+        "Nikos Filippakis",
+        "Paddy Krishnan",
+        "Raghavendra Ramesh",
+        "Nicholas Allen",
+        "Yannis Smaragdakis"
+      ],
+      "venue": "PLDI 2020",
+      "year": 2020,
+      "doi": "10.1145/3385412.3386026",
+      "arxiv_id": null,
+      "pages": 14,
+      "size_bytes": 503206,
+      "sha256": "2e81d5ff98b78ad58a23ecd9d9ff364443fe151357b9530d11525f3f735c3c34",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2020_PLDI_JackEE_3385412.3386026.txt",
+      "text_chars": 77324,
+      "pdf_metadata_note": "PLDI '20 camera-ready PDF (London, UK, Jun 2020, pp. 794-807). Minor pypdf encoding quirk: curly quotes extract as ł/ž and en-dash as ś.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Web Application Background",
+          "page": 2
+        },
+        {
+          "heading": "2.1 Java EE Servlets",
+          "page": 3
+        },
+        {
+          "heading": "2.2 Enterprise Java Beans",
+          "page": 3
+        },
+        {
+          "heading": "2.3 Spring",
+          "page": 3
+        },
+        {
+          "heading": "2.4 Other Technologies",
+          "page": 4
+        },
+        {
+          "heading": "3 Analysis Completeness",
+          "page": 4
+        },
+        {
+          "heading": "3.1 Overview",
+          "page": 4
+        },
+        {
+          "heading": "3.2 Vocabulary",
+          "page": 5
+        },
+        {
+          "heading": "3.3 Framework-Independent Support",
+          "page": 5
+        },
+        {
+          "heading": "3.4 Modeling Examples",
+          "page": 6
+        },
+        {
+          "heading": "3.5 Wiring Together Beans",
+          "page": 7
+        },
+        {
+          "heading": "4 Analysis of Web Applications: Precision",
+          "page": 8
+        },
+        {
+          "heading": "5 Evaluation",
+          "page": 10
+        },
+        {
+          "heading": "5.1 Completeness",
+          "page": 10
+        },
+        {
+          "heading": "5.2 Performance",
+          "page": 11
+        },
+        {
+          "heading": "5.3 Precision",
+          "page": 11
+        },
+        {
+          "heading": "6 Related Work",
+          "page": 11
+        },
+        {
+          "heading": "7 Conclusions",
+          "page": 13
+        },
+        {
+          "heading": "Acknowledgments",
+          "page": 13
+        },
+        {
+          "heading": "References",
+          "page": 13
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 13,
+          "caption": "Precision+speed metrics. In all cases lower is better ."
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 5,
+          "caption": "Base relations, over which a framework is modeled."
+        },
+        "Figure 2": {
+          "page": 6,
+          "caption": "Program-related information, for use in framework specifications (and further analysis)."
+        },
+        "Figure 3": {
+          "page": 10,
+          "caption": "Example of sound-modulo-analysis modeling of java.util.HashMap. Original code on the left, simplified on right."
+        },
+        "Figure 4": {
+          "page": 11,
+          "caption": "App methods reachability for Doop and JackEE."
+        },
+        "Figure 5": {
+          "page": 12,
+          "caption": "Analysis time for all benchmarks. Alfresco shown separately on the left, due to different scale. Time is broken up"
+        }
+      },
+      "citation_ieee": "A. Antoniadis, N. Filippakis, P. Krishnan, R. Ramesh, N. Allen, and Y. Smaragdakis, \"Static Analysis of Java Enterprise Applications: Frameworks and Caches, the Elephants in the Room,\" in Proc. 41st ACM SIGPLAN Conf. Programming Language Design and Implementation (PLDI '20), London, UK, Jun. 2020, pp. 794-807, doi: 10.1145/3385412.3386026.",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "corpus": "8 large Java EE / Spring enterprise web applications on JDK 8",
+        "completeness": "58.04% avg app method reachability vs 14.48% baseline Doop (4x gain; Fig. 4 p.11)",
+        "speed_and_precision": "5.9x avg / 15.14x peak speedup with strictly higher precision via sound-modulo-analysis HashMap/ConcurrentHashMap models eliminating TreeNode 2objH->1objH collapse (Table 1 p.13)"
+      },
+      "visual_audit_notes": "PLDI '20 camera-ready PDF (pp. 794-807). Visual audit caught numerical discrepancy for SpringBlog between Fig. 5 (196/847/176 s) and Table 1 (59/172/76 s). Minor pypdf font quirk: curly quotes extract as ł/ž and en-dash as ś.",
+      "evo_transfer_tags": [
+        "passive-xml-bean-vocabulary",
+        "getbean-constant-folding",
+        "sound-modulo-collection-summaries"
+      ],
+      "evo_target_classes": [
+        "ConfigDataIngestion.java",
+        "SourceToSpringPlan.java",
+        "SpringSourceEvidence.java"
+      ],
+      "deep_takeaway": "Introduces a declarative What/Where/How Datalog vocabulary in Doop for Java EE/Spring entry points and DI paired with sound-modulo-analysis rewrites of HashMap/LinkedHashMap/ConcurrentHashMap eliminating TreeNode's 2objH -> 1objH precision collapse. Achieves 58.04% average app reachability (4x over baseline Doop) and 5.9x average (15.14x peak) speedup with strictly higher precision across 8 large enterprise apps (Table 1 p.13), though it requires compiled JDK 8 bytecode, a 640 GB RAM server, and lacks Spring Boot multi-profile/conditional SAT modeling. Transfers to Evo via passive XML <bean>/<property>/<authentication-provider> vocabulary, programmatic getBean() constant folding, and sound-modulo-analysis collection/cache transfer summaries."
+    },
+    {
+      "id": "jasmine2022",
+      "short_name": "Jasmine",
+      "canonical_file": "2022_ASE_Jasmine_3551349.3556910.pdf",
+      "original_file": "3551349.3556910.pdf",
+      "pillar": "P2_Spring_DI_SAT_Metadata",
+      "title": "Jasmine: A Static Analysis Framework for Spring Core Technologies",
+      "authors": [
+        "Miao Chen",
+        "Tengfei Tu",
+        "Hua Zhang",
+        "Qiaoyan Wen",
+        "Weihang Wang"
+      ],
+      "venue": "ASE 2022",
+      "year": 2022,
+      "doi": "10.1145/3551349.3556910",
+      "arxiv_id": null,
+      "pages": 13,
+      "size_bytes": 1103867,
+      "sha256": "33d313c8222ec82ec7b0f61f515a391d2d7e7864027d0225c75b7f3236236ba9",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2022_ASE_Jasmine_3551349.3556910.txt",
+      "text_chars": 75811,
+      "pdf_metadata_note": "ASE '22 camera-ready PDF (Rochester, MI, USA, Oct 2022).",
+      "section_map": [
+        {
+          "heading": "ABSTRACT",
+          "page": 1
+        },
+        {
+          "heading": "1 INTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "2 BACKGROUND",
+          "page": 2
+        },
+        {
+          "heading": "2.1 Pointer Analysis",
+          "page": 2
+        },
+        {
+          "heading": "2.2 Spring Core Technologies",
+          "page": 2
+        },
+        {
+          "heading": "3 CAUSES OF INVALIDITY IN POINTER",
+          "page": 3
+        },
+        {
+          "heading": "3.1 Explicit Impact",
+          "page": 3
+        },
+        {
+          "heading": "3.2 Implicit Impact",
+          "page": 3
+        },
+        {
+          "heading": "4 METHODOLOGY",
+          "page": 4
+        },
+        {
+          "heading": "4.1 Identifying Spring Framework",
+          "page": 4
+        },
+        {
+          "heading": "4.2 Modeling Dynamic Features",
+          "page": 5
+        },
+        {
+          "heading": "4.3 Threats to Validity",
+          "page": 7
+        },
+        {
+          "heading": "5 EVALUATION",
+          "page": 7
+        },
+        {
+          "heading": "5.1 Experimental Setup",
+          "page": 7
+        },
+        {
+          "heading": "5.2 RQ1: The Core Technologies Support and",
+          "page": 8
+        },
+        {
+          "heading": "5.3 RQ2: The Enhancements of Jasmine brings",
+          "page": 8
+        },
+        {
+          "heading": "5.4 RQ3: The Benefits of Jasmine Brings to",
+          "page": 10
+        },
+        {
+          "heading": "6 RELATED WORK",
+          "page": 11
+        },
+        {
+          "heading": "6.1 Static Reflection Analysis",
+          "page": 11
+        },
+        {
+          "heading": "6.2 Framework Analysis",
+          "page": 11
+        },
+        {
+          "heading": "7 CONCLUSION",
+          "page": 11
+        },
+        {
+          "heading": "ACKNOWLEDGMENTS",
+          "page": 11
+        },
+        {
+          "heading": "REFERENCES",
+          "page": 12
+        }
+      ],
+      "key_tables_pages": {
+        "Table I": {
+          "page": 4,
+          "caption": "Matching Rules"
+        },
+        "Table II": {
+          "page": 7,
+          "caption": "Spring micro-benchmark and results. ID 1-4 are Spring features analysis and ID 5-6 are scenes analysis. 𝐽𝑎𝑠𝑚𝑖𝑛𝑒 𝑑 and𝐽𝑎𝑠"
+        },
+        "Table III": {
+          "page": 9,
+          "caption": "Production-benchmark and results. The mall project contains three modules and FEBS-Cloud contains two modules."
+        },
+        "Table IV": {
+          "page": 9,
+          "caption": "Analysis added edges of Jas_JackEE"
+        },
+        "Table V": {
+          "page": 11,
+          "caption": "Taint analysis results for FlowDroid. \"-\" on the left is"
+        }
+      },
+      "algorithms_pages": {
+        "Algorithm 1": {
+          "page": 4,
+          "caption": "ANNOTATION PROCESS"
+        },
+        "Algorithm 2": {
+          "page": 5,
+          "caption": "AOP PROCESS"
+        },
+        "Algorithm 3": {
+          "page": 6,
+          "caption": "DI PROCESS"
+        },
+        "Algorithm 4": {
+          "page": 6,
+          "caption": "WEAVE PROCESS"
+        }
+      },
+      "figures_pages": {
+        "Figure 1": {
+          "page": 3,
+          "caption": "Comparison of running with or without Spring AOP."
+        },
+        "Figure 2": {
+          "page": 4,
+          "caption": "Overview of Jasmine"
+        },
+        "Figure 3": {
+          "page": 5,
+          "caption": "Jasmine Syntax"
+        },
+        "Figure 4": {
+          "page": 8,
+          "caption": "Reachable method."
+        },
+        "Figure 5": {
+          "page": 10,
+          "caption": "App methods reachability."
+        },
+        "Figure 6": {
+          "page": 10,
+          "caption": "Comparison of performance for benchmarks."
+        }
+      },
+      "citation_ieee": "M. Chen, T. Tu, H. Zhang, Q. Wen, and W. Wang, \"Jasmine: A Static Analysis Framework for Spring Core Technologies,\" in Proc. 37th IEEE/ACM Int. Conf. Automated Software Engineering (ASE '22), Rochester, MI, USA, Oct. 2022, doi: 10.1145/3551349.3556910.",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "corpus": "Spring micro-benchmarks + 18 real-world Spring Boot applications (Tables II-III p.7,9)",
+        "accuracy": "96.95% app-edge F1 vs JackEE 78.91% on micro-benchmarks (Table II p.7); adds 41.6%-78.6% AOP call edges on real Spring apps (Table IV p.9)",
+        "client_taint": "Uncovers 12 dynamically verified real info-leakage paths via FlowDroid (32/44 FP; Table V p.11)"
+      },
+      "visual_audit_notes": "ASE '22 camera-ready PDF. Visual PDF audit caught that the Table III (p.9) 'shopizer' row is highlighted in red: both JackEE and Jas_JackEE crashed on 55,054 total classes and had to fall back to app-only classes.",
+      "evo_transfer_tags": [
+        "passive-aop-aspect-edges",
+        "cglib-self-invocation-detector",
+        "scope-aware-rts",
+        "18-spring-app-corpus"
+      ],
+      "evo_target_classes": [
+        "SpringSourceEvidence.java",
+        "BytecodeAutoConfigScanner.java",
+        "SourceToSpringPlan.java",
+        "AffectedTestSelector.java"
+      ],
+      "deep_takeaway": "Simulates Spring singleton/prototype DI and CGLIB AOP proxy weaving (@Around parameter-forwarding cloning and @Order advice sorting) at the Soot Jimple IR level, making Spring core semantics portable to Soot, Doop, and FlowDroid. Recovers 96.95% app-edge F1 on Spring micro-benchmarks (vs JackEE 78.91%, Table II p.7), adds 41.6%-78.6% AOP edges on production Spring apps (Table IV p.9), and finds 12 verified info-leakage paths via FlowDroid (Table V p.11), while crashing on shopizer's full 55k-class closure and ignoring Spring Boot conditional configurations. Transfers to Evo via passive @Aspect/@Pointcut SKG edges (ADVISES_METHOD), static AOP self-invocation and private/final CGLIB proxy bug detectors, and @Scope-aware SKG-RTS impact propagation."
+    },
+    {
+      "id": "mecheck2025",
+      "short_name": "MeCheck",
+      "canonical_file": "2025_FSE_MeCheck_3715772.pdf",
+      "original_file": "3715772.pdf",
+      "pillar": "P2_Spring_DI_SAT_Metadata",
+      "title": "Detecting Metadata-Related Bugs in Enterprise Applications",
+      "authors": [
+        "Md Mahir Asef Kabir",
+        "Xiaoyin Wang",
+        "Na Meng"
+      ],
+      "venue": "Proc. ACM Softw. Eng. (FSE 2025)",
+      "year": 2025,
+      "doi": "10.1145/3715772",
+      "arxiv_id": null,
+      "pages": 23,
+      "size_bytes": 1013203,
+      "sha256": "e9e9344f6d327e6836c670c5e864a425eff7117ac19296a629c8a05aee1565d4",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2025_FSE_MeCheck_3715772.txt",
+      "text_chars": 88393,
+      "pdf_metadata_note": "FSE 2025 camera-ready PDF (PACMSE Vol. 2, Art. FSE053, Jul 2025).",
+      "section_map": [
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 A Motivating Example",
+          "page": 3
+        },
+        {
+          "heading": "3 Background",
+          "page": 4
+        },
+        {
+          "heading": "3.1 XML-Based Configuration",
+          "page": 4
+        },
+        {
+          "heading": "3.2 Annotation-Based Configuration",
+          "page": 4
+        },
+        {
+          "heading": "3.3 Combining XML Files with Annotations",
+          "page": 5
+        },
+        {
+          "heading": "3.4 Problem Statement",
+          "page": 5
+        },
+        {
+          "heading": "4 Rule Specification Language (RSL)",
+          "page": 5
+        },
+        {
+          "heading": "4.1 Statements",
+          "page": 5
+        },
+        {
+          "heading": "4.2 Expressions",
+          "page": 7
+        },
+        {
+          "heading": "4.3 Built-in Functions",
+          "page": 7
+        },
+        {
+          "heading": "5 MeCheck",
+          "page": 8
+        },
+        {
+          "heading": "5.1 Analyzer Creator",
+          "page": 8
+        },
+        {
+          "heading": "5.2 Analyzer Executor",
+          "page": 8
+        },
+        {
+          "heading": "6 Evaluation",
+          "page": 12
+        },
+        {
+          "heading": "6.1 Effectiveness of RSL",
+          "page": 12
+        },
+        {
+          "heading": "6.2 Accuracy of MeCheck",
+          "page": 12
+        },
+        {
+          "heading": "6.3 Detection of Metadata-Related Bugs in Real-World Settings",
+          "page": 15
+        },
+        {
+          "heading": "7 Threats to Validity",
+          "page": 16
+        },
+        {
+          "heading": "8 Discussion",
+          "page": 17
+        },
+        {
+          "heading": "8.1 Rule Importance and Bug Criticality",
+          "page": 17
+        },
+        {
+          "heading": "8.2 The Potential Application Scope of MeCheck",
+          "page": 17
+        },
+        {
+          "heading": "8.3 The Necessity of Defining New Rules",
+          "page": 18
+        },
+        {
+          "heading": "8.4 A Potential Alternative Design and Implementation of MeCheck",
+          "page": 18
+        },
+        {
+          "heading": "9 Related Work",
+          "page": 18
+        },
+        {
+          "heading": "9.1 Domain-Specific Languages (DSLs) Defined for Metadata-Usage Checking",
+          "page": 19
+        },
+        {
+          "heading": "9.2 Detection of Metadata-Related Bugs",
+          "page": 19
+        },
+        {
+          "heading": "9.3 Configuration Debugging",
+          "page": 20
+        },
+        {
+          "heading": "10 Conclusion",
+          "page": 20
+        },
+        {
+          "heading": "Acknowledgments",
+          "page": 20
+        },
+        {
+          "heading": "References",
+          "page": 20
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 7,
+          "caption": "Built-in functions in RSL"
+        },
+        "Table 2": {
+          "page": 13,
+          "caption": "The 15 metadata-usage constraints we summarized"
+        },
+        "Table 3": {
+          "page": 16,
+          "caption": "The 49 real bugs later fixed by developers"
+        },
+        "Table 4": {
+          "page": 18,
+          "caption": "The potential areas and libraries/frameworks"
+        },
+        "Table 5": {
+          "page": 18,
+          "caption": "The additional rule violations that"
+        }
+      },
+      "algorithms_pages": {
+        "Algorithm 1": {
+          "page": 9,
+          "caption": "The main() func-"
+        },
+        "Algorithm 2": {
+          "page": 9,
+          "caption": "The processFor()"
+        },
+        "Algorithm 3": {
+          "page": 9,
+          "caption": "The process() function"
+        },
+        "Algorithm 4": {
+          "page": 9,
+          "caption": "The processAssert() function"
+        },
+        "Algorithm 5": {
+          "page": 10,
+          "caption": "The evaluate() function"
+        }
+      },
+      "figures_pages": {
+        "Figure 1": {
+          "page": 2,
+          "caption": "The workflow of our approach"
+        },
+        "Figure 2": {
+          "page": 3,
+          "caption": "A bean in XML has init-method refer to a nonexistent method in the corresponding class"
+        },
+        "Figure 3": {
+          "page": 5,
+          "caption": "Three alternative ways to implement the same bean configuration"
+        },
+        "Figure 4": {
+          "page": 6,
+          "caption": "Core syntax of RSL"
+        },
+        "Figure 5": {
+          "page": 11,
+          "caption": "The stack status when MeCheck executes the exists-clause in Listing 1"
+        },
+        "Figure 6": {
+          "page": 11,
+          "caption": "The map used for caching and some related internal data structures in our implementation"
+        }
+      },
+      "citation_ieee": "M. M. A. Kabir, X. Wang, and N. Meng, \"Detecting Metadata-Related Bugs in Enterprise Applications,\" Proc. ACM Softw. Eng., vol. 2, no. FSE, Art. FSE053, Jul. 2025, doi: 10.1145/3715772.",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "corpus": "15 Spring/JUnit RSL rules evaluated on 45 injected-bug EAs + 70 real-world multi-version GitHub EAs (Sec 6 p.12-16)",
+        "injected_accuracy": "100% precision, 96% recall (43/45), 98% F1 (Sec 6.2 p.14)",
+        "real_world": "117/152 real TP (77.0% P), 49 later dev-fixed (latent up to 556 days; Table 3 p.16)"
+      },
+      "visual_audit_notes": "FSE 2025 camera-ready PDF (PACMSE Vol. 2, Art. FSE053). Forensic audit uncovered: (1) 100% of real TPs came from r1-r2 only; (2) RegEx isLibraryClass() caused 100% of FNs (2/2) and FPs (35/35); (3) prose claims <=6 s runtime vs Table 3 7-17 s; (4) Algorithm 5 omits '!' in NotExpression.",
+      "evo_transfer_tags": [
+        "cross-artifact-metadata-rules",
+        "asm-backed-no-regex-fp",
+        "sat-qualified-getbean"
+      ],
+      "evo_target_classes": [
+        "PolicyCompiler.java",
+        "PolicyEvaluator.java",
+        "AsmBytecodeIndex.java"
+      ],
+      "deep_takeaway": "Proposes RSL, an imperative cross-artifact DSL with 41 built-in Java/annotation/XML functions, and MeCheck, a JavaCC + JavaParser + JDOM cached interpreter verifying consistency across XML deployment descriptors, annotations, and Java code. Achieves 100% precision / 96% recall (43/45) on injected bugs and detects 117 real bugs (49 later fixed by developers, latent up to 556 days) across 70 repos (Table 3 p.16), though its RegEx isLibraryClass heuristic causes 100% of false positives (35/152) and misses Boot YAML/SAT conditionals. Transfers directly to Evo by adding bounded cross-artifact Boot/XML metadata consistency rules to PolicyCompiler/PolicyEvaluator backed by Evo's exact AsmBytecodeIndex classpath and SAT truth regions."
+    },
+    {
+      "id": "sundermann2026pbddnnf",
+      "short_name": "Sundermann-PB-dDNNF",
+      "canonical_file": "2026_TSE_Sundermann-PB-dDNNF_2505.05976.pdf",
+      "original_file": "2505.05976v1.pdf",
+      "pillar": "P2_Spring_DI_SAT_Metadata",
+      "title": "Pseudo-Boolean d-DNNF Compilation for Expressive Feature Modeling Constructs",
+      "authors": [
+        "Chico Sundermann",
+        "Stefan Vill",
+        "Elias Kuiter",
+        "Sebastian Krieter",
+        "Thomas Thüm",
+        "Matthias Tichy"
+      ],
+      "venue": "IEEE Transactions on Software Engineering (TSE)",
+      "year": 2026,
+      "doi": null,
+      "arxiv_id": "2505.05976v1",
+      "pages": 15,
+      "size_bytes": 740085,
+      "sha256": "295f95ca0e4891ffc619d6b8b1fea8fa4ba7322c3ef83716c6f6f672c5c3939b",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_TSE_Sundermann-PB-dDNNF_2505.05976.txt",
+      "text_chars": 93794,
+      "pdf_metadata_note": "PDF copy is arXiv:2505.05976v1 Technical Report (9 May 2025); published in IEEE TSE 2026 as 'Tackling Expressive Feature-Modeling Constructs with Pseudo-Boolean d-DNNF Compilation'.",
+      "section_map": [
+        {
+          "heading": "I. I NTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "II. B ACKGROUND",
+          "page": 2
+        },
+        {
+          "heading": "A. Feature Models",
+          "page": 2
+        },
+        {
+          "heading": "B. Logic-Based Reasoning",
+          "page": 3
+        },
+        {
+          "heading": "D. Pseudo-Boolean Logic",
+          "page": 4
+        },
+        {
+          "heading": "III. P SEUDO -B OOLEAN FEATURE MODEL ENCODING",
+          "page": 4
+        },
+        {
+          "heading": "A. Encoding Basic Feature Models",
+          "page": 4
+        },
+        {
+          "heading": "B. Encoding Expressive Constraints",
+          "page": 5
+        },
+        {
+          "heading": "IV. P SEUDO -B OOLEAN D -DNNF C OMPILATION",
+          "page": 6
+        },
+        {
+          "heading": "A. Reusing Ideas from Boolean Compilation",
+          "page": 7
+        },
+        {
+          "heading": "B. Optimizations",
+          "page": 7
+        },
+        {
+          "heading": "C. Tooling",
+          "page": 8
+        },
+        {
+          "heading": "V. E VALUATION",
+          "page": 8
+        },
+        {
+          "heading": "A. Experiment Design",
+          "page": 8
+        },
+        {
+          "heading": "B. Results",
+          "page": 10
+        },
+        {
+          "heading": "C. Threats to Validity",
+          "page": 11
+        },
+        {
+          "heading": "VI. R ELATED WORK",
+          "page": 12
+        },
+        {
+          "heading": "VII. C ONCLUSION",
+          "page": 13
+        },
+        {
+          "heading": "REFERENCES",
+          "page": 13
+        }
+      ],
+      "key_tables_pages": {
+        "Table I": {
+          "page": 3,
+          "caption": "FEATURE -M ODELING CONSTRUCT TAXONOMY INSPIRED BY UVL L ANGUAGE LEVELS [21]"
+        },
+        "Table II": {
+          "page": 5,
+          "caption": "ENCODINGS FOR BASIC FEATURE MODEL HIERARCHY"
+        },
+        "Table III": {
+          "page": 5,
+          "caption": "ENCODINGS FOR EXPRESSIVE FEATURE -M ODELING CONSTRUCTS"
+        },
+        "Table IV": {
+          "page": 6,
+          "caption": "PSEUDO -BOOLEAN EXPRESSION ENCODINGS"
+        },
+        "Table V": {
+          "page": 6,
+          "caption": "CONVERTING COMPARISON OPERATORS"
+        },
+        "Table VI": {
+          "page": 9,
+          "caption": "OVERVIEW SUBJECT SYSTEMS"
+        },
+        "Table VII": {
+          "page": 10,
+          "caption": "OVERVIEW SINGLE CONSTRUCT MODELS"
+        },
+        "Table VIII": {
+          "page": 10,
+          "caption": "BOOLEAN VS PSEUDO BOOLEAN : PERFORMANCE OVERVIEW"
+        }
+      },
+      "algorithms_pages": {
+        "Algorithm 1": {
+          "page": 4,
+          "caption": "Boolean d-DNNF Compilation"
+        }
+      },
+      "figures_pages": {
+        "Figure 1": {
+          "page": 3,
+          "caption": "Basic Feature Model"
+        },
+        "Figure 2": {
+          "page": 3,
+          "caption": "Feature Model Including Expressive Constructs"
+        },
+        "Figure 3": {
+          "page": 7,
+          "caption": "Trace for Exhaustive Pseudo-Boolean DPLL"
+        },
+        "Figure 4": {
+          "page": 7,
+          "caption": "d-DNNF Corresponding to Traversal in Figure 3"
+        },
+        "Figure 5": {
+          "page": 9,
+          "caption": "Comparison of Boolean and Pseudo-Boolean Approach for Compiling Expressive Feature Models to d-DNNF"
+        },
+        "Figure 6": {
+          "page": 11,
+          "caption": "Compilation Comparison: Basic Feature Models"
+        },
+        "Figure 7": {
+          "page": 11,
+          "caption": "Compilation Comparison: Isolated Models"
+        },
+        "Figure 8": {
+          "page": 11,
+          "caption": "Compilation Comparison: Synthesized Models"
+        }
+      },
+      "citation_ieee": "C. Sundermann, S. Vill, E. Kuiter, S. Krieter, T. Thüm, and M. Tichy, \"Pseudo-Boolean d-DNNF Compilation for Expressive Feature Modeling Constructs,\" IEEE Trans. Software Engineering (TSE), 2026. (Preprint: arXiv:2505.05976v1, May 2025)",
+      "version_type": "preprint_of_accepted",
+      "key_benchmark_metrics": {
+        "corpus": "18,942 feature models + 2,700 synthesized expressive models + 2 monolithic industrial models (Tables VI-VIII p.9-10)",
+        "compilation_scaling": "Compiles 98.4% vs 42.6% (d4/CNF) of 2,700 expressive models; scales group cardinality to 5,000 features vs CNF 13 (Table VIII p.10)",
+        "soundness_and_limit": "100% exact #SAT count parity with d4 across 18,942 models; 0/2 monolithic industrial models compiled within 10 min"
+      },
+      "visual_audit_notes": "arXiv:2505.05976v1 Technical Report (9 May 2025); published in IEEE TSE 2026 as 'Tackling Expressive Feature-Modeling Constructs with Pseudo-Boolean d-DNNF Compilation'. Visual verification confirmed Tables II-V encodings and Table VIII scaling.",
+      "evo_transfer_tags": [
+        "pb-cardinality-cdcl",
+        "per-coi-slice-ddnnf",
+        "may-exposure-counting",
+        "uniform-oracle-sampling",
+        "fix-b3-chunked-dag"
+      ],
+      "evo_target_classes": [
+        "IncrementalCdclReasoner.java",
+        "SatConfigurationReasoner.java",
+        "ConeOfInfluenceSlicer.java",
+        "SymbolicTruthRegions.java",
+        "CanonicalGraphBuilder.java"
+      ],
+      "deep_takeaway": "Eliminates exponential CNF blowup on expressive UVL feature models (group/feature cardinalities, alternatives, numeric constraints) via linear Pseudo-Boolean encodings (UVL2pb) and a native PB-to-Boolean d-DNNF compiler (p2d) using Chai-Kuehlmann PB-BCP, PB component caching, CDCL, and hypergraph cut-set ordering. Compiles 98.4% vs 42.6% of 2,700 synthesized expressive models (scaling group cardinality to 5,000 features vs CNF's 13, Table VIII p.10) with 100% exact #SAT agreement across 18,942 models, while timing out on 2/2 monolithic industrial models. Transfers directly to Evo via native PB/Exactly1 propagation in IncrementalCdclReasoner (fixing L334-348 & L571) and per-COI-slice pure-Java d-DNNF compilation for quantitative MAY exposure ratios, uniform E5-v3 sampling, and chunked DAG storage addressing Blocker B3."
+    },
+    {
+      "id": "salt2027",
+      "short_name": "PromptLessInferMore",
+      "canonical_file": "2027_ICSE_PromptLessInferMore_2610.41617.pdf",
+      "original_file": "2610.41617v1.pdf",
+      "pillar": "P2_Spring_DI_SAT_Metadata",
+      "title": "Prompt Less, Infer More: Static Analysis-Guided LLM Type Annotation for Python",
+      "authors": [
+        "Wonseok Oh",
+        "Michael Pradel",
+        "Hakjoo Oh"
+      ],
+      "venue": "ICSE 2027",
+      "year": 2027,
+      "doi": null,
+      "arxiv_id": "2610.41617v1",
+      "pages": 12,
+      "size_bytes": 306603,
+      "sha256": "8f1b45baa25f545371eed29c1c37871ae995b715f7a8823289b3a309e7f06c05",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2027_ICSE_PromptLessInferMore_2610.41617.txt",
+      "text_chars": 63254,
+      "pdf_metadata_note": "PDF copy is arXiv:2610.41617v1 preprint (30 Oct 2026, IEEE 2-column format; accepted to ICSE 2027). System name in paper: SALT.",
+      "section_map": [
+        {
+          "heading": "I. INTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "II. OVERVIEW OFSALT",
+          "page": 2
+        },
+        {
+          "heading": "A. Motivating Example",
+          "page": 2
+        },
+        {
+          "heading": "B. Illustration of Key Ideas",
+          "page": 2
+        },
+        {
+          "heading": "III. ALGORITHM",
+          "page": 4
+        },
+        {
+          "heading": "A. Forward and Backward Type Analysis",
+          "page": 4
+        },
+        {
+          "heading": "B. Prioritizing LLM Calls",
+          "page": 5
+        },
+        {
+          "heading": "C. Type-Aware Context Construction",
+          "page": 6
+        },
+        {
+          "heading": "IV. EVALUATION",
+          "page": 6
+        },
+        {
+          "heading": "A. Experimental Setup",
+          "page": 7
+        },
+        {
+          "heading": "V. DISCUSSION& THREATS TOVALIDITY",
+          "page": 10
+        },
+        {
+          "heading": "A. Type-Checker Results",
+          "page": 10
+        },
+        {
+          "heading": "B. Threats to Validity",
+          "page": 11
+        },
+        {
+          "heading": "VI. RELATEDWORK",
+          "page": 11
+        },
+        {
+          "heading": "VII. CONCLUSION",
+          "page": 11
+        },
+        {
+          "heading": "ACKNOWLEDGMENT",
+          "page": 11
+        },
+        {
+          "heading": "REFERENCES",
+          "page": 12
+        }
+      ],
+      "key_tables_pages": {
+        "Table I": {
+          "page": 7,
+          "caption": "Dataset statistics for the selected TYPYBENCH"
+        },
+        "Table II": {
+          "page": 7,
+          "caption": "LLM models used in our evaluation. Prices are"
+        },
+        "Table III": {
+          "page": 8,
+          "caption": "The accuracy and LLM usage on TYPYBENCH.Calls: the number of LLM queries.Accuracy: the percentage"
+        },
+        "Table IV": {
+          "page": 8,
+          "caption": "Per-project comparison between AIDERand SALTon TYPYBENCH.Accuracy: the percentage of correctly inferred"
+        },
+        "Table V": {
+          "page": 8,
+          "caption": "Per-project comparison between AIDERand SALT"
+        },
+        "Table VI": {
+          "page": 9,
+          "caption": "Ablation results with gpt-oss on the 12 projects."
+        },
+        "Table VII": {
+          "page": 9,
+          "caption": "Recall and precision of static type inference tools."
+        }
+      },
+      "algorithms_pages": {
+        "Algorithm 1": {
+          "page": 4,
+          "caption": "Overall algorithm of SALT"
+        }
+      },
+      "figures_pages": {
+        "Figure 1": {
+          "page": 2,
+          "caption": "A motivating example where existing approaches either"
+        },
+        "Figure 2": {
+          "page": 3,
+          "caption": "Workflow of SALT. The system repeatedly alternates between static type analysis and LLM annotation until the remaining"
+        },
+        "Figure 3": {
+          "page": 3,
+          "caption": "Type propagation over the motivating example."
+        },
+        "Figure 4": {
+          "page": 3,
+          "caption": "Static propagation after queryingpack."
+        },
+        "Figure 5": {
+          "page": 3,
+          "caption": "Type-guided context construction for queryingpack."
+        },
+        "Figure 6": {
+          "page": 10,
+          "caption": "Examples where SALTsucceeds but AIDERfails."
+        },
+        "Figure 7": {
+          "page": 10,
+          "caption": "Examples where static analysis over-narrows developer-"
+        }
+      },
+      "citation_ieee": "W. Oh, M. Pradel, and H. Oh, \"Prompt Less, Infer More: Static Analysis-Guided LLM Type Annotation for Python,\" in Proc. IEEE/ACM Int. Conf. Software Engineering (ICSE '27), 2027. (Preprint: arXiv:2610.41617v1, Oct. 2026)",
+      "version_type": "preprint_of_accepted",
+      "key_benchmark_metrics": {
+        "corpus": "12 real-world Python repos from TypyBench across Gemma 4, gpt-oss, GLM-4.7, and GPT-5.5 (Tables I-V p.7-8)",
+        "accuracy_and_cost": "Beats AIDER by +1.65 to +4.73 pp (93.09% on GPT-5.5 10% sample) while cutting LLM calls 30.0%-40.1% and API cost 72.8%-78.5% (74.8% on GPT-5.5; Tables III & V p.8)",
+        "compression_and_caveat": "70.4x prompt hint compression (26 vs 1,830 raw tokens, p.9); 121/169 (71.6%) of static errors stem from over-narrowing (Fig. 7 p.10)"
+      },
+      "visual_audit_notes": "arXiv:2610.41617v1 preprint (30 Oct 2026; accepted ICSE 2027); system named SALT. Visual audit verified Fig. 7 over-narrowing breakdown (121/169 static errors) and Table V GPT-5.5 10% sample scope.",
+      "evo_transfer_tags": [
+        "signature-callee-folding",
+        "compact-static-hints",
+        "impact-richness-scheduling",
+        "passive-bidirectional-treesitter"
+      ],
+      "evo_target_classes": [
+        "RepairContextPlanner.java",
+        "RepoMapBuilder.java",
+        "CapturedRepair.java",
+        "TreeSitterSourceFrontend.java"
+      ],
+      "deep_takeaway": "Combines alternating bidirectional static type propagation (splitting strong local isinstance evidence Bs from conservative weak callee evidence Bw), call-graph Impact x Richness LLM prioritization, and Signature(n) callee folding with 26-token static hints (70.4x compression vs 1,830 raw tokens). Outperforms AIDER across four LLMs including GPT-5.5 on 12 TypyBench repos while reducing LLM calls by 30.0%-40.1% and API costs by 72.8%-78.5% (Tables III & V p.8), with 71.6% of static errors caused by over-narrowing (Fig. 7 p.10). Transfers to Evo via Signature(n) folding and compact static truth/slice hints in RepairContextPlanner/RepoMapBuilder, SKG-leverage repair scheduling in CapturedRepair, and passive (F, Bs, Bw) propagation in TreeSitterSourceFrontend guarded by Evo's Quarantine invariant."
+    },
+    {
+      "id": "repograph2025",
+      "short_name": "RepoGraph",
+      "canonical_file": "2025_ICLR_RepoGraph_2410.14684.pdf",
+      "original_file": "2410.14684v2.pdf",
+      "pillar": "P3_SKG_GraphRAG_TacitKnowledge",
+      "title": "RepoGraph: Enhancing AI Software Engineering with Repository-Level Code Graph",
+      "authors": [
+        "Siru Ouyang",
+        "Wenhao Yu",
+        "Kaixin Ma",
+        "Zilin Xiao",
+        "Zhihan Zhang",
+        "Mengzhao Jia",
+        "Jiawei Han",
+        "Hongming Zhang",
+        "Dong Yu"
+      ],
+      "venue": "ICLR 2025",
+      "year": 2025,
+      "doi": null,
+      "arxiv_id": "2410.14684v2",
+      "pages": 24,
+      "size_bytes": 6700196,
+      "sha256": "58c7465f0a75b9ac80b973efc45dce9aeefcc8cdbb0e9407ce987dd96a6e7adf",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2025_ICLR_RepoGraph_2410.14684.txt",
+      "text_chars": 85123,
+      "pdf_metadata_note": "ICLR 2025 camera-ready PDF with arXiv:2410.14684v2 stamp (18 Mar 2025).",
+      "section_map": [
+        {
+          "heading": "ABSTRACT",
+          "page": 1
+        },
+        {
+          "heading": "1 I NTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "2 R ELATED WORKS",
+          "page": 2
+        },
+        {
+          "heading": "2.1 LLM- BASED METHODS FOR AI SOFTWARE ENGINEERING",
+          "page": 2
+        },
+        {
+          "heading": "2.2 R EPOSITORY -LEVEL CODING CAPABILITY",
+          "page": 3
+        },
+        {
+          "heading": "3 R EPO GRAPH",
+          "page": 4
+        },
+        {
+          "heading": "3.1 C ONSTRUCTION",
+          "page": 4
+        },
+        {
+          "heading": "3.2 U TILITY",
+          "page": 5
+        },
+        {
+          "heading": "4 E XPERIMENTS",
+          "page": 6
+        },
+        {
+          "heading": "4.1 S ETUP",
+          "page": 6
+        },
+        {
+          "heading": "4.2 E XPERIMENT RESULTS",
+          "page": 7
+        },
+        {
+          "heading": "5 A NALYSIS",
+          "page": 8
+        },
+        {
+          "heading": "5.1 L OCALIZATION COVERAGE",
+          "page": 8
+        },
+        {
+          "heading": "5.2 I NVESTIGATION OF REPO GRAPH VARIANTS",
+          "page": 8
+        },
+        {
+          "heading": "5.3 T RANSFERIBILITY TEST",
+          "page": 9
+        },
+        {
+          "heading": "5.4 E RROR ANALYSIS",
+          "page": 10
+        },
+        {
+          "heading": "6 C ONCLUSION AND DISCUSSION",
+          "page": 10
+        },
+        {
+          "heading": "REFERENCES",
+          "page": 11
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 3,
+          "caption": "Comparison between our approach R E-"
+        },
+        "Table 2": {
+          "page": 7,
+          "caption": "Results of R EPO GRAPH with open-source baselines in two research lines, including pro-"
+        },
+        "Table 3": {
+          "page": 8,
+          "caption": "Percentage of problems for accurate edition localiza-"
+        },
+        "Table 4": {
+          "page": 9,
+          "caption": "The number of nodes, edges, and tokens of R EPO GRAPH and its variants. For different"
+        },
+        "Table 5": {
+          "page": 9,
+          "caption": "Results on the subset of CrossCodeE-"
+        },
+        "Table 6": {
+          "page": 20,
+          "caption": "Results of R EPO GRAPH on SWE-Bench-Lite test set with Claude-3.5-Sonnet in two re-"
+        },
+        "Table 7": {
+          "page": 21,
+          "caption": "Percentage of problems for accurate edition localizations for Agentless+REPO GRAPH with"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 2,
+          "caption": "The illustration of (a) a function-level coding problem from HumanEval (Chen et al.,"
+        },
+        "Figure 2": {
+          "page": 4,
+          "caption": "An in-depth illustration of (a) the construction, (b) the integration with procedural frame-"
+        },
+        "Figure 11": {
+          "page": 5,
+          "caption": "Step 3: Graph organization. At this stage, we construct R EPO GRAPH using code lines as the"
+        },
+        "Figure 3": {
+          "page": 10,
+          "caption": "Venn diagram of R EPO GRAPH and baselines on (a) procedural framework and (b) agent"
+        },
+        "Figure 4": {
+          "page": 16,
+          "caption": "Instructions used in the procedural framework to localize to detailed files and code lines"
+        },
+        "Figure 5": {
+          "page": 17,
+          "caption": "Instruction used for fixing an issue based on the identified locations in certain template."
+        },
+        "Figure 6": {
+          "page": 17,
+          "caption": "The signature of our new action “search repograph” for agent frameworks."
+        },
+        "Figure 7": {
+          "page": 18,
+          "caption": "The signature of our new action “search repograph” for agent frameworks."
+        },
+        "Figure 8": {
+          "page": 18,
+          "caption": "The frequency with which actions are invoked at each turn by (a) SWE-agent and (b)"
+        },
+        "Figure 9": {
+          "page": 19,
+          "caption": "Instruction used for summarizing the flattened ego-graph."
+        },
+        "Figure 10": {
+          "page": 19,
+          "caption": "A conceptual overview of our proposed REPO GRAPH ."
+        },
+        "Figure 13": {
+          "page": 20,
+          "caption": "Most of the issues were observed in recent years, starting from 2018, with a substantial"
+        },
+        "Figure 12": {
+          "page": 21,
+          "caption": "Distribution of issues resolved by Agentless +REPO GRAPH plotted in terms of different"
+        },
+        "Figure 14": {
+          "page": 22,
+          "caption": "An example of incorrect localization. The correct patch modifies the “DurationField”"
+        },
+        "Figure 15": {
+          "page": 23,
+          "caption": "An example of contextual misalignment. The model-generated patch places the repr"
+        },
+        "Figure 16": {
+          "page": 24,
+          "caption": "An example of regressive fix. The model-generated patch successfully resolves the issue"
+        }
+      },
+      "citation_ieee": "S. Ouyang et al., \"RepoGraph: Enhancing AI Software Engineering with Repository-Level Code Graph,\" in Proc. 13th Int. Conf. Learning Representations (ICLR 2025), 2025. (arXiv:2410.14684v2)",
+      "version_type": "camera_ready",
+      "key_benchmark_metrics": {
+        "corpus": "SWE-bench-Lite (300 tasks across 4 SWE harnesses) & CrossCodeEval subset (Tables 2-6 p.7-9,20)",
+        "ego_graph_gain": "1-hop flattened ego-graph (11.6 nodes, 2,310.7 tokens) lifts Agentless 27.33->29.67% (GPT-4o) & 27.67->30.33% (Claude-3.5) and CrossCodeEval GPT-4o EM 10.5->28.7 (Tables 2,5,6)",
+        "two_hop_collapse": "2-hop + flatten inflates context to 10,505 tokens and degrades Agentless below baseline to 26.00% (Table 4 p.9)"
+      },
+      "visual_audit_notes": "ICLR 2025 camera-ready PDF with arXiv:2410.14684v2 stamp. Visual audit of Fig. 3 (p.10) caught an arithmetic mismatch (16+39+22=77/300=25.67% vs prose 22.33%) and Table 2 cost delta (+$0.16 vs prose +$0.18).",
+      "evo_transfer_tags": [
+        "k1-ego-graph-slicer",
+        "stdlib-noise-filter",
+        "no-2hop-collapse"
+      ],
+      "evo_target_classes": [
+        "RepoMapBuilder.java",
+        "RepairContextPlanner.java",
+        "McpToolDispatcher.java"
+      ],
+      "deep_takeaway": "Introduces a Tree-sitter line-level repository code graph (def/ref nodes with E_contain/E_invoke edges and stdlib/third-party noise filtering) exposed via k-hop ego-graph retrieval (search_repograph) for procedural and agentic SWE systems. Across SWE-bench-Lite and CrossCodeEval, plugging in 1-hop flattened ego-graphs (~2.3k tokens) boosts all 4 harnesses (Agentless 27.33% -> 29.67% GPT-4o, 27.67% -> 30.33% Claude-3.5; CrossCodeEval EM 10.5 -> 28.7), whereas unpruned 2-hop flattening inflates context to 10.5k tokens and drops below baseline (26.00%). Transfers a bounded k=1 symbol/line ego-graph slicer with stdlib/3p edge filtering directly into Evo's RepoMapBuilder, RepairContextPlanner, and McpToolDispatcher."
+    },
+    {
+      "id": "codexgraph2025",
+      "short_name": "CodexGraph",
+      "canonical_file": "2025_NAACL_CodexGraph_2408.03910.pdf",
+      "original_file": "2408.03910v3.pdf",
+      "pillar": "P3_SKG_GraphRAG_TacitKnowledge",
+      "title": "CodexGraph: Bridging Large Language Models and Code Repositories via Code Graph Databases",
+      "authors": [
+        "Xiangyan Liu",
+        "Bo Lan",
+        "Zhiyuan Hu",
+        "Yang Liu",
+        "Zhicheng Zhang",
+        "Fei Wang",
+        "Michael Shieh",
+        "Wenmeng Zhou"
+      ],
+      "venue": "NAACL 2025",
+      "year": 2025,
+      "doi": null,
+      "arxiv_id": "2408.03910v3",
+      "pages": 24,
+      "size_bytes": 2308546,
+      "sha256": "7ad59ae3208a8159515350bd77ffaa9ab4e1098c1508af7674b32fd15ea6c648",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2025_NAACL_CodexGraph_2408.03910.txt",
+      "text_chars": 61185,
+      "pdf_metadata_note": "PDF copy is arXiv:2408.03910v3 preprint (stamped 27 Jul 2026 on Page 1); published at NAACL 2025.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Related Work",
+          "page": 3
+        },
+        {
+          "heading": "2.1 Repository-Level Code Tasks",
+          "page": 3
+        },
+        {
+          "heading": "2.2 Retrieval-Augmented Code Generation",
+          "page": 3
+        },
+        {
+          "heading": "3 CODEXGRAPH: Enable LLMs to Navigate the Code Repository",
+          "page": 3
+        },
+        {
+          "heading": "3.1 Build Code Graph Database from Repository Codebase",
+          "page": 4
+        },
+        {
+          "heading": "3.2 Large Language Models Interaction with Code Graph Database",
+          "page": 5
+        },
+        {
+          "heading": "4 Experimental Setting",
+          "page": 6
+        },
+        {
+          "heading": "5 Results",
+          "page": 7
+        },
+        {
+          "heading": "5.1 Analysis of Repository-Level Code Tasks",
+          "page": 7
+        },
+        {
+          "heading": "5.2 Deeper Analysis of CODEXGRAPH",
+          "page": 8
+        },
+        {
+          "heading": "6 Real-World Application Scenario",
+          "page": 9
+        },
+        {
+          "heading": "7 Discussion",
+          "page": 9
+        },
+        {
+          "heading": "References",
+          "page": 11
+        },
+        {
+          "heading": "A Appendix",
+          "page": 15
+        },
+        {
+          "heading": "A.1 Details of the graph database schema",
+          "page": 15
+        },
+        {
+          "heading": "A.1.1 Node Types",
+          "page": 15
+        },
+        {
+          "heading": "A.1.2 Edge Types",
+          "page": 16
+        },
+        {
+          "heading": "A.2 Real-World Application",
+          "page": 17
+        },
+        {
+          "heading": "A.2.1 Example of Code Chat",
+          "page": 18
+        },
+        {
+          "heading": "A.2.2 Example of Code Debugger",
+          "page": 19
+        },
+        {
+          "heading": "A.2.3 Example of Code Unittestor",
+          "page": 23
+        },
+        {
+          "heading": "A.2.4 Example of Code Generator",
+          "page": 23
+        },
+        {
+          "heading": "A.2.5 Example of Code Commentor",
+          "page": 24
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 7,
+          "caption": "Performance comparison of CODEXGRAPHand RACG baselines across three benchmarks using"
+        },
+        "Table 2": {
+          "page": 8,
+          "caption": "Average token cost comparison across three benchmarks (GPT-4o as the backbone LLM)."
+        },
+        "Table 3": {
+          "page": 9,
+          "caption": "Ablation study about the translation LLM agent on CrossCodeEval Lite (Python)."
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 2,
+          "caption": "(a) Using a unified schema, CODEXGRAPHemploys code graph databases as interfaces that allow"
+        },
+        "Figure 2": {
+          "page": 4,
+          "caption": "Illustration of the process for indexing source code to generate a code graph based on the given"
+        },
+        "Figure 3": {
+          "page": 5,
+          "caption": "The primary LLM agent analyzes the given code question,writtingnatural language queries. These"
+        },
+        "Figure 4": {
+          "page": 8,
+          "caption": "Performance comparison of different query-"
+        },
+        "Figure 5": {
+          "page": 17,
+          "caption": "WebUI for the Code Chat, used for answering any questions related to code repositories."
+        },
+        "Figure 6": {
+          "page": 17,
+          "caption": "WebUI for Code Debugger, Code Unittestor, Code Generator, and Code Commentor."
+        },
+        "Figure 7": {
+          "page": 18,
+          "caption": "Using Cypher queries to retrieve information about the ‘CodexGraphAgentChat’ class,"
+        },
+        "Figure 8": {
+          "page": 18,
+          "caption": "Once the necessary information is gathered, Code Chat constructs a comprehensive re-"
+        },
+        "Figure 9": {
+          "page": 19,
+          "caption": "The issue describes a problem where the outcome does not match the expected behavior."
+        },
+        "Figure 10": {
+          "page": 19,
+          "caption": "Analyzing the problem and retrieving information using Cypher queries."
+        },
+        "Figure 11": {
+          "page": 20,
+          "caption": "Executing Cypher queries to search the code for relevant information."
+        },
+        "Figure 12": {
+          "page": 20,
+          "caption": "Analyzing the retrieved information to identify potential causes of the bug."
+        },
+        "Figure 13": {
+          "page": 21,
+          "caption": "Performing additional Cypher code searches to gather more information."
+        },
+        "Figure 14": {
+          "page": 21,
+          "caption": "Inferring the cause of the bug based on the analysis of the retrieved information."
+        },
+        "Figure 15": {
+          "page": 21,
+          "caption": "Identifying the precise location of the bug in the codebase."
+        },
+        "Figure 16": {
+          "page": 22,
+          "caption": "Providing a detailed explanation of the issue and the underlying cause of the bug."
+        },
+        "Figure 17": {
+          "page": 22,
+          "caption": "Suggesting the first modification to resolve the bug."
+        },
+        "Figure 18": {
+          "page": 22,
+          "caption": "Suggesting the second modification to ensure the bug is resolved."
+        },
+        "Figure 19": {
+          "page": 23,
+          "caption": "Generated detailed unit test code for the ‘TaskManager’ class, covering its methods and"
+        },
+        "Figure 20": {
+          "page": 23,
+          "caption": "The thought process in determining how to identify the relevant fields."
+        },
+        "Figure 21": {
+          "page": 24,
+          "caption": "By using Cypher queries, it was discovered that the corresponding fields are ‘in-"
+        },
+        "Figure 22": {
+          "page": 24,
+          "caption": "The thought process: Understand the ‘Task’ class and ‘add item’ method."
+        },
+        "Figure 23": {
+          "page": 24,
+          "caption": "By using Cypher queries, the specific implementation of the return function was obtained,"
+        }
+      },
+      "citation_ieee": "X. Liu et al., \"CodexGraph: Bridging Large Language Models and Code Repositories via Code Graph Databases,\" in Proc. 2025 Conf. North American Chapter of the Association for Computational Linguistics (NAACL 2025), 2025. (arXiv:2408.03910v3)",
+      "version_type": "preprint_of_accepted",
+      "key_benchmark_metrics": {
+        "corpus": "CrossCodeEval Lite, EvoCodeBench, and 257/300 non-OOM SWE-bench-Lite tasks (Tables 1-3 p.7-9)",
+        "accuracy": "GPT-4o: 27.90% EM CrossCodeEval, 36.02% Pass@1 EvoCodeBench, 22.96% SWE-bench-Lite (257 tasks); removing translation agent drops EM -19.60 pp (27.90->8.30%; Table 3 p.9)",
+        "scalability_limits": "43/300 Sympy repos OOM during indexing; 102.25k avg tokens/task (Table 2 p.8); schema (6 nodes, 5 edges) explicitly omits CALLS edges"
+      },
+      "visual_audit_notes": "Published at NAACL 2025; PDF copy is arXiv:2408.03910v3 preprint stamped 27 Jul 2026. Visual schema check (App. A.1 p.15-16) confirmed 6 node types / 5 edge types omitting CALLS edges and using pointer-indexed code spans.",
+      "evo_transfer_tags": [
+        "pointer-indexed-cas-storage",
+        "fix-b3-sqlite-64mb",
+        "phase2-crossfile-dfs",
+        "write-then-translate-query"
+      ],
+      "evo_target_classes": [
+        "CanonicalGraphBuilder.java",
+        "SqliteGraphProjection.java",
+        "PartitionedGraphStore.java",
+        "TreeSitterSourceFrontend.java",
+        "ArchitectureQueryService.java"
+      ],
+      "deep_takeaway": "Bridges LLM agents and Python codebases through a two-phase static Neo4j code graph database (6 node types, 5 structural edge types, pointer-indexed code spans) paired with a 'Write then Translate' dual-agent loop separating NL reasoning from Cypher query synthesis. Achieves 27.90% EM on CrossCodeEval, 36.02% Pass@1 on EvoCodeBench, and 22.96% on 257 SWE-bench-Lite instances (removing the translator collapses EM by -19.60 pp), while missing CALLS edges, 43 Sympy indexing OOMs, and 102k-token payloads reveal scaling bottlenecks. Transfers pointer-indexed CAS indirection to fix Evo Blocker B3 (Shopizer 64 MB SQLite row crash), Phase-2 DFS cross-file resolution in analyzer-treesitter, and bounded typed query translation."
+    },
+    {
+      "id": "chinthareddy2026dkb",
+      "short_name": "Chinthareddy-DKB",
+      "canonical_file": "2026_arXiv_Chinthareddy-DKB_2601.08773.pdf",
+      "original_file": "2601.08773v1.pdf",
+      "pillar": "P3_SKG_GraphRAG_TacitKnowledge",
+      "title": "Reliable Graph-RAG for Codebases: AST-Derived Graphs vs LLM-Extracted Knowledge Graphs",
+      "authors": [
+        "Manideep Reddy Chinthareddy"
+      ],
+      "venue": "arXiv (cs.SE)",
+      "year": 2026,
+      "doi": null,
+      "arxiv_id": "2601.08773v1",
+      "pages": 46,
+      "size_bytes": 1127855,
+      "sha256": "a06584e8f14dd65cd2e4f10ff26a95b6335e2164d4657722ce04cca0f4dabc65",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_arXiv_Chinthareddy-DKB_2601.08773.txt",
+      "text_chars": 87009,
+      "pdf_metadata_note": "arXiv:2601.08773v1 preprint (13 Jan 2026). Benchmarks Shopizer, ThingsBoard, and OpenMRS Core.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 3
+        },
+        {
+          "heading": "1.1 Contributions",
+          "page": 4
+        },
+        {
+          "heading": "1.2 Paper Organization",
+          "page": 4
+        },
+        {
+          "heading": "2 Background and Preliminaries",
+          "page": 5
+        },
+        {
+          "heading": "2.1 RAG for Software Engineering",
+          "page": 5
+        },
+        {
+          "heading": "2.2 Program Structure Graphs",
+          "page": 5
+        },
+        {
+          "heading": "2.3 Knowledge Graphs and Ontologies in Code",
+          "page": 5
+        },
+        {
+          "heading": "3 Related Work",
+          "page": 5
+        },
+        {
+          "heading": "4 Problem Formulation and Research Questions",
+          "page": 7
+        },
+        {
+          "heading": "4.1 Task Definition",
+          "page": 7
+        },
+        {
+          "heading": "4.2 Graph-Based Retrieval Formalization",
+          "page": 7
+        },
+        {
+          "heading": "4.3 Research Questions",
+          "page": 7
+        },
+        {
+          "heading": "5 System Overview",
+          "page": 8
+        },
+        {
+          "heading": "5.1 Compared Pipelines",
+          "page": 8
+        },
+        {
+          "heading": "5.2 Graph Artifacts",
+          "page": 8
+        },
+        {
+          "heading": "6 Methodology",
+          "page": 8
+        },
+        {
+          "heading": "6.1 Strategy A: Naive Vector Retrieval (No-Graph)",
+          "page": 8
+        },
+        {
+          "heading": "6.2 Strategy B: LLM-Generated Knowledge Graph (LLM-",
+          "page": 9
+        },
+        {
+          "heading": "6.3 Strategy C: Deterministic AST Graph (DKB - Proposed)",
+          "page": 10
+        },
+        {
+          "heading": "6.4 Graph-Aware Retrieval Algorithm",
+          "page": 10
+        },
+        {
+          "heading": "6.5 Implementation Snippets and Instrumentation",
+          "page": 10
+        },
+        {
+          "heading": "6.5.1 DKB: Deterministic ontology extraction (T ree-sitter)",
+          "page": 10
+        },
+        {
+          "heading": "6.5.3 LLM-KB: Batch extraction, truncation, and explicit skip",
+          "page": 13
+        },
+        {
+          "heading": "7 Experimental Setup",
+          "page": 14
+        },
+        {
+          "heading": "7.1 Dataset",
+          "page": 14
+        },
+        {
+          "heading": "7.2 Task Set",
+          "page": 15
+        },
+        {
+          "heading": "8 Evaluation Metrics",
+          "page": 15
+        },
+        {
+          "heading": "8.1 Latency",
+          "page": 15
+        },
+        {
+          "heading": "8.2 Correctness Labels",
+          "page": 15
+        },
+        {
+          "heading": "8.3 Indexing Reliability and Coverage",
+          "page": 15
+        },
+        {
+          "heading": "9 Results",
+          "page": 16
+        },
+        {
+          "heading": "9.1 Quantitative Performance Benchmarks",
+          "page": 16
+        },
+        {
+          "heading": "9.2 Cost Analysis (Normalized)",
+          "page": 17
+        },
+        {
+          "heading": "9.4 Indexing Reliability and Corpus Coverage",
+          "page": 19
+        },
+        {
+          "heading": "9.5 Answer Correctness on Full 15-Question Suite",
+          "page": 22
+        },
+        {
+          "heading": "9.6 Generalization Across Repositories",
+          "page": 22
+        },
+        {
+          "heading": "9.6.1 ThingsBoard",
+          "page": 22
+        },
+        {
+          "heading": "9.6.2 OpenMRS Core",
+          "page": 22
+        },
+        {
+          "heading": "9.7 Correctness Summary",
+          "page": 23
+        },
+        {
+          "heading": "9.8 Comparative Analysis",
+          "page": 24
+        },
+        {
+          "heading": "10 Discussion",
+          "page": 25
+        },
+        {
+          "heading": "11 Threats to Validity",
+          "page": 26
+        },
+        {
+          "heading": "11.1 Internal Validity",
+          "page": 26
+        },
+        {
+          "heading": "11.2 External Validity",
+          "page": 26
+        },
+        {
+          "heading": "11.3 Construct Validity",
+          "page": 26
+        },
+        {
+          "heading": "12 Reproducibility and Artifact Availability",
+          "page": 27
+        },
+        {
+          "heading": "12.1 Artifacts Provided",
+          "page": 27
+        },
+        {
+          "heading": "12.2 Target Codebase and Version Pinning",
+          "page": 27
+        },
+        {
+          "heading": "12.3 Environment and Dependencies",
+          "page": 28
+        },
+        {
+          "heading": "12.4 Running the Benchmarks",
+          "page": 28
+        },
+        {
+          "heading": "12.5 Outputs, Logs, and Metric Extraction",
+          "page": 28
+        },
+        {
+          "heading": "12.6 Reproducing Summary Tables",
+          "page": 28
+        },
+        {
+          "heading": "12.7 Notes on Stochasticity",
+          "page": 29
+        },
+        {
+          "heading": "13 Ethical Considerations",
+          "page": 29
+        },
+        {
+          "heading": "14 Limitations and Future Work",
+          "page": 29
+        },
+        {
+          "heading": "15 Conclusion",
+          "page": 30
+        },
+        {
+          "heading": "References",
+          "page": 31
+        },
+        {
+          "heading": "B Prompts",
+          "page": 41
+        },
+        {
+          "heading": "C Graph Schema and Edge Types (Implemented)",
+          "page": 42
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 17,
+          "caption": "Indexing time breakdown."
+        },
+        "Table 2": {
+          "page": 18,
+          "caption": "Query-time latency over theQ= 15 question suite (from JSON"
+        },
+        "Table 3": {
+          "page": 18,
+          "caption": "End-to-end run cost (absolute USD) across workloads (indexing +"
+        },
+        "Table 4": {
+          "page": 18,
+          "caption": "End-to-end run cost normalized to No-Graph (No-Graph = 1.0 per"
+        },
+        "Table 5": {
+          "page": 20,
+          "caption": "Code Coverage and Knowledge Extraction Completeness (Shopizer)"
+        },
+        "Table 6": {
+          "page": 22,
+          "caption": "Code Coverage and Graph Completeness (ThingsBoard)"
+        },
+        "Table 7": {
+          "page": 23,
+          "caption": "Code Coverage and Graph Completeness (OpenMRS-core)"
+        },
+        "Table 8": {
+          "page": 23,
+          "caption": "Correctness Summary on Full Shopizer Question Suite (from Ta-"
+        },
+        "Table 9": {
+          "page": 24,
+          "caption": "Correctness Summary Across Repositories (Q= 15 per repository;"
+        },
+        "Table 10": {
+          "page": 35,
+          "caption": "Correctness Comparison of RAG Strategies on the Full Shopizer"
+        },
+        "Table 11": {
+          "page": 36,
+          "caption": "Correctness Comparison of RAG Strategies on the ThingsBoard"
+        },
+        "Table 12": {
+          "page": 39,
+          "caption": "Correctness Comparison of RAG Strategies on the OpenMRS"
+        },
+        "Table 13": {
+          "page": 46,
+          "caption": "Graph Schema Summary: Node and Edge Types (DKB vs. LLM-"
+        }
+      },
+      "algorithms_pages": {
+        "Algorithm 1": {
+          "page": 10,
+          "caption": "Graph-aware context assembly (bidirectional)"
+        }
+      },
+      "figures_pages": {
+        "Figure 1": {
+          "page": 9,
+          "caption": "Graph artifacts generated for the same Java codebase (Shopizer)."
+        },
+        "Figure 2": {
+          "page": 19,
+          "caption": "Normalized end-to-end run cost across workloads. Costs are nor-"
+        }
+      },
+      "citation_ieee": "M. R. Chinthareddy, \"Reliable Graph-RAG for Codebases: AST-Derived Graphs vs LLM-Extracted Knowledge Graphs,\" arXiv:2601.08773v1 [cs.SE], Jan. 2026.",
+      "version_type": "arxiv_preprint",
+      "key_benchmark_metrics": {
+        "corpus": "45 multi-hop architectural tracing queries across Shopizer (pinned commit 6a4a0a65), ThingsBoard, and OpenMRS Core (Tables 1-9 p.17-24)",
+        "index_speed_and_cost": "DKB 2-pass Tree-sitter builds in 2.81 s (Shopizer), 13.77 s (ThingsBoard), 5.60 s (OpenMRS) vs LLM-KB 200-884 s, 0.650-0.806 file SR, 19.75-45.64x cost (Tables 1,3-7)",
+        "correctness": "DKB scores 43/45 (15/15 Shopizer) vs 31/45 No-Graph (6/15 Shopizer) powered by InterfaceConsumerExpand (Tables 8-9 p.23-24)"
+      },
+      "visual_audit_notes": "arXiv:2601.08773v1 preprint (13 Jan 2026). Benchmarks Evo's exact Shopizer commit (6a4a0a65), exposing Evo's ~91x Cold graph-build latency gap (257.46 s vs 2.81 s) and ThingsBoard OOM.",
+      "evo_transfer_tags": [
+        "interface-consumer-expand",
+        "fast-path-ast-tier",
+        "45-query-real-java-qa"
+      ],
+      "evo_target_classes": [
+        "RepoMapBuilder.java",
+        "TreeSitterSourceFrontend.java",
+        "ArchitectureQueryService.java",
+        "McpToolDispatcher.java"
+      ],
+      "deep_takeaway": "Benchmarks vector-only RAG, LLM-extracted knowledge graphs (LLM-KB), and deterministic two-pass tree-sitter-java AST graphs (DKB) across 45 architectural tracing queries on Shopizer (6a4a0a65), ThingsBoard, and OpenMRS Core. DKB builds its typed injects/extends/implements graph in 2.81-13.77 s (vs 200-884 s, 0.650-0.806 file success, and 19.75-45.64x cost for LLM-KB) and achieves 43/45 correctness (15/15 Shopizer vs 6/15 vector-only), propelled by bidirectional traversal and InterfaceConsumerExpand across Java DI interfaces. Exposes Evo's ~91x Shopizer cold-build latency gap while supplying InterfaceConsumerExpand for RepoMapBuilder, a sub-5s fast-path AST tier blueprint, and a pinned 45-query real-Java QA suite."
+    },
+    {
+      "id": "repoprobe2026",
+      "short_name": "RepoProbe",
+      "canonical_file": "2026_ASE_RepoProbe_2608.04783.pdf",
+      "original_file": "2608.04783v2.pdf",
+      "pillar": "P3_SKG_GraphRAG_TacitKnowledge",
+      "title": "RepoProbe: Benchmarking Architecture-Aware Repository Comprehension with Checklists",
+      "authors": [
+        "Yuexi Yang",
+        "Alyssa Wu",
+        "Ji Luo",
+        "Richeng Xuan",
+        "Zhichao Hu",
+        "Yuhong Liu",
+        "Zhen Qin"
+      ],
+      "venue": "ASE 2026",
+      "year": 2026,
+      "doi": "10.1145/3832783.3837452",
+      "arxiv_id": "2608.04783v2",
+      "pages": 13,
+      "size_bytes": 1577805,
+      "sha256": "1136993ef7ba5372965db523a152d75472f471de30c605354ca16b6b258c377e",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_ASE_RepoProbe_2608.04783.txt",
+      "text_chars": 71063,
+      "pdf_metadata_note": "ASE '26 author copy with arXiv:2608.04783v2 stamp (6 Aug 2026) and ACM DOI 10.1145/3832783.3837452.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Related Work",
+          "page": 2
+        },
+        {
+          "heading": "2.1 Repository-Level Benchmarks for Code",
+          "page": 2
+        },
+        {
+          "heading": "2.2 Repository-Level Reasoning and Navigation",
+          "page": 3
+        },
+        {
+          "heading": "2.3 Evaluation of Open-Ended Code QA",
+          "page": 3
+        },
+        {
+          "heading": "3 RepoProbe Benchmark",
+          "page": 4
+        },
+        {
+          "heading": "3.1 Task Definition",
+          "page": 4
+        },
+        {
+          "heading": "3.2 Data Curation",
+          "page": 4
+        },
+        {
+          "heading": "3.3 Statistics of RepoProbe benchmark",
+          "page": 6
+        },
+        {
+          "heading": "4 Checklist-Based Verification Protocol",
+          "page": 6
+        },
+        {
+          "heading": "4.1 Checklist Structure",
+          "page": 6
+        },
+        {
+          "heading": "4.2 Constrained LLM Evaluation via",
+          "page": 6
+        },
+        {
+          "heading": "5 Experimental Evaluation",
+          "page": 7
+        },
+        {
+          "heading": "5.1 Experimental Setup",
+          "page": 7
+        },
+        {
+          "heading": "5.2 RQ1: Performance of Language Models",
+          "page": 7
+        },
+        {
+          "heading": "5.3 RQ2: Stability and Interpretability of",
+          "page": 9
+        },
+        {
+          "heading": "5.4 RQ3: Architectural Insight over Edit Bias",
+          "page": 10
+        },
+        {
+          "heading": "6 Threats to Validity",
+          "page": 11
+        },
+        {
+          "heading": "7 Conclusion",
+          "page": 11
+        },
+        {
+          "heading": "Acknowledgement",
+          "page": 11
+        },
+        {
+          "heading": "References",
+          "page": 11
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 3,
+          "caption": "Comparison Between RepoProbe and Representative Code Understanding Benchmarks"
+        },
+        "Table 2": {
+          "page": 5,
+          "caption": "RepoProbe Benchmark Statistics"
+        },
+        "Table 3": {
+          "page": 8,
+          "caption": "Language model performance on the four evaluation metrics, reported as percentages. For each metric, the best-"
+        },
+        "Table 4": {
+          "page": 8,
+          "caption": "Stratified RepoProbe performance summarized"
+        },
+        "Table 5": {
+          "page": 9,
+          "caption": "Reliability Comparison: Scalar vs. Checklist. Across"
+        },
+        "Table 6": {
+          "page": 10,
+          "caption": "Instability of Scalar Scoring (Micro-Analysis). Case 1 (Variance): Independent judges fundamentally disagree on"
+        },
+        "Table 7": {
+          "page": 10,
+          "caption": "Breakdown of Failure Modes across Top Models"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 2,
+          "caption": "Without appropriate repository understanding,"
+        },
+        "Figure 2": {
+          "page": 5,
+          "caption": "RepoProbe data curation pipeline from answered GitHub Discussions to self-contained, checklist-scored Q&A tasks."
+        },
+        "Figure 3": {
+          "page": 6,
+          "caption": "Distribution of RepoProbe questions by programming language (left), code-understanding category (center), and"
+        },
+        "Figure 4": {
+          "page": 11,
+          "caption": "Case Study: The “Leading Question” Trap. RepoProbe uses Discussion data to expose models that blindly follow user"
+        }
+      },
+      "citation_ieee": "Y. Yang, A. Wu, J. Luo, R. Xuan, Z. Hu, Y. Liu, and Z. Qin, \"RepoProbe: Benchmarking Architecture-Aware Repository Comprehension with Checklists,\" in Proc. 41st IEEE/ACM Int. Conf. Automated Software Engineering (ASE '26), Munich, Germany, Oct. 2026, doi: 10.1145/3832783.3837452.",
+      "version_type": "author_copy",
+      "key_benchmark_metrics": {
+        "corpus": "500 real GitHub Discussion Q&As across 50 post-2024 repos (15 languages, ~380k avg LOC; Table 2 p.5)",
+        "frontier_scores": "Top models peak at 62.7% (GPT-5.2) / 62.1% (Claude Opus 4.6) overall and 26.0-27.5% perfect solve despite 79-85.6% clarity (Table 3 p.8)",
+        "protocol_and_edit_bias": "10-point atomic Checklist halves judge StdDev (1.5-2.4% vs 2.9-3.5% scalar; Table 5 p.9); Edit Bias accounts for 10.4-24.0% (15.8% avg) of failures (Table 7 p.10)"
+      },
+      "visual_audit_notes": "ASE '26 accepted author copy with arXiv:2608.04783v2 stamp and confirmed ACM DOI 10.1145/3832783.3837452. Visual Fig. 3 audit confirmed Java represents only 2.4% of RepoProbe questions, and Ref [49] public dataset URL is still 'TODO'.",
+      "evo_transfer_tags": [
+        "10pt-atomic-checklist-eval",
+        "replace-synthetic-e9",
+        "pre-edit-config-gate"
+      ],
+      "evo_target_classes": [
+        "RepairContextPlanner.java",
+        "McpToolDispatcher.java",
+        "benchmarks/e0-publication-suite/"
+      ],
+      "deep_takeaway": "Introduces an open-ended repository comprehension benchmark of 500 Q&As mined from GitHub Discussions across 50 post-2024 repos (15 languages, only 2.4% Java) scored via a constrained 10-point atomic Checklist-Based Verification Protocol. Evaluating 20 frontier LLMs reveals high clarity (79-85.6%) masking low perfect-solve rates (26.0-27.5%) and pervasive Edit Bias (10.4-24.0% of failures), while checklist verification halves judge variance (StdDev 1.5-2.4% vs 2.9-3.5% scalar). Directly guides Evo to replace synthetic [E9-RRF] with a Checklist-scored real comprehension harness (evaluating Evo MCP vs raw search) and add a pre-edit config/architecture check gate in RepairContextPlanner."
+    },
+    {
+      "id": "praxis2027",
+      "short_name": "PRAXIS",
+      "canonical_file": "2027_ICSE_PRAXIS_2608.19784.pdf",
+      "original_file": "2608.19784v2.pdf",
+      "pillar": "P3_SKG_GraphRAG_TacitKnowledge",
+      "title": "PRAXIS: Graph-Grounded Tacit Knowledge for Domain Coding Agent",
+      "authors": [
+        "Xue Jiang",
+        "Tianyu Zhang",
+        "Lingwei Wu",
+        "Ziyu Wang",
+        "Yuan Sui",
+        "Hao Zhu",
+        "Wenpin Jiao",
+        "Zhi Jin",
+        "Ge Li",
+        "Yihong Dong"
+      ],
+      "venue": "ICSE 2027",
+      "year": 2027,
+      "doi": null,
+      "arxiv_id": "2608.19784v2",
+      "pages": 13,
+      "size_bytes": 676131,
+      "sha256": "4f6d9a37a5bd80b26a6a497d8213633c08c341f26def288813ad864d06a212be",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2027_ICSE_PRAXIS_2608.19784.txt",
+      "text_chars": 71152,
+      "pdf_metadata_note": "PDF copy is arXiv:2608.19784v2 preprint (24 Nov 2026, IEEE 2-column format; accepted to ICSE 2027).",
+      "section_map": [
+        {
+          "heading": "I. INTRODUCTION",
+          "page": 1
+        },
+        {
+          "heading": "II. MOTIVATION",
+          "page": 2
+        },
+        {
+          "heading": "A. Preliminary Experiments",
+          "page": 2
+        },
+        {
+          "heading": "B. Case Analysis",
+          "page": 2
+        },
+        {
+          "heading": "C. Three Properties of Tacit Knowledge",
+          "page": 3
+        },
+        {
+          "heading": "III. PRAXIS",
+          "page": 4
+        },
+        {
+          "heading": "A. Problem Formulation",
+          "page": 4
+        },
+        {
+          "heading": "B. Overview",
+          "page": 4
+        },
+        {
+          "heading": "C. In-Domain Development Practice",
+          "page": 4
+        },
+        {
+          "heading": "D. Structured Knowledge Acquisition",
+          "page": 5
+        },
+        {
+          "heading": "E. Graph-Grounded Knowledge Organization",
+          "page": 5
+        },
+        {
+          "heading": "IV. EXPERIMENTS",
+          "page": 6
+        },
+        {
+          "heading": "A. Experimental Setup",
+          "page": 6
+        },
+        {
+          "heading": "B. Overall Effectiveness and Component Contribution",
+          "page": 7
+        },
+        {
+          "heading": "C. Generalization and Adaptability",
+          "page": 7
+        },
+        {
+          "heading": "D. Practice Scaling and Continual Evolution",
+          "page": 7
+        },
+        {
+          "heading": "E. Further Analysis",
+          "page": 8
+        },
+        {
+          "heading": "V. RELATEDWORK",
+          "page": 9
+        },
+        {
+          "heading": "A. Domain Code Generation",
+          "page": 9
+        },
+        {
+          "heading": "B. LLM Agents for Code Generation",
+          "page": 10
+        },
+        {
+          "heading": "C. Experience and Skill Evolution for Code Agents",
+          "page": 10
+        },
+        {
+          "heading": "VI. THREATS TOVALIDITY",
+          "page": 10
+        },
+        {
+          "heading": "VII. CONCLUSION",
+          "page": 11
+        },
+        {
+          "heading": "ACKNOWLEDGMENT",
+          "page": 11
+        },
+        {
+          "heading": "REFERENCES",
+          "page": 11
+        }
+      ],
+      "key_tables_pages": {
+        "Table I": {
+          "page": 8,
+          "caption": "OVERALL EFFECTIVENESS ONKOCO-BENCH.BOLDINDICATES THE BEST RESULT PER COLUMN;UNDERLINE INDICATES THE SECOND BEST. AVERAGE"
+        },
+        "Table II": {
+          "page": 8,
+          "caption": "RESULTS OFABLATIONSTUDY."
+        },
+        "Table III": {
+          "page": 8,
+          "caption": "GENERALIZATION ACROSS AGENT FRAMEWORKS AND BASE MODELS ON"
+        },
+        "Table IV": {
+          "page": 9,
+          "caption": "RESULTS ONAINSTEINBENCH. %RESOLVED REPORTS THE PROPORTION OF BUG-FIXING TASKS FULLY RESOLVED. DIFFICULTY STRATIFIES RESU"
+        },
+        "Table V": {
+          "page": 9,
+          "caption": "HUMAN QUALITY ASSESSMENT OF EXTRACTED KNOWLEDGE UNITS"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 2,
+          "caption": "Results of preliminary experiments."
+        },
+        "Figure 2": {
+          "page": 3,
+          "caption": "Dependency Relationship of Contract (B)."
+        },
+        "Figure 3": {
+          "page": 5,
+          "caption": "Overview of PRAXIS."
+        },
+        "Figure 4": {
+          "page": 8,
+          "caption": "Results of performance scaling and token cost."
+        },
+        "Figure 5": {
+          "page": 8,
+          "caption": "Results of Online Knowledge Evolution with PRAXIS."
+        }
+      },
+      "citation_ieee": "X. Jiang et al., \"PRAXIS: Graph-Grounded Tacit Knowledge for Domain Coding Agent,\" in Proc. IEEE/ACM Int. Conf. Software Engineering (ICSE '27), 2027. (Preprint: arXiv:2608.19784v2, Nov. 2026)",
+      "version_type": "preprint_of_accepted",
+      "key_benchmark_metrics": {
+        "corpus": "KoCo-Bench (25 domain repos) & AInsteinBench (6 scientific repos); cites Chinthareddy-DKB [21] (Tables I-V p.8-9)",
+        "effectiveness": "32.06% Pass@1 on KoCo-Bench with DeepSeek-V3.2 (+16.7% rel over OpenCollab; 42.75% GPT-5.5; Table I & III p.8) and 31.2% on AInsteinBench (+4.0 pp; Table IV p.9)",
+        "quality_and_poisoning": "Human truthfulness 4.28/5 (Spearman rho=0.75; Table V p.9); static deps+summaries plateau at 19.08-24.0%; unvalidated SWE-Exp poisons accuracy to 7.83%"
+      },
+      "visual_audit_notes": "arXiv:2608.19784v2 preprint (24 Nov 2026; accepted ICSE 2027). Verified Eq. 6-9 propagation/Noisy-OR/injection math and confirmed SWE-Exp's 7.83% unvalidated memory poisoning collapse.",
+      "evo_transfer_tags": [
+        "quarantined-tacit-memory",
+        "4hop-noisy-or-propagation",
+        "proactive-mcp-injection",
+        "sandbox-gated-beta-decay"
+      ],
+      "evo_target_classes": [
+        "AdvisoryOverlayService.java",
+        "McpToolDispatcher.java",
+        "RepairContextPlanner.java",
+        "CapturedRepairRunner.java",
+        "CapturedRepairVerification.java"
+      ],
+      "deep_takeaway": "Demonstrates that even with 100% ground-truth code dependencies and static summaries, coding agents plateau (19.08-24.0%) due to latent, dispersed tacit knowledge, solved via four stages: offline differential practice, 4-tuple procedural memory distillation, 4-hop graph propagation with Noisy-OR dedup, and proactive Task-Init + Tool-Interaction injection. Reaches 32.06% Pass@1 on KoCo-Bench (42.75% GPT-5.5) and 31.2% on AInsteinBench (4.28/5 truthfulness, rho=0.75), while unvalidated SWE-Exp poisons performance to 7.83%. Maps cleanly into Evo as a strictly quarantined TacitMemoryStore inside AdvisoryOverlayService (canonicalLeakage=0, llm-redact:v2, SHA-256 span-pinned), populated exclusively from QEMU/Docker verified runs and proactively surfaced via McpToolDispatcher."
+    },
+    {
+      "id": "refagent2026",
+      "short_name": "RefAgent",
+      "canonical_file": "2026_ICSE_RefAgent_2511.03153.pdf",
+      "original_file": "2511.03153v2.pdf",
+      "pillar": "P4_Verified_Refactoring_Repair",
+      "title": "RefAgent: A Multi-agent LLM-based Framework for Automatic Software Refactoring",
+      "authors": [
+        "Khouloud Oueslati",
+        "Maxime Lamothe",
+        "Foutse Khomh"
+      ],
+      "venue": "ICSE 2026",
+      "year": 2026,
+      "doi": null,
+      "arxiv_id": "2511.03153v2",
+      "pages": 13,
+      "size_bytes": 6961815,
+      "sha256": "0285ab3f259d19dd917a97bfbd221202c607ca2976190d17dc68a4af7972fc82",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_ICSE_RefAgent_2511.03153.txt",
+      "text_chars": 79756,
+      "pdf_metadata_note": "PDF copy is arXiv:2511.03153v2 preprint (4 Mar 2026) retaining ACM template placeholder ('Conference acronym XX, Woodstock, NY'); accepted at ICSE 2026.",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1 Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2 Background and Related Work",
+          "page": 2
+        },
+        {
+          "heading": "3 RefAgent Approach",
+          "page": 3
+        },
+        {
+          "heading": "3.1 Overview",
+          "page": 3
+        },
+        {
+          "heading": "3.2 Context-aware Planner Agent",
+          "page": 3
+        },
+        {
+          "heading": "3.3 Refactoring Generator Agent",
+          "page": 4
+        },
+        {
+          "heading": "3.4 Compiler Agent",
+          "page": 4
+        },
+        {
+          "heading": "3.5 Tester Agent",
+          "page": 4
+        },
+        {
+          "heading": "4 Experimental Methodology",
+          "page": 5
+        },
+        {
+          "heading": "4.1 Studied Models and Dataset",
+          "page": 5
+        },
+        {
+          "heading": "4.2 Impact on Software Quality Assessment",
+          "page": 5
+        },
+        {
+          "heading": "4.3 Identification of Refactoring opportunities",
+          "page": 5
+        },
+        {
+          "heading": "5 Results",
+          "page": 6
+        },
+        {
+          "heading": "5.1 RQ1: How effective is our approach in",
+          "page": 6
+        },
+        {
+          "heading": "5.2 RQ2: How effective is our approach in",
+          "page": 8
+        },
+        {
+          "heading": "5.3 RQ3: What is the contribution of each",
+          "page": 9
+        },
+        {
+          "heading": "6 Discussion",
+          "page": 10
+        },
+        {
+          "heading": "7 Threats to Validity",
+          "page": 11
+        },
+        {
+          "heading": "8 Conclusion",
+          "page": 11
+        },
+        {
+          "heading": "9 Data Availability",
+          "page": 11
+        },
+        {
+          "heading": "References",
+          "page": 12
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 5,
+          "caption": "Dataset Overview"
+        },
+        "Table 2": {
+          "page": 6,
+          "caption": "QMOOD Computation Equations."
+        },
+        "Table 3": {
+          "page": 7,
+          "caption": "RefAgent Performance Evaluation Across 8 Projects"
+        },
+        "Table 4": {
+          "page": 8,
+          "caption": "Median values of Precision, Recall, F1-score of RefA-"
+        },
+        "Table 5": {
+          "page": 8,
+          "caption": "QMOOD Improvement Rates (IR) values across dif-"
+        },
+        "Table 6": {
+          "page": 9,
+          "caption": "Comparison of test pass rates and compilation pass"
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 3,
+          "caption": "RefAgent Overview"
+        },
+        "Figure 2": {
+          "page": 3,
+          "caption": "Context-aware Planner Prompt"
+        },
+        "Figure 3": {
+          "page": 4,
+          "caption": "Illustrative example of the Refactoring Generator"
+        },
+        "Figure 4": {
+          "page": 7,
+          "caption": "Comparison of Design and Implementation Code"
+        },
+        "Figure 5": {
+          "page": 7,
+          "caption": "Comparison of Top 12 Refactoring Types counts"
+        },
+        "Figure 6": {
+          "page": 9,
+          "caption": "Improvement rate of QMood Metrics: RefAgent-"
+        },
+        "Figure 7": {
+          "page": 10,
+          "caption": "Distribution of test pass rates and compilation pass"
+        },
+        "Figure 8": {
+          "page": 10,
+          "caption": "Test and Compilation Pass Rate Across Iterations"
+        },
+        "Figure 9": {
+          "page": 10,
+          "caption": "True Positive and False Positive rates of the tools"
+        }
+      },
+      "citation_ieee": "K. Oueslati, M. Lamothe, and F. Khomh, \"RefAgent: A Multi-agent LLM-based Framework for Automatic Software Refactoring,\" in Proc. 48th IEEE/ACM Int. Conf. Software Engineering (ICSE '26), 2026. (Preprint: arXiv:2511.03153v2, Mar. 2026)",
+      "version_type": "preprint_of_accepted",
+      "key_benchmark_metrics": {
+        "corpus": "8 large Apache Java repos (2.78M LOC) across GPT-4o, DeepSeekCoder-33B, and StarCoder2-15B (Table 1 p.5)",
+        "effectiveness": "85-90.5% med. unit test pass (+45.5 pp vs Pass@1), -50 to -53.5% med. smells, 80% F1 dev alignment; plateaus at iteration 12 (Tables 3-6 p.7-9, Fig. 8 p.10)",
+        "caveats": "Runs directly on host OS; skips classes >4,096 tokens (drops God Classes); degrades QMOOD Understandability by -14.34% (Table 5 p.8); zero API cost reported"
+      },
+      "visual_audit_notes": "arXiv:2511.03153v2 preprint (4 Mar 2026; accepted ICSE 2026) retaining ACM 'Woodstock, NY' header and anonymous GitHub URL. Visual audit caught Table 3 vs Table 6 minor DeepSeekCoder drift and duplicated Understandability equation in Table 2.",
+      "evo_transfer_tags": [
+        "decoupled-metrics-planner",
+        "iter12-sandbox-reflexion",
+        "qmood-understandability-guard"
+      ],
+      "evo_target_classes": [
+        "RepairContextPlanner.java",
+        "CapturedRepair.java",
+        "BehavioralDiffService.java",
+        "SpringPreservationChecker.java"
+      ],
+      "deep_takeaway": "Introduces a 4-agent LLM refactoring framework (Context-Aware Planner using jdeps + DesigniteJava numeric metrics without smell labels, Generator, Compiler, Tester with EvoSuite pre-refactoring tests) evaluated on 8 Apache Java repos (2.78M LOC). Achieves 85-90.5% median unit test pass (+45.5 pp over Pass@1), 50-53.5% median smell reduction, and 80% F1 developer alignment while plateauing at iteration 12, though it executes unsandboxed on the host, skips >4,096-token classes, and degrades QMOOD Understandability by -14.34%. Validates decoupled metrics-only planning and <=12-iteration Tier-1 sandbox self-healing for Evo while underscoring why Evo's QEMU/Hyper-V isolation, SpringPreservationChecker, and Understandability non-regression gates are indispensable."
+    },
+    {
+      "id": "swerefactor2026",
+      "short_name": "SWE-Refactor",
+      "canonical_file": "2026_arXiv_SWE-Refactor_2602.03712.pdf",
+      "original_file": "2602.03712v1.pdf",
+      "pillar": "P4_Verified_Refactoring_Repair",
+      "title": "SWE-Refactor: A Repository-Level Benchmark for Real-World LLM-Based Code Refactoring",
+      "authors": [
+        "Yisen Xu",
+        "Jinqiu Yang",
+        "Tse-Hsun (Peter) Chen"
+      ],
+      "venue": "arXiv (cs.SE)",
+      "year": 2026,
+      "doi": null,
+      "arxiv_id": "2602.03712v1",
+      "pages": 17,
+      "size_bytes": 720035,
+      "sha256": "b4a33afcfdedea649b8870c382598c7748994bf3d399e15d29f24ce39bb9c249",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_arXiv_SWE-Refactor_2602.03712.txt",
+      "text_chars": 70298,
+      "pdf_metadata_note": "arXiv:2602.03712v1 preprint (3 Feb 2026).",
+      "section_map": [
+        {
+          "heading": "Abstract",
+          "page": 1
+        },
+        {
+          "heading": "1. Introduction",
+          "page": 1
+        },
+        {
+          "heading": "2. Related Work",
+          "page": 3
+        },
+        {
+          "heading": "3. SWE-Refactor",
+          "page": 4
+        },
+        {
+          "heading": "3.1. Overview",
+          "page": 4
+        },
+        {
+          "heading": "3.2. Task and Verification Metrics",
+          "page": 4
+        },
+        {
+          "heading": "3.3. Automated Benchmark Construction Pipeline",
+          "page": 5
+        },
+        {
+          "heading": "4. Experiment",
+          "page": 6
+        },
+        {
+          "heading": "4.2. Performance across Refactoring Types",
+          "page": 6
+        },
+        {
+          "heading": "4.3. Impact of Context Augmentation and Multi-Agent",
+          "page": 7
+        },
+        {
+          "heading": "4.4. Scalability to Agentic Scaffolding",
+          "page": 7
+        },
+        {
+          "heading": "5. Discussion",
+          "page": 8
+        },
+        {
+          "heading": "6. Conclusion",
+          "page": 8
+        },
+        {
+          "heading": "References",
+          "page": 8
+        },
+        {
+          "heading": "Appendix",
+          "page": 12
+        },
+        {
+          "heading": "A. Dataset Hosting",
+          "page": 12
+        },
+        {
+          "heading": "B. Use of Large Language Models (LLMs)",
+          "page": 12
+        },
+        {
+          "heading": "C. Refactoring Type Definitions",
+          "page": 12
+        },
+        {
+          "heading": "D. Project Selection and Refactoring Distribution",
+          "page": 13
+        },
+        {
+          "heading": "E. Prompt Templates for Different Refactoring Types",
+          "page": 13
+        },
+        {
+          "heading": "F. RAG Construction for Refactoring Retrieval",
+          "page": 15
+        },
+        {
+          "heading": "G. Workflow for Multi-Agent",
+          "page": 17
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 2,
+          "caption": "The comparison between existing benchmarks andSWE-Refactor.Compound refactoringmeans there can be multiple code"
+        },
+        "Table 2": {
+          "page": 7,
+          "caption": "Evaluation of 9 LLMs onSWE-Refactor. The table presents the number of refactorings to perform, compile-and-test success"
+        },
+        "Table 3": {
+          "page": 8,
+          "caption": "Performance of LLMs across six refactoring types.EM= Extract Method,IM= Inline Method,MM= Move Method,RM="
+        },
+        "Table 4": {
+          "page": 13,
+          "caption": "Overview of Java projects used in the construction ofSWE-Refactor."
+        }
+      },
+      "algorithms_pages": {},
+      "figures_pages": {
+        "Figure 1": {
+          "page": 5,
+          "caption": "An overview of the data inSWE-Refactor."
+        },
+        "Figure 2": {
+          "page": 6,
+          "caption": "Our Automated Pipeline to ConstructSWE-Refactor."
+        },
+        "Figure 3": {
+          "page": 7,
+          "caption": "Comparison of successful refactorings."
+        },
+        "Figure 4": {
+          "page": 16,
+          "caption": "RAG Construction and Retrieval Pipeline."
+        }
+      },
+      "citation_ieee": "Y. Xu, J. Yang, and T.-H. Chen, \"SWE-Refactor: A Repository-Level Benchmark for Real-World LLM-Based Code Refactoring,\" arXiv:2602.03712v1 [cs.SE], Feb. 2026.",
+      "version_type": "arxiv_preprint",
+      "key_benchmark_metrics": {
+        "corpus": "1,099 pure developer-written Java refactorings (922 atomic, 177 compound across 6 types) mined from 18 mature OSS repos (Table 4 p.13)",
+        "llm_and_compound_cliff": "DeepSeek-V3 41.58% (457/1,099), gpt-4o-mini Multi-Agent 52.68% (579/1,099, lifting EM+MM 3.48x 33->115); GPT-5.1-Codex drops from 82.6% (138/167) atomic to 39.4% (13/33) compound (Tables 2-3 p.7-8)",
+        "dual_gate_oracle": "Requires BOTH Compile&Test AND RefactoringMiner AST purity check (catching empty-method test-overfitting cheats, Sec 5 p.8)"
+      },
+      "visual_audit_notes": "arXiv:2602.03712v1 preprint (3 Feb 2026); Appendix A URL still says 'To be released:'. Visual PDF check on p.8 confirmed gpt-4o-mini Table 3 values (MM+RM=1, MM+IM=0), Fig. 3 stacked bars, and exposed an artificial 'public static' prompt constraint in Appendix E (p.14-15).",
+      "evo_transfer_tags": [
+        "ast-refactoring-purity-gate",
+        "openrewrite-compound-recipes",
+        "multi-jdk-sandbox",
+        "18-repo-java-benchmark"
+      ],
+      "evo_target_classes": [
+        "CapturedRepairVerification.java",
+        "JavaRepairRecipes.java",
+        "CapturedRepairRunner.java",
+        "analyzer-execution/src/main/resources/captured-repair/run.py"
+      ],
+      "deep_takeaway": "Contributes an automatically mined, executable repository-level Java benchmark of 1,099 pure developer refactorings (922 atomic, 177 compound) across 18 OSS projects via RefactoringMiner + PurityChecker, Eclipse JDT cross-file context, multi-JDK builds, and JaCoCo coverage filtering. Evaluating 9 LLMs, RRF RAG, a 2-agent Developer/Reviewer workflow (52.68% with gpt-4o-mini), and GPT-5.1-Codex exposes a steep compound-refactoring cliff (82.6% atomic vs 39.4% compound) and empty-method test-overfitting cheats caught only by AST Refactoring Verification. Supplies Evo with a multi-project Java benchmark blueprint, motivates deterministic compound OpenRewrite recipes in JavaRepairRecipes, and establishes AST transformation purity gating alongside sandbox test execution."
+    },
+    {
+      "id": "causalrepair2026",
+      "short_name": "CausalRepair",
+      "canonical_file": "2026_ISSTA_CausalRepair_2608.10613.pdf",
+      "original_file": "2608.10613v1.pdf",
+      "pillar": "P4_Verified_Refactoring_Repair",
+      "title": "CausalRepair: Bridging the Causality Gap in Large Language Model-Based Automated Program Repair via Dual-Slicing",
+      "authors": [
+        "Linhao Wu",
+        "Yizhou Chen",
+        "Zhen Yang",
+        "Pengyu Xue",
+        "Dan Hao"
+      ],
+      "venue": "Proc. ACM Softw. Eng. (ISSTA 2026)",
+      "year": 2026,
+      "doi": "10.1145/3832225",
+      "arxiv_id": "2608.10613v1",
+      "pages": 24,
+      "size_bytes": 2159729,
+      "sha256": "9976f0a10698f452387cc3eb5ecf800a05d09c6b153adc8350a8f38e5cd95c6f",
+      "text_cache_path": "C:\\Users\\Admin\\.gemini\\antigravity-cli\\brain\\bf6c630e-53ce-4cd9-b7bb-a32dd36f8a74\\scratch\\sota-19\\txt\\2026_ISSTA_CausalRepair_2608.10613.txt",
+      "text_chars": 107844,
+      "pdf_metadata_note": "ISSTA 2026 author copy (PACMSE Vol. 3, Art. ISSTA134, Oct 2026, DOI 10.1145/3832225) with arXiv:2608.10613v1 stamp (11 Aug 2026).",
+      "section_map": [
+        {
+          "heading": "1 Introduction",
+          "page": 2
+        },
+        {
+          "heading": "2 Motivation",
+          "page": 3
+        },
+        {
+          "heading": "2.1 Motivating Example",
+          "page": 3
+        },
+        {
+          "heading": "2.2 Insight",
+          "page": 4
+        },
+        {
+          "heading": "3 Approach",
+          "page": 5
+        },
+        {
+          "heading": "3.1 Framework Overview",
+          "page": 5
+        },
+        {
+          "heading": "3.2 Phase 1: Constructing Minimal Causal Context",
+          "page": 5
+        },
+        {
+          "heading": "3.3 Phase 2: Conversation-Driven Iterative Repair",
+          "page": 7
+        },
+        {
+          "heading": "3.4 Phase 3: Patch Augmentation",
+          "page": 9
+        },
+        {
+          "heading": "4 Experimental Setup",
+          "page": 9
+        },
+        {
+          "heading": "4.1 Research Questions",
+          "page": 9
+        },
+        {
+          "heading": "4.2 Benchmarks",
+          "page": 10
+        },
+        {
+          "heading": "4.3 Baselines",
+          "page": 10
+        },
+        {
+          "heading": "4.4 Evaluation Metrics",
+          "page": 10
+        },
+        {
+          "heading": "4.5 Implementation",
+          "page": 11
+        },
+        {
+          "heading": "5 Experimental Results",
+          "page": 11
+        },
+        {
+          "heading": "5.1 RQ1: Repair Effectiveness",
+          "page": 11
+        },
+        {
+          "heading": "5.2 RQ2: Repair Scenarios",
+          "page": 13
+        },
+        {
+          "heading": "5.3 RQ3: Ablation Study",
+          "page": 14
+        },
+        {
+          "heading": "5.4 RQ4: Data Contamination Analysis",
+          "page": 15
+        },
+        {
+          "heading": "5.5 RQ5: Cost Analysis",
+          "page": 16
+        },
+        {
+          "heading": "6 Discussion",
+          "page": 16
+        },
+        {
+          "heading": "6.1 Evaluation on Recent Real-World Benchmarks",
+          "page": 16
+        },
+        {
+          "heading": "6.2 Robustness under Realistic Fault Localization",
+          "page": 17
+        },
+        {
+          "heading": "7 Threats to Validity",
+          "page": 18
+        },
+        {
+          "heading": "8 Related Work",
+          "page": 18
+        },
+        {
+          "heading": "8.1 Automated Program Repair",
+          "page": 18
+        },
+        {
+          "heading": "8.2 Program Slicing",
+          "page": 20
+        },
+        {
+          "heading": "9 Conclusion",
+          "page": 20
+        },
+        {
+          "heading": "10 Data-Availability Statement",
+          "page": 20
+        },
+        {
+          "heading": "Acknowledgments",
+          "page": 20
+        },
+        {
+          "heading": "References",
+          "page": 21
+        }
+      ],
+      "key_tables_pages": {
+        "Table 1": {
+          "page": 10,
+          "caption": "Statistics of studied benchmarks."
+        },
+        "Table 2": {
+          "page": 11,
+          "caption": "Repair results (correct fixes / plausible fixes) for CausalRepair and baselines on Defects4J."
+        },
+        "Table 3": {
+          "page": 14,
+          "caption": "Repair results (correct fixes / plausible fixes) of different repair scenarios for CausalRepair and"
+        },
+        "Table 4": {
+          "page": 15,
+          "caption": "Ablation results (correct fixes / plausible fixes) of CausalRepair with different components."
+        },
+        "Table 5": {
+          "page": 16,
+          "caption": "Repair results (correct fixes / plausible fixes) for CausalRepair and baselines on Defects4J-Trans."
+        },
+        "Table 6": {
+          "page": 16,
+          "caption": "Cost analysis for CausalRepair and baselines on Defects4J."
+        },
+        "Table 7": {
+          "page": 17,
+          "caption": "Repair Performance of CausalRepair on RWB."
+        },
+        "Table 8": {
+          "page": 17,
+          "caption": "Repair performance of CausalRepair on GitBug-Java."
+        }
+      },
+      "algorithms_pages": {
+        "Algorithm 1": {
+          "page": 8,
+          "caption": "CausalRepair"
+        }
+      },
+      "figures_pages": {
+        "Figure 1": {
+          "page": 4,
+          "caption": "Motivation Example of CausalRepair."
+        },
+        "Figure 2": {
+          "page": 5,
+          "caption": "Overview of CausalRepair."
+        },
+        "Figure 3": {
+          "page": 7,
+          "caption": "Illustration of the Prompt Construction."
+        },
+        "Figure 4": {
+          "page": 12,
+          "caption": "(a) and Figure 4(b) show that 39 and 16 bugs on Defects4J V1.2 and V2.0, respectively, can"
+        },
+        "Figure 5": {
+          "page": 13,
+          "caption": "Unique Fix Generated by CausalRepair for Lang-18."
+        },
+        "Figure 6": {
+          "page": 13,
+          "caption": "Dual-Slicing Context for the Lang-18 Case Study."
+        },
+        "Figure 7": {
+          "page": 16,
+          "caption": "Impact of hyperparameter settings (𝑚and𝑛) on repair effectiveness."
+        }
+      },
+      "citation_ieee": "L. Wu, Y. Chen, Z. Yang, P. Xue, and D. Hao, \"CausalRepair: Bridging the Causality Gap in Large Language Model-Based Automated Program Repair via Dual-Slicing,\" Proc. ACM Softw. Eng., vol. 3, no. ISSTA, Art. ISSTA134, Oct. 2026, doi: 10.1145/3832225.",
+      "version_type": "author_copy",
+      "key_benchmark_metrics": {
+        "corpus": "Defects4J v1.2/v2.0 (365 bugs), Defects4J-Trans (324), RWB (73), GitBug-Java (199) under unified DeepSeek-V3 & 25-patch budget (Table 1 p.10)",
+        "effectiveness": "313/365 Defects4J (+32.6% vs ReinFix, 85.8% plausible-to-correct precision, 28 unique), 289/324 Defects4J-Trans (+44.5%), 52/73 RWB, 101/199 GitBug-Java, 232 under GZoltar/Ochiai SBFL (Tables 2,5,7,8 p.11-17)",
+        "ablations_and_cost": "$0.029 & 23.28 min/bug (~2.53 min slicing; Table 6 p.16); ablations drop -38.3% w/o test slicing, -26.5% w/o dynamic source slicing, -18.5% w/o iterative loop, -16.9% w/o 10-patch augmentation (Table 4 p.15)"
+      },
+      "visual_audit_notes": "CONFIRMED DOI 10.1145/3832225 printed twice on PDF Page 1 (PACMSE Vol. 3, No. ISSTA, Art. ISSTA134, Oct 2026; Zenodo 10.5281/zenodo.20953899) — corrects digit-transposition typo '10.1145/3832252' present in earlier evaluation report ref [31].",
+      "evo_transfer_tags": [
+        "dual-slicing-causal-context",
+        "test-sdg-static-slice",
+        "ast-skeleton-javadoc-anchors",
+        "m5-n3-loop-and-ranked-augmentation",
+        "skg-rts-dynamic-calibration"
+      ],
+      "evo_target_classes": [
+        "JavaMethodSlicer.java",
+        "RepairContextPlanner.java",
+        "CapturedRepair.java",
+        "AffectedTestSelector.java",
+        "SpringPreservationChecker.java",
+        "BehavioralDiffService.java"
+      ],
+      "deep_takeaway": "Bridges the APR causality gap via a minimal causal context built by dual-slicing — context-aware SDG static slicing with inter-procedural helper/field resolution on failing tests plus Slicer4J dynamic slicing reconstructed into an AST Skeleton Tree with file, Javadoc, and line anchors — paired with an m=5, n=3 conversational loop and 10-variant Patch Augmentation. Under unified DeepSeek-V3 (25-patch budget), CausalRepair fixes 313/365 Defects4J (+32.6% over ReinFix, 85.8% plausible precision), 289/324 Defects4J-Trans (+44.5%), 101/199 GitBug-Java, and 232 SBFL bugs at $0.029 and 23.28 min/bug (removing test or dynamic slicing drops fixes -38.3% and -26.5%). Provides Evo's blueprint to upgrade JavaMethodSlicer and RepairContextPlanner, ground SKG-RTS (AffectedTestSelector) with sandboxed dynamic traces, and replace manual plausible-patch selection with automated Spring-SAT and behavioral ranking."
+    }
+  ],
+  "catalog_enriched_wave": "wave-2-deep-read-enriched",
+  "related_documents": {
+    "readme": "docs/paper/README.md",
+    "agent_rule": ".agents/rules/50-sota-paper-library.md",
+    "deep_synthesis": "docs/research/sota-19-paper-deep-synthesis.md",
+    "superplan": "docs/evo-sota-superplan-v2.md"
+  }
+}

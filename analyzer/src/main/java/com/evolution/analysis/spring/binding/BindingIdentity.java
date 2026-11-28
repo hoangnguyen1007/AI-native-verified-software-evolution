@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 /** Additive R0 identity envelope. No existing upstream preimage changes. */
 final class BindingIdentity {
     private BindingIdentity() {}
-    static ContentDigest digest(Object value) { return ContentDigest.sha256Utf8(CanonicalJson.write(value)); }
+    static ContentDigest digest(Object value) { return CanonicalJson.sha256(value); }
     static String derive(String kind, Map<String, ?> fields) {
         var payload = new TreeMap<String, Object>(fields);
         payload.put("schema", "m4-r0-identity-v1");

@@ -26,3 +26,4 @@ mvnw.cmd text eol=crlf
 *.jpeg binary
 *.gif binary
 *.pdf binary
+graphify-out/graph.json merge=graphify

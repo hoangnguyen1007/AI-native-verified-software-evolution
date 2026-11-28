@@ -15,6 +15,9 @@ import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.input.PlatformSymbolRequest;
 import com.evolution.analysis.javaparser.JavaParserFrontend;
 import com.evolution.analysis.maven.MavenBuildModelProvider;
+import com.evolution.analysis.maven.MavenBuildModelResolution;
+import com.evolution.analysis.maven.MavenBuildModelResolver;
+import java.net.URI;
 import com.evolution.analysis.readiness.ReadinessPlan;
 import com.evolution.analysis.readiness.ReadinessPlanner;
 import com.evolution.analysis.spring.truth.TruthRegionEvaluation;
@@ -338,5 +341,82 @@ class IncrementalDeltaEngineTest {
         assertTrue(json.contains("\"mode\":\"INCREMENTAL\""));
         assertTrue(json.contains("\"abiEarlyCutoffCount\":2"));
         assertTrue(json.contains("\"timeSavedEstimated\":true"));
+    }
+
+    @Test
+    void buildDeltaCacheReusesColdPromotedRemotePomsAndDeterministicMissingProblemsAndInvalidatesOnChange() throws Exception {
+        Path m2 = Files.createDirectory(temp.resolve("m2-remote-reuse"));
+        Path deltaRoot = Files.createDirectory(temp.resolve("delta-remote-reuse"));
+        var deltaCache = new BuildDeltaCache(deltaRoot);
+
+        Path mvnRepo = Files.createDirectory(temp.resolve("mvn-remote-repo"));
+        Files.createDirectories(mvnRepo.resolve("src/main/java/m"));
+        Files.writeString(mvnRepo.resolve("pom.xml"),
+                "<project><modelVersion>4.0.0</modelVersion><groupId>t</groupId><artifactId>rem</artifactId><version>1.0</version></project>");
+        Files.writeString(mvnRepo.resolve("src/main/java/m/R.java"), "package m; class R {}");
+
+        var req = new RepositoryAcquisitionRequest(RepositoryIdentity.fromCanonicalCoordinate("urn:test:mvn-remote-delta"),
+                Optional.empty(), true, "pom.xml", new RepositoryAcquisitionPolicy(100, 100, 1_000_000, 10_000_000, 16, List.of()));
+        var acq = new FilesystemRepositoryAcquirer().acquire(mvnRepo, req);
+        var baseModels = MavenScan.models(acq, m2, List.of(), null);
+        assertEquals(1, baseModels.size());
+        var base = baseModels.getFirst();
+
+        // Simulate a Cold-downloaded REMOTE_REPOSITORY parent POM promoted into local m2 cache,
+        // plus a deterministic MISSING_POM and REMOTE_SNAPSHOT_UNSUPPORTED problem.
+        var parentCoord = new MavenCoordinate("org.example", "cold-parent", "1.0.0");
+        var parentArt = new com.evolution.analysis.classpath.ArtifactCoordinate(parentCoord, "pom", "");
+        byte[] parentBytes = "<project><modelVersion>4.0.0</modelVersion><groupId>org.example</groupId><artifactId>cold-parent</artifactId><version>1.0.0</version><packaging>pom</packaging></project>"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Path promotedPom = m2.resolve(parentArt.repositoryPath().replace('/', java.io.File.separatorChar));
+        Files.createDirectories(promotedPom.getParent());
+        Files.write(promotedPom, parentBytes);
+
+        var missingRel = "org/example/absent-bom/2.0.0/absent-bom-2.0.0.pom";
+        var repos = List.of(URI.create("https://repo.example.test/maven2/"));
+        var policy = MavenScan.pomPolicy(repos);
+        var coldResolution = MavenBuildModelResolution.create(
+                base.initialRequestIdentity(),
+                policy,
+                MavenBuildModelResolver.VERSION,
+                base.request(),
+                base.model(),
+                List.of(new MavenBuildModelResolution.AcquiredPom(
+                        parentCoord,
+                        MavenBuildModelResolution.Origin.REMOTE_REPOSITORY,
+                        "https://repo.example.test/maven2/" + parentArt.repositoryPath(),
+                        ContentDigest.sha256(parentBytes),
+                        parentBytes.length)),
+                List.of(),
+                List.of(
+                        new MavenBuildModelResolution.Problem(MavenBuildModelResolution.ProblemReason.MISSING_POM, missingRel),
+                        new MavenBuildModelResolution.Problem(
+                                MavenBuildModelResolution.ProblemReason.REMOTE_SNAPSHOT_UNSUPPORTED,
+                                "org.example:snap-parent:1.0-SNAPSHOT")),
+                2);
+
+        deltaCache.forRun().putMavenModels(acq, m2, repos, List.of(coldResolution));
+
+        // 1. Warm lookup (fresh per-run view, matching LocalAnalysisRunner) must REUSE the Cold-promoted
+        //    REMOTE_REPOSITORY POM + deterministic missing problems!
+        var hit = deltaCache.forRun().getMavenModels(acq, m2, repos);
+        assertTrue(hit.isPresent(), "BuildDeltaCache must reuse Cold-promoted REMOTE_REPOSITORY POMs and deterministic missing-POM problems");
+        assertEquals(coldResolution.identity(), hit.orElseThrow().getFirst().identity());
+        assertEquals(1, deltaCache.stats().reusedBuildRoots());
+
+        // 2. Mutating the promoted POM on disk must immediately invalidate the cache entry on the next run!
+        Files.writeString(promotedPom, "<project><modelVersion>4.0.0</modelVersion><groupId>org.example</groupId><artifactId>cold-parent</artifactId><version>1.0.0</version></project>");
+        assertTrue(deltaCache.forRun().getMavenModels(acq, m2, repos).isEmpty(),
+                "Mutating a promoted remote POM on disk must invalidate BuildDeltaCache immediately");
+
+        // 3. Re-put with fresh bytes, then materialize the previously-missing POM on disk -> must invalidate!
+        Files.write(promotedPom, parentBytes);
+        deltaCache.forRun().putMavenModels(acq, m2, repos, List.of(coldResolution));
+        assertTrue(deltaCache.forRun().getMavenModels(acq, m2, repos).isPresent());
+        Path nowPresentMissing = m2.resolve(missingRel.replace('/', java.io.File.separatorChar));
+        Files.createDirectories(nowPresentMissing.getParent());
+        Files.writeString(nowPresentMissing, "<project/>");
+        assertTrue(deltaCache.forRun().getMavenModels(acq, m2, repos).isEmpty(),
+                "Appearing previously-missing POM in m2 cache must invalidate BuildDeltaCache immediately");
     }
 }

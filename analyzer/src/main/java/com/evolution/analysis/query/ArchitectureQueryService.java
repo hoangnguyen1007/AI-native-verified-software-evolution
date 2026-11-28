@@ -51,18 +51,50 @@ public final class ArchitectureQueryService {
         return new ArchitectureQueryService(partition, graph, operationalGuard(cancelled, 0, 0), Optional.empty());
     }
 
+    private static final long MEMORY_RECLAIM_COOLDOWN_NANOS = 500_000_000L;
+
     public static Supplier<StopReason> operationalGuard(BooleanSupplier cancelled, long deadlineNanos,
             long minimumAvailableHeapBytes) {
+        return operationalGuard(cancelled, deadlineNanos, minimumAvailableHeapBytes,
+                () -> {
+                    var runtime = Runtime.getRuntime();
+                    return runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory();
+                },
+                () -> Runtime.getRuntime().maxMemory(),
+                System::gc,
+                System::nanoTime);
+    }
+
+    static Supplier<StopReason> operationalGuard(BooleanSupplier cancelled, long deadlineNanos,
+            long minimumAvailableHeapBytes, LongSupplier availableHeapBytes, LongSupplier maxHeapBytes,
+            Runnable reclaim, LongSupplier nanoClock) {
         if (minimumAvailableHeapBytes < 0)
             throw new IllegalArgumentException("Negative heap reserve");
+        var lastReclaimNanos = new java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE);
         return () -> {
             if (cancelled.getAsBoolean())
                 return StopReason.CANCELLED;
-            if (deadlineNanos != 0 && System.nanoTime() - deadlineNanos >= 0)
+            if (deadlineNanos != 0 && nanoClock.getAsLong() - deadlineNanos >= 0)
                 return StopReason.TIME;
-            var runtime = Runtime.getRuntime();
-            if (runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory() < minimumAvailableHeapBytes)
-                return StopReason.MEMORY;
+            if (minimumAvailableHeapBytes > 0) {
+                long available = availableHeapBytes.getAsLong();
+                if (available < minimumAvailableHeapBytes) {
+                    long maxHeap = maxHeapBytes.getAsLong();
+                    if (minimumAvailableHeapBytes < maxHeap) {
+                        long now = nanoClock.getAsLong();
+                        long prev = lastReclaimNanos.get();
+                        if ((prev == Long.MIN_VALUE || now - prev >= MEMORY_RECLAIM_COOLDOWN_NANOS)
+                                && lastReclaimNanos.compareAndSet(prev, now)) {
+                            reclaim.run();
+                            if (deadlineNanos != 0 && nanoClock.getAsLong() - deadlineNanos >= 0)
+                                return StopReason.TIME;
+                            available = availableHeapBytes.getAsLong();
+                        }
+                    }
+                    if (available < minimumAvailableHeapBytes)
+                        return StopReason.MEMORY;
+                }
+            }
             return StopReason.NONE;
         };
     }
@@ -1629,6 +1661,63 @@ public final class ArchitectureQueryService {
                                 : "PROJECT");
             }
         }
+        if (evidence.family().equals("polyglot.build-component")) {
+            var payload = read(evidence, budget);
+            String directory = optionalText(payload, "directory");
+            String compId = optionalText(payload, "id");
+            String candidate = directory != null && !directory.isBlank() && !".".equals(directory.strip())
+                    ? directory : compId;
+            String safeLabel = safePolyglotLabel(candidate);
+            if (safeLabel != null && name.isEmpty()) {
+                name = Optional.of(safeLabel);
+                spelling = Optional.of(safeLabel);
+            }
+            if (module.isEmpty() && directory != null && !directory.isBlank()) {
+                String safeDir = safePolyglotLabel(directory);
+                if (safeDir != null)
+                    module = Optional.of(safeDir);
+            }
+            if (origin.isEmpty())
+                origin = Optional.of("PROJECT");
+        }
+        if (evidence.family().equals("architecture.service-identity")) {
+            var payload = read(evidence, budget);
+            String safeLabel = safePolyglotLabel(optionalText(payload, "serviceName"));
+            if (safeLabel == null) {
+                safeLabel = safePolyglotLabel(optionalText(payload, "name"));
+            }
+            if (safeLabel != null) {
+                name = Optional.of(safeLabel);
+                spelling = Optional.of(safeLabel);
+            }
+            if (module.isEmpty()) {
+                String safeDir = safePolyglotLabel(optionalText(payload, "directory"));
+                if (safeDir != null)
+                    module = Optional.of(safeDir);
+            }
+            if (origin.isEmpty())
+                origin = Optional.of("PROJECT");
+        }
+        if (evidence.family().equals("architecture.infra-component")) {
+            var payload = read(evidence, budget);
+            String safeLabel = safePolyglotLabel(optionalText(payload, "name"));
+            if (safeLabel != null && name.isEmpty()) {
+                name = Optional.of(safeLabel);
+                spelling = Optional.of(safeLabel);
+            }
+            if (origin.isEmpty())
+                origin = Optional.of("INFRA");
+        }
+        if (evidence.family().equals("architecture.external-actor")) {
+            var payload = read(evidence, budget);
+            String safeLabel = safePolyglotLabel(optionalText(payload, "name"));
+            if (safeLabel != null && name.isEmpty()) {
+                name = Optional.of(safeLabel);
+                spelling = Optional.of(safeLabel);
+            }
+            if (origin.isEmpty())
+                origin = Optional.of("EXTERNAL");
+        }
         return new DescribedFields(name, spelling, module, origin, sourceSet);
     }
 
@@ -2030,6 +2119,54 @@ public final class ArchitectureQueryService {
             metadata.put("route", select(GraphJson.object(payload.get("route")),
                     Set.of("controller", "handler", "path", "methods", "implicitHead", "evidence")));
             return new EvidenceView(evidence.identity(), evidence.family(), true, metadata);
+        }
+        if (evidence.family().equals("polyglot.build-component")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget), Set.of("id", "directory", "kind", "tool", "name")));
+        }
+        if (evidence.family().equals("architecture.service-identity")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget),
+                            Set.of("serviceName", "name", "directory", "spec", "trust", "runtimeObserved")));
+        }
+        if (evidence.family().equals("architecture.infra-component")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget), Set.of("name", "image", "spec", "trust", "runtimeObserved")));
+        }
+        if (evidence.family().equals("architecture.external-actor")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget), Set.of("name", "trust", "rule", "runtimeObserved")));
+        }
+        if (evidence.family().equals("architecture.declarative-topology")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget),
+                            Set.of("kind", "mechanism", "source", "target", "trust", "runtimeObserved")));
+        }
+        if (evidence.family().equals("architecture.service-call")) {
+            var payload = read(evidence, budget);
+            var metadata = new TreeMap<>(
+                    select(payload, Set.of("kind", "certainty", "routingEstablished", "runtimeObserved")));
+            if (payload.get("source") instanceof Map<?, ?> src) {
+                metadata.put("source", select(GraphJson.object(src), Set.of("context", "identity", "role")));
+            }
+            if (payload.get("destinations") instanceof List<?> dests) {
+                metadata.put("destinations", dests.stream().limit(budget.limits.maxResults())
+                        .filter(Map.class::isInstance)
+                        .map(d -> select(GraphJson.object(d), Set.of("context", "identity", "role")))
+                        .toList());
+            }
+            return new EvidenceView(evidence.identity(), evidence.family(), true, metadata);
+        }
+        if (evidence.family().equals("polyglot.event-broker-link")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget),
+                            Set.of("kind", "topic", "protocol", "site", "brokers", "certainty", "trust",
+                                    "orientation", "runtimeObserved")));
+        }
+        if (evidence.family().equals("polyglot.event-topic-match")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget),
+                            Set.of("topic", "protocol", "producer", "consumers", "certainty", "runtimeObserved")));
         }
         if (!SAFE_FAMILIES.contains(evidence.family()))
             return new EvidenceView(evidence.identity(), evidence.family(), true, Map.of());

@@ -249,6 +249,38 @@ class SourceRecoveryAttributionTest {
                 d.entity().origin() == EntityOrigin.PROJECT
                 && d.derivation().method().id().equals("java.android-synthetic-recovery")));
     }
+    @Test void arityScreeningResolvesUniqueZeroArgAndClosedHierarchyOverloadsDespiteUnresolvableSiblingOverload() {
+        String source = """
+                class MissingPage {}
+                class ClosedOwner {
+                    String findById(String id) { return id; }
+                    String findById(String id, Missing arg) { return id; }
+                    String useClosed() { return findById("abc"); }
+                }
+                interface OpenRepo extends MissingBase {
+                    Object findAll();
+                    Object findAll(Missing p);
+                    default Object useOpen() { findAll(null); return findAll(); }
+                }
+                class OpenSub extends MissingBase {
+                    String findById(String id) { return id; }
+                    String useOpenOneArg() { return findById("abc"); }
+                }
+                """;
+        var result = new JavaParserFrontend().analyze(LombokIngestionTest.recovery(TestInputs.request(source)));
+        var calls = result.observations().stream()
+                .filter(o -> o.category().value().equals("java.calls"))
+                .toList();
+        assertTrue(calls.stream().anyMatch(o -> o.reference().equals("findById(\"abc\")")
+                        && o.attribution() == SemanticStatus.RESOLVED),
+                "Closed-hierarchy 1-arg call should resolve cleanly despite unresolvable 2-arg overload");
+        // Verify OpenRepo's 0-arg findAll() is RESOLVED while findAll(null) stays UNRESOLVED, and OpenSub's 1-arg findById stays UNRESOLVED:
+        long resolvedCount = calls.stream().filter(o -> o.attribution() == SemanticStatus.RESOLVED).count();
+        assertEquals(2, resolvedCount,
+                "Expected exact 2 resolved calls (ClosedOwner.findById(\"abc\") and OpenRepo.findAll()), got: " + calls);
+        assertEquals(2, calls.stream().filter(o -> o.attribution() != SemanticStatus.RESOLVED).count(),
+                "Expected exact 2 unresolved calls (findAll(null) and OpenSub.findById(\"abc\"))");
+    }
 
     @Test void externalWildcardAndOverloadedJdkCallsRetainTheirMissingTypeObligations() {
         String source = """

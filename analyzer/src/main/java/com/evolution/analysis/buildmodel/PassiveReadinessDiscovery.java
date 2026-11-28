@@ -8,13 +8,30 @@ import com.evolution.analysis.readiness.ReadinessPlanner;
 import java.nio.*;
 import java.nio.charset.*;
 import java.util.*;
+import java.util.regex.*;
 import static com.evolution.analysis.readiness.ReadinessPlanner.*;
 
 public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
+    private static final Pattern SLN_PROJECT = Pattern.compile(
+            "Project\\(\"\\{[^}]+\\}\"\\)\\s*=\\s*\"([^\"]+)\"\\s*,\\s*\"([^\"]+\\.(?:csproj|vbproj|fsproj))\"\\s*,\\s*\"\\{[^}]+\\}\"",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern SLNX_PROJECT = Pattern.compile(
+            "<Project\\b[^>]*\\bPath\\s*=\\s*\"([^\"]+\\.(?:csproj|vbproj|fsproj))\"",
+            Pattern.CASE_INSENSITIVE);
+    private static final Set<String> DOTNET_TEST_DIR_NAMES = Set.of(
+            "test", "tests", "spec", "specs", "unit-tests", "unit-test",
+            "integration-tests", "integration-test", "e2e-tests", "e2e-test");
+    private static final Set<String> SINGLE_SERVICE_LAYOUT_SUBDIRS = Set.of(
+            "src", "app", "main", "source", "lib", "core");
+    private static final Set<String> PRIMARY_PYTHON_DESCRIPTORS = Set.of(
+            "pyproject.toml", "setup.py", "setup.cfg", "Pipfile");
+
     @Override public Projection discover(Map<String,Descriptor> descriptors,InventoryManifest inventory){
         var roots=new TreeMap<String,Root>();var modules=new TreeMap<String,Module>();var contexts=new TreeMap<String,Context>();
         var requirements=new ArrayList<Requirement>();var unknown=new TreeSet<String>();
         var scripts=new TreeMap<String,List<DeclarativeScript.Statement>>();
+        var pythonPrimaryDirs=new TreeSet<String>();
+        var dotnetSolutions=new TreeMap<String,List<Descriptor>>();
         for(var descriptor:descriptors.values()){
             String path=descriptor.path(),name=filename(path);Family family=family(name);
             if(family==null)continue;
@@ -22,8 +39,84 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
             var evidence=List.of(new Evidence(path,descriptor.content().digest()));
             var prior=roots.get(id);var combined=new ArrayList<Evidence>(prior==null?List.of():prior.evidence());combined.addAll(evidence);
             roots.put(id,new Root(id,dir,family,combined,List.of()));
+            if(family==Family.PYTHON&&PRIMARY_PYTHON_DESCRIPTORS.contains(name))pythonPrimaryDirs.add(dir);
+            if(family==Family.DOTNET&&(name.endsWith(".sln")||name.endsWith(".slnx")))dotnetSolutions.computeIfAbsent(dir,k->new ArrayList<>()).add(descriptor);
             if(family==Family.GRADLE)try{scripts.put(path,DeclarativeScript.parse(decode(descriptor),200_000,64));}
             catch(IllegalArgumentException failure){requirements.add(requirement(Kind.DISCOVERY,path,"DYNAMIC_BUILD_DISCOVERY_REQUIRED",List.of(),evidence));}
+        }
+        // Fold secondary Python requirements.txt files into an enclosing Python root when one already owns them.
+        for(var root:List.copyOf(roots.values()))if(root.family()==Family.PYTHON&&!pythonPrimaryDirs.contains(root.directory())){
+            var owner=roots.values().stream()
+                    .filter(candidate->candidate.family()==Family.PYTHON&&!candidate.id().equals(root.id())&&within(root.directory(),candidate.directory()))
+                    .max(Comparator.comparingInt(candidate->candidate.directory().length()));
+            if(owner.isPresent()){
+                var enclosing=owner.orElseThrow();
+                var merged=new ArrayList<Evidence>(enclosing.evidence());merged.addAll(root.evidence());
+                roots.put(enclosing.id(),new Root(enclosing.id(),enclosing.directory(),Family.PYTHON,merged,enclosing.relatedRoots()));
+                roots.remove(root.id());
+            }
+        }
+        // Parse standard .NET solution files (.sln / .slnx) to attach child project roots to their enclosing solution.
+        var dotnetSolutionMembers=new TreeMap<String,Set<String>>();
+        var dotnetFoldedSourceRoots=new TreeMap<String,Map<String,List<String>>>();
+        var dotnetFoldedEvidence=new TreeMap<String,List<Evidence>>();
+        var dotnetMultiProjectSolutionDirs=new HashSet<String>();
+        for(var entry:dotnetSolutions.entrySet()){
+            String slnDir=entry.getKey(),slnRoot="DOTNET:"+slnDir;
+            var referencedProjects=new TreeMap<String,String>(); // projDir -> resolvedProjFile
+            for(var slnDesc:entry.getValue()){
+                try{
+                    String text=decode(slnDesc);
+                    Pattern pat=filename(slnDesc.path()).endsWith(".slnx")?SLNX_PROJECT:SLN_PROJECT;
+                    Matcher m=pat.matcher(text);
+                    while(m.find()){
+                        String rawRel=(pat==SLNX_PROJECT?m.group(1):m.group(2)).trim().replace('\\','/');
+                        try{
+                            String resolvedFile=resolve(slnDir,rawRel);
+                            referencedProjects.putIfAbsent(directory(resolvedFile),resolvedFile);
+                        }catch(IllegalArgumentException unsafe){
+                            requirements.add(requirement(Kind.DISCOVERY,slnDesc.path(),"BUILD_PATH_UNRESOLVED",List.of(),List.of(new Evidence(slnDesc.path(),slnDesc.content().digest()))));
+                        }
+                    }
+                }catch(IllegalArgumentException failure){
+                    requirements.add(requirement(Kind.DISCOVERY,slnDesc.path(),"DYNAMIC_BUILD_DISCOVERY_REQUIRED",List.of(),List.of(new Evidence(slnDesc.path(),slnDesc.content().digest()))));
+                }
+            }
+            if(referencedProjects.isEmpty())continue;
+            var nonTestDirs=new TreeSet<String>();
+            var testDirs=new TreeSet<String>();
+            var extraEvidence=new ArrayList<Evidence>();
+            boolean slnDirHasDirectProject=descriptors.keySet().stream().anyMatch(p->directory(p).equals(slnDir)&&isDotNetProjectFile(filename(p)));
+            if(slnDirHasDirectProject)nonTestDirs.add(slnDir);
+            for(var proj:referencedProjects.entrySet()){
+                String projDir=proj.getKey(),projFile=proj.getValue();
+                if(!projDir.equals(slnDir))roots.remove("DOTNET:"+projDir);
+                if(isDotNetTestProject(projDir,projFile,descriptors))testDirs.add(projDir);
+                else nonTestDirs.add(projDir);
+                var projDesc=descriptors.get(projFile);
+                if(projDesc!=null)extraEvidence.add(new Evidence(projDesc.path(),projDesc.content().digest()));
+            }
+            // Single-service solution layout (e.g. svc.sln -> src/svc.csproj + tests/svc.tests.csproj):
+            // fold into one DOTNET:<slnDir> module with distinct main/test contexts rather than triple-counting.
+            boolean singleLayout=nonTestDirs.size()<=1&&nonTestDirs.stream().allMatch(d->d.equals(slnDir)||isSingleServiceChildDir(slnDir,d));
+            if(singleLayout){
+                var sets=new TreeMap<String,List<String>>();
+                if(!nonTestDirs.isEmpty())sets.put("main",List.copyOf(nonTestDirs));
+                else sets.put("unclassified",List.of(slnDir));
+                if(!testDirs.isEmpty())sets.put("test",List.copyOf(testDirs));
+                dotnetFoldedSourceRoots.put(slnRoot,sets);
+                dotnetFoldedEvidence.put(slnRoot,extraEvidence);
+                var slnRootRec=roots.get(slnRoot);
+                if(slnRootRec!=null&&!extraEvidence.isEmpty()){
+                    var merged=new ArrayList<Evidence>(slnRootRec.evidence());merged.addAll(extraEvidence);
+                    roots.put(slnRoot,new Root(slnRootRec.id(),slnRootRec.directory(),Family.DOTNET,merged,slnRootRec.relatedRoots()));
+                }
+            }else{
+                var members=dotnetSolutionMembers.computeIfAbsent(slnRoot,k->new TreeSet<>());
+                members.addAll(nonTestDirs);
+                members.addAll(testDirs);
+                if(!slnDirHasDirectProject)dotnetMultiProjectSolutionDirs.add(slnRoot);
+            }
         }
         var membership=new TreeMap<String,String>();var related=new TreeMap<String,Set<String>>();
         var bazelMembers=new TreeMap<String,Set<String>>();
@@ -91,16 +184,25 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
         for(var root:List.copyOf(roots.values())){
             String dir=root.directory();
             roots.put(root.id(),new Root(root.id(),dir,root.family(),root.evidence(),List.copyOf(related.getOrDefault(root.id(),Set.of()))));
-            var directories=new TreeSet<String>();directories.add(dir);
+            var directories=new TreeSet<String>();
+            if(!dotnetMultiProjectSolutionDirs.contains(root.id()))directories.add(dir);
             directories.addAll(bazelMembers.getOrDefault(root.id(),Set.of()));
+            directories.addAll(dotnetSolutionMembers.getOrDefault(root.id(),Set.of()));
             membership.forEach((module,owner)->{if(owner.equals(root.id()))directories.add(module);});
             for(String moduleDir:directories){
                 String id=root.family()+":"+moduleDir;
-                var evidence=descriptors.values().stream().filter(descriptor->directory(descriptor.path()).equals(moduleDir)&&family(filename(descriptor.path()))==root.family())
-                        .map(descriptor->new Evidence(descriptor.path(),descriptor.content().digest())).toList();
+                var evidenceList=new ArrayList<>(descriptors.values().stream().filter(descriptor->directory(descriptor.path()).equals(moduleDir)&&family(filename(descriptor.path()))==root.family())
+                        .map(descriptor->new Evidence(descriptor.path(),descriptor.content().digest())).toList());
+                if(root.family()==Family.DOTNET&&moduleDir.equals(dir)&&dotnetFoldedEvidence.containsKey(root.id())){
+                    var seenEv=new HashSet<>(evidenceList);
+                    for(var extra:dotnetFoldedEvidence.get(root.id()))if(seenEv.add(extra))evidenceList.add(extra);
+                }
+                var evidence=List.copyOf(evidenceList);
                 var dependencies=new TreeSet<String>();
                 var sets=new TreeMap<String,List<String>>();
-                if(Set.of(Family.GRADLE,Family.SBT).contains(root.family())){
+                if(root.family()==Family.DOTNET&&moduleDir.equals(dir)&&dotnetFoldedSourceRoots.containsKey(root.id())){
+                    sets.putAll(dotnetFoldedSourceRoots.get(root.id()));
+                }else if(Set.of(Family.GRADLE,Family.SBT).contains(root.family())){
                     sets.put("main",List.of(resolve(moduleDir,"src/main")));sets.put("test",List.of(resolve(moduleDir,"src/test")));
                 }else sets.put("unclassified",List.of(moduleDir));
                 if(root.family()==Family.GRADLE){
@@ -185,11 +287,50 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
         for(String part:relative.split("/",-1)){if(part.equals(".")||part.isEmpty())continue;if(part.equals("..")){if(parts.isEmpty())throw new IllegalArgumentException("Outside snapshot");parts.removeLast();}else parts.add(part);}
         return parts.isEmpty()?".":String.join("/",parts);
     }
+    private static boolean isDotNetProjectFile(String name){
+        String lower=name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".csproj")||lower.endsWith(".vbproj")||lower.endsWith(".fsproj");
+    }
+    private static boolean isSingleServiceChildDir(String slnDir,String projDir){
+        String prefix=slnDir.equals(".")?"":slnDir+"/";
+        if(!projDir.startsWith(prefix))return false;
+        String rel=projDir.substring(prefix.length()).toLowerCase(Locale.ROOT);
+        if(rel.contains("/"))return false;
+        if(SINGLE_SERVICE_LAYOUT_SUBDIRS.contains(rel))return true;
+        String slnBase=slnDir.equals(".")?"":filename(slnDir).toLowerCase(Locale.ROOT);
+        return !slnBase.isEmpty()&&rel.equals(slnBase);
+    }
+    private static boolean isDotNetTestProject(String projDir,String projFile,Map<String,Descriptor> descriptors){
+        String dirBase=filename(projDir).toLowerCase(Locale.ROOT);
+        if(DOTNET_TEST_DIR_NAMES.contains(dirBase)||dirBase.endsWith(".tests")||dirBase.endsWith(".test")
+                ||dirBase.endsWith("-tests")||dirBase.endsWith("-test")||dirBase.endsWith("_tests")||dirBase.endsWith("_test")){
+            return true;
+        }
+        String fileBase=filename(projFile).toLowerCase(Locale.ROOT);
+        int dot=fileBase.lastIndexOf('.');
+        String stem=dot>0?fileBase.substring(0,dot):fileBase;
+        if(stem.endsWith(".tests")||stem.endsWith(".test")||stem.endsWith("-tests")||stem.endsWith("-test")
+                ||stem.endsWith("_tests")||stem.endsWith("_test")||stem.endsWith("tests")){
+            return true;
+        }
+        var desc=descriptors.get(projFile);
+        if(desc!=null){
+            try{
+                String content=decode(desc).toLowerCase(Locale.ROOT);
+                if(content.contains("<istestproject>true</istestproject>")
+                        ||content.contains("microsoft.net.test.sdk")
+                        ||content.contains("mstest.testframework")){
+                    return true;
+                }
+            }catch(IllegalArgumentException ignored){}
+        }
+        return false;
+    }
     private static Family family(String name){
         if(Set.of("build.gradle","build.gradle.kts","settings.gradle","settings.gradle.kts").contains(name))return Family.GRADLE;
         if(Set.of(".classpath",".project").contains(name)||name.endsWith(".iml"))return Family.IDE;
         return switch(name){case "build.xml"->Family.ANT;case "WORKSPACE","WORKSPACE.bazel","MODULE.bazel","BUILD","BUILD.bazel"->Family.BAZEL;case "build.sbt"->Family.SBT;
-            case "package.json","deno.json","deno.jsonc"->Family.NODE;case "pyproject.toml","setup.py"->Family.PYTHON;case "Cargo.toml"->Family.CARGO;case "go.mod","go.work"->Family.GO;
+            case "package.json","deno.json","deno.jsonc"->Family.NODE;case "pyproject.toml","setup.py","setup.cfg","requirements.txt","Pipfile"->Family.PYTHON;case "Cargo.toml"->Family.CARGO;case "go.mod","go.work"->Family.GO;
             case "composer.json"->Family.COMPOSER;case "Gemfile"->Family.RUBY;case "pubspec.yaml"->Family.DART;case "Package.swift"->Family.SWIFT;
             case "CMakeLists.txt"->Family.CMAKE;case "Makefile"->Family.MAKE;default->name.endsWith(".csproj")||name.endsWith(".vbproj")||name.endsWith(".fsproj")||name.endsWith(".sln")||name.endsWith(".slnx")?Family.DOTNET:null;};
     }

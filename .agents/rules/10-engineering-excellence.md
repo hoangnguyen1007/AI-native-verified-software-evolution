@@ -1,3 +1,8 @@
+---
+trigger: model_decision
+description: Apply for technical code edits, refactors, bugfixes, Maven/build configuration changes, or technical code reviews across analyzer*, backend, cli, and web modules. Skip for pure prose or governance-only edits.
+---
+
 # Engineering Rule — Technical Changes and Reviews
 
 - Dependencies point toward stable domain contracts. Keep parser, build, Spring, storage, policy, query and presentation responsibilities distinct.

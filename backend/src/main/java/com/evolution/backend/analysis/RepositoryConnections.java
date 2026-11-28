@@ -34,6 +34,7 @@ public final class RepositoryConnections {
     private final Optional<LocalAnalysisRunner.PolicyInput> defaultPolicy;
     private final Optional<DependencyAcquisitionPolicy> artifactPolicy;
     private final GitHostPolicy hostPolicy;
+    private final boolean onlineOnly;
     private final Map<String, Connection> connections = new LinkedHashMap<>();
     private final Map<String, String> connectionOwners = new LinkedHashMap<>();
     private final Map<String, String> remoteUrls = new LinkedHashMap<>();
@@ -62,6 +63,13 @@ public final class RepositoryConnections {
     RepositoryConnections(AnalysisJobs jobs, Path jdk, int release, Path cache, Path directory,
             Optional<LocalAnalysisRunner.PolicyInput> policy,
             String gitExecutable, GitHostPolicy hostPolicy, Optional<DependencyAcquisitionPolicy> artifactPolicy) {
+        this(jobs, jdk, release, cache, directory, policy, gitExecutable, hostPolicy, artifactPolicy, false);
+    }
+
+    public RepositoryConnections(AnalysisJobs jobs, Path jdk, int release, Path cache, Path directory,
+            Optional<LocalAnalysisRunner.PolicyInput> policy,
+            String gitExecutable, GitHostPolicy hostPolicy, Optional<DependencyAcquisitionPolicy> artifactPolicy,
+            boolean onlineOnly) {
         this.jobs = jobs;
         this.jdk = jdk;
         this.release = release;
@@ -71,12 +79,13 @@ public final class RepositoryConnections {
         this.gitExecutable = gitExecutable;
         this.hostPolicy = Objects.requireNonNull(hostPolicy);
         this.artifactPolicy = Objects.requireNonNull(artifactPolicy);
+        this.onlineOnly = onlineOnly;
         policy.ifPresent(p -> policies.put(ContentDigest.sha256(p.bytes()), p));
         try (var catalog = new ConnectionCatalog(directory.resolve("connections"))) {
             for (var saved : catalog.load()) {
                 try {
                     connect(saved.source(), saved.policy(), false);
-                } catch (IllegalArgumentException | IllegalStateException badEntry) {
+                } catch (IllegalArgumentException | IllegalStateException | SecurityException badEntry) {
                     LOG.log(System.Logger.Level.WARNING, "Skipping invalid saved connection entry ({0})",
                             badEntry.getClass().getSimpleName());
                 }
@@ -84,6 +93,10 @@ public final class RepositoryConnections {
         } catch (IOException unavailable) {
             throw new IllegalStateException("Connection catalog unavailable", unavailable);
         }
+    }
+
+    public boolean isOnlineOnly() {
+        return onlineOnly;
     }
 
     public synchronized void describe(String setup, String label, String kind, RepositoryIdentity repository) {
@@ -272,6 +285,9 @@ public final class RepositoryConnections {
                 label = URI.create(coordinate).getHost() + URI.create(coordinate).getPath().replaceFirst("\\.git$", "");
             }
         } else {
+            if (onlineOnly) {
+                throw new SecurityException("LOCAL_CHECKOUT_DISABLED_IN_ONLINE_MODE");
+            }
             if (persist && isHostLocalCheckoutDisabledForCaller()) {
                 throw new SecurityException("LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER");
             }

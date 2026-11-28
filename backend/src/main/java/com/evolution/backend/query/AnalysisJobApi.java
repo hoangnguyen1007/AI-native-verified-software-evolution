@@ -71,15 +71,17 @@ final class AnalysisJobApi {
             } else if (path.equals("/api/v1/analysis/jobs")) {
                 if (method.equals("GET")) { empty(body); data = jobs.history(20,Optional.empty()); }
                 else {
-                    method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey","force","mode");
+                    method(method,"POST"); var input = decode(body,contentType,"setup","idempotencyKey","force","mode","ref","projectionProfile");
                     if (input.containsKey("force") && !(input.get("force") instanceof Boolean))
                         throw new IllegalArgumentException("Expected boolean force");
                     var setup = QueryJson.text(input,"setup");
                     if (connections != null && connections.existsOwnedByOther(setup))
                         throw new Failure(403,"ACCESS_DENIED");
                     var mode = input.containsKey("mode") ? AnalysisMode.parse(QueryJson.text(input,"mode")) : AnalysisMode.FULL;
+                    var ref = QueryJson.optionalText(input,"ref");
+                    var projectionProfile = parseProjectionProfile(input);
                     var submission = jobs.submit(setup,QueryJson.text(input,"idempotencyKey"),
-                            Boolean.TRUE.equals(input.get("force")),mode);
+                            Boolean.TRUE.equals(input.get("force")),mode,ref,projectionProfile);
                     data = submission.job(); status = submission.created() ? 202 : 200;
                 }
             } else if (path.equals("/api/v1/analysis/jobs/history")) {
@@ -120,9 +122,11 @@ final class AnalysisJobApi {
             return response(status,data);
         } catch (Failure failure) { return error(failure.status,failure.code); }
         catch (SecurityException denied) {
-            String code = "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER".equals(denied.getMessage())
-                    ? "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER"
-                    : "ACCESS_DENIED";
+            String code = "LOCAL_CHECKOUT_DISABLED_IN_ONLINE_MODE".equals(denied.getMessage())
+                    ? "LOCAL_CHECKOUT_DISABLED_IN_ONLINE_MODE"
+                    : "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER".equals(denied.getMessage())
+                            ? "LOCAL_CHECKOUT_DISABLED_IN_MULTI_USER"
+                            : "ACCESS_DENIED";
             return error(403, code);
         }
         catch (AnalysisJobs.Rejected rejected) {
@@ -133,6 +137,21 @@ final class AnalysisJobApi {
         catch (IllegalArgumentException invalid) { return error(400,"INVALID_REQUEST"); }
         catch (RuntimeException failure) { return error(500,"INTERNAL_ERROR"); }
     }
+    static Optional<String> parseProjectionProfile(Map<String, Object> input) {
+        if (!input.containsKey("projectionProfile") || input.get("projectionProfile") == null) {
+            return Optional.empty();
+        }
+        Object raw = input.get("projectionProfile");
+        if (!(raw instanceof String text)) {
+            throw new IllegalArgumentException("Expected string projectionProfile");
+        }
+        String trimmed = text.strip();
+        if (trimmed.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(AnalysisJobs.normalizeProjectionProfile(Optional.of(trimmed)));
+    }
+
     private Map<String, Object> enrichedView(UUID id) {
         var view = jobs.get(id);
         var progress = jobs.progress(id);
@@ -154,10 +173,12 @@ final class AnalysisJobApi {
         map.put("reuse", view.reuse().orElse(null));
         map.put("reuseDecision", view.reuseDecision().orElse(null));
         map.put("mode", view.mode().orElse(null));
+        map.put("projectionProfile", view.projectionProfile().orElse(null));
         map.put("publicationStage", progress.truthTier());
         map.put("previewGraphId", progress.previewGraphId().orElse(null));
         map.put("preview", progress.preview().orElse(null));
         map.put("incremental", progress.incremental().orElse(null));
+        jobs.acquisitionSummary(id).ifPresent(summary -> map.put("acquisitionSummary", summary));
         return map;
     }
 

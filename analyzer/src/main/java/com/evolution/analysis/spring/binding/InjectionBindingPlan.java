@@ -134,7 +134,18 @@ public record InjectionBindingPlan(BeanRegistrationPlan registrationPlan, List<D
             if (!ids.contains(id) || !grouped.add(id)) throw new IllegalArgumentException("Foreign or multiply grouped dependency");
         }
     }
-    public ContentDigest identity() { return BindingIdentity.digest(canonicalForm()); }
+    private record IdentityCacheEntry(java.lang.ref.WeakReference<InjectionBindingPlan> plan, ContentDigest identity) {}
+    private static final java.util.concurrent.atomic.AtomicReferenceArray<IdentityCacheEntry> IDENTITY_CACHE =
+            new java.util.concurrent.atomic.AtomicReferenceArray<>(32);
+
+    public ContentDigest identity() {
+        int slot = (System.identityHashCode(this) & 0x7fffffff) % 32;
+        var hit = IDENTITY_CACHE.get(slot);
+        if (hit != null && hit.plan().get() == this) return hit.identity();
+        var computed = BindingIdentity.digest(canonicalForm());
+        IDENTITY_CACHE.set(slot, new IdentityCacheEntry(new java.lang.ref.WeakReference<>(this), computed));
+        return computed;
+    }
     public Object canonicalForm() { return Map.of("schema", "spring-injection-binding-plan-v2",
             "registrationPlan", registrationPlan.identity(), "dependencies", dependencies, "definitions", definitions,
             "matches", matches, "groups", groups, "obligations", obligations, "environment", environment, "limits", limits); }

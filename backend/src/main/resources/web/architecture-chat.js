@@ -739,7 +739,7 @@
     agentToggleInput.addEventListener('change', () => { session.agentic = agentToggleInput.checked; save(); });
     const agentToggleLabel = make('label','architecture-chat-agent-toggle');
     agentToggleLabel.title = 'Allow the AI assistant to inspect RepoMap, symbols, source files, Spring conditions, impact, and insights via read-only graph tools.';
-    agentToggleLabel.append(agentToggleInput, make('span','','Agent · Graph tools'));
+    agentToggleLabel.append(agentToggleInput, make('span','','Deep graph & code search'));
     const reviewerAgenticInput = make('input');
     reviewerAgenticInput.type = 'checkbox';
     reviewerAgenticInput.name = 'reviewerAgentic';
@@ -747,27 +747,33 @@
     reviewerAgenticInput.addEventListener('change', () => { session.reviewerAgentic = reviewerAgenticInput.checked; save(); });
     const reviewerAgenticLabel = make('label','architecture-chat-agent-toggle');
     reviewerAgenticLabel.title = 'Opt-in: allow the second-pass architecture reviewer to run independent graph and source tools before critiquing the answer.';
-    reviewerAgenticLabel.append(reviewerAgenticInput, make('span','','Reviewer · Agentic tools'));
+    reviewerAgenticLabel.append(reviewerAgenticInput, make('span','','Reviewer code tools'));
     const stop = button('Stop',() => pending?.abort(),'button subtle');
     stop.hidden = true;
     const submit = make('button','button primary',scope.provider ? 'Send' : 'Search snapshot');
     submit.type = 'submit';
-    const contextOptions = make('details','architecture-chat-context-options');
-    contextOptions.append(make('summary','','Options'),settings);
+    const optionsDrawer = make('div','architecture-chat-options-drawer');
+    optionsDrawer.hidden = true;
+    optionsDrawer.append(settings);
     if (scope.agentEnabled && scope.provider) {
       const toolRow = make('div','architecture-chat-agent-row');
       toolRow.append(agentToggleLabel, reviewerAgenticLabel);
-      contextOptions.append(toolRow);
+      optionsDrawer.append(toolRow);
     }
+    const optionsBtn = button('Options', () => {
+      optionsDrawer.hidden = !optionsDrawer.hidden;
+      optionsBtn.setAttribute('aria-expanded', String(!optionsDrawer.hidden));
+    }, 'button subtle architecture-chat-options-btn');
+    optionsBtn.setAttribute('aria-expanded', 'false');
     const leftControls = make('div','architecture-chat-controls-left');
-    leftControls.append(contextOptions);
+    leftControls.append(optionsBtn);
     if (scope.provider) leftControls.append(sourceOption);
     const rightControls = make('div','architecture-chat-controls-right');
     rightControls.append(stop, submit);
     controls.append(leftControls, rightControls);
     const inputField = make('div','architecture-chat-field');
     inputField.append(input);
-    form.append(inputField,controls);
+    form.append(inputField,optionsDrawer,controls);
     const evidence = make('aside','architecture-chat-evidence');
     evidence.setAttribute('aria-label','Captured architecture evidence');
     evidence.hidden = true;
@@ -1150,19 +1156,13 @@
           evidence.append(details);
         }
       }
-      if (result.model) {
-        const receipt = make('details','architecture-chat-record');
-        receipt.append(make('summary','','Model receipt'),make('pre','',JSON.stringify(result.model,null,2)));
-        evidence.append(receipt);
-      }
     }
 
     function buildReviewDetails(reviewResult) {
       const review = make('details','architecture-chat-review');
       const reviewOnCite = id => handleCitationClick(null, id, reviewResult);
-      review.append(make('summary','',reviewResult.agentTrace?.length
-        ? 'Architecture reviewer · agentic second pass (' + reviewResult.agentTrace.length + ' tools)'
-        : 'Architecture reviewer · second model call'),
+      review.append(make('summary','','Independent review' +
+        (reviewResult.agentTrace?.length ? ' (' + reviewResult.agentTrace.length + ' checks)' : '')),
         renderMarkdown(reviewResult.answer || 'The reviewer returned no answer.', reviewOnCite));
       if (Array.isArray(reviewResult.agentTrace) && reviewResult.agentTrace.length) {
         const rTrace = make('details','architecture-chat-trace');
@@ -1192,9 +1192,6 @@
           rFooter.append(reviewUsage);
           review.append(rFooter);
         }
-        const receipt = make('details','architecture-chat-raw');
-        receipt.append(make('summary','','Reviewer model receipt'),make('pre','',JSON.stringify(reviewResult.model,null,2)));
-        review.append(receipt);
       }
       if (reviewResult.limitations?.length) {
         const reviewLimits = make('ul','architecture-chat-limitations');
@@ -1283,7 +1280,7 @@
       } else if (turn.reviewError) {
         reviewSlot.append(make('p','architecture-chat-limitations',turn.reviewError));
       } else if (turn._reviewPending) {
-        reviewSlot.append(make('span','architecture-chat-review-pending','Reviewer checking in background…'));
+        reviewSlot.append(make('span','architecture-chat-review-pending','Reviewing…'));
       }
       reply.append(reviewSlot);
       reviewSlots.set(turn, reviewSlot);

@@ -318,15 +318,28 @@ public final class AnalysisJobs implements AutoCloseable {
         }
     }
 
+    public record AcquisitionSummary(
+            long acquisitionAttempts,
+            long pomAttempts,
+            String projectionProfile) {
+        public AcquisitionSummary {
+            if (acquisitionAttempts < 0L || pomAttempts < 0L) {
+                throw new IllegalArgumentException("Negative acquisition telemetry");
+            }
+            Objects.requireNonNull(projectionProfile, "projectionProfile");
+        }
+    }
+
     public record View(String id, String setup, State state, Stage stage, long revision, Instant submittedAt,
             Optional<Instant> startedAt, Optional<Instant> finishedAt, long elapsedMillis,
             Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result,
             boolean force, Optional<Reuse> reuse, Optional<ReuseDecision> reuseDecision,
-            Optional<AnalysisMode> mode) {
+            Optional<AnalysisMode> mode, Optional<String> projectionProfile) {
         public View {
             Objects.requireNonNull(reuse);
             Objects.requireNonNull(reuseDecision);
             Objects.requireNonNull(mode);
+            Objects.requireNonNull(projectionProfile);
             if (reuse.isPresent() && (force || stage != Stage.FINISHED || result.isEmpty()
                     || reuse.orElseThrow().sourceJob().equals(id)
                     || (state != State.SUCCEEDED && state != State.PARTIAL)
@@ -338,7 +351,7 @@ public final class AnalysisJobs implements AutoCloseable {
                 Optional<Instant> startedAt, Optional<Instant> finishedAt, long elapsedMillis,
                 Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result) {
             this(id, setup, state, stage, revision, submittedAt, startedAt, finishedAt, elapsedMillis, stop, error,
-                    events, result, false, Optional.empty(), Optional.empty(), Optional.empty());
+                    events, result, false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         }
 
         public View(String id, String setup, State state, Stage stage, long revision, Instant submittedAt,
@@ -346,7 +359,16 @@ public final class AnalysisJobs implements AutoCloseable {
                 Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result,
                 boolean force, Optional<Reuse> reuse, Optional<ReuseDecision> reuseDecision) {
             this(id, setup, state, stage, revision, submittedAt, startedAt, finishedAt, elapsedMillis, stop, error,
-                    events, result, force, reuse, reuseDecision, Optional.empty());
+                    events, result, force, reuse, reuseDecision, Optional.empty(), Optional.empty());
+        }
+
+        public View(String id, String setup, State state, Stage stage, long revision, Instant submittedAt,
+                Optional<Instant> startedAt, Optional<Instant> finishedAt, long elapsedMillis,
+                Optional<Stop> stop, Optional<String> error, List<Event> events, Optional<Result> result,
+                boolean force, Optional<Reuse> reuse, Optional<ReuseDecision> reuseDecision,
+                Optional<AnalysisMode> mode) {
+            this(id, setup, state, stage, revision, submittedAt, startedAt, finishedAt, elapsedMillis, stop, error,
+                    events, result, force, reuse, reuseDecision, mode, Optional.empty());
         }
     }
 
@@ -362,19 +384,28 @@ public final class AnalysisJobs implements AutoCloseable {
     public record Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
             boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
             Map<String, Long> stageMillis, List<StageTiming> stages, Map<String, Long> cacheMetrics,
-            Optional<IncrementalMetrics> incremental) {
+            Optional<IncrementalMetrics> incremental, Optional<String> projectionProfile,
+            Optional<AcquisitionSummary> acquisitionSummary) {
         public Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
                 boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
                 Map<String, Long> stageMillis, List<StageTiming> stages) {
             this(jobId, setup, mode, state, currentStage, reused, reuseDecision, totalElapsedMillis, stageMillis,
-                    stages, Map.of(), Optional.empty());
+                    stages, Map.of(), Optional.empty(), Optional.empty(), Optional.empty());
         }
 
         public Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
                 boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
                 Map<String, Long> stageMillis, List<StageTiming> stages, Map<String, Long> cacheMetrics) {
             this(jobId, setup, mode, state, currentStage, reused, reuseDecision, totalElapsedMillis, stageMillis,
-                    stages, cacheMetrics, Optional.empty());
+                    stages, cacheMetrics, Optional.empty(), Optional.empty(), Optional.empty());
+        }
+
+        public Telemetry(String jobId, String setup, Optional<AnalysisMode> mode, State state, Stage currentStage,
+                boolean reused, Optional<ReuseDecision> reuseDecision, long totalElapsedMillis,
+                Map<String, Long> stageMillis, List<StageTiming> stages, Map<String, Long> cacheMetrics,
+                Optional<IncrementalMetrics> incremental) {
+            this(jobId, setup, mode, state, currentStage, reused, reuseDecision, totalElapsedMillis, stageMillis,
+                    stages, cacheMetrics, incremental, Optional.empty(), Optional.empty());
         }
 
         public Telemetry {
@@ -382,6 +413,8 @@ public final class AnalysisJobs implements AutoCloseable {
             stages = List.copyOf(stages);
             cacheMetrics = Collections.unmodifiableMap(new TreeMap<>(cacheMetrics));
             Objects.requireNonNull(incremental, "incremental");
+            Objects.requireNonNull(projectionProfile, "projectionProfile");
+            Objects.requireNonNull(acquisitionSummary, "acquisitionSummary");
         }
     }
 
@@ -427,6 +460,10 @@ public final class AnalysisJobs implements AutoCloseable {
             return job.requestedRef;
         }
 
+        public String projectionProfile() {
+            return job.projectionProfile;
+        }
+
         boolean beginReuseCheck() {
             if (disk == null)
                 return false;
@@ -440,22 +477,27 @@ public final class AnalysisJobs implements AutoCloseable {
                 return Optional.empty();
             if (job.inputKey != null || job.stage.ordinal() >= Stage.ANALYSIS.ordinal())
                 throw new IllegalStateException("Reuse requires a single lookup before analysis");
+            String profile = job.projectionProfile;
+            var keyParts = new ArrayList<Object>();
+            keyParts.add("workbench-result-lookup:v1");
+            keyParts.add(job.registration.setup());
+            keyParts.add(verifiedInputs);
             if (job.requestedRef.isPresent()) {
-                job.inputKey = CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(),
-                        verifiedInputs, job.mode.name(), "ref:" + job.requestedRef.orElseThrow()));
-            } else {
-                job.inputKey = job.mode == AnalysisMode.FULL
-                        ? CanonicalJson
-                                .sha256(List.of("workbench-result-lookup:v1", job.registration.setup(), verifiedInputs))
-                        : CanonicalJson.sha256(List.of("workbench-result-lookup:v1", job.registration.setup(),
-                                verifiedInputs, job.mode.name()));
+                keyParts.add(job.mode.name());
+                keyParts.add("ref:" + job.requestedRef.orElseThrow());
+            } else if (job.mode != AnalysisMode.FULL) {
+                keyParts.add(job.mode.name());
             }
+            keyParts.add("profile:" + profile);
+            job.inputKey = CanonicalJson.sha256(keyParts);
             if (job.force)
                 return Optional.empty();
             job.reuseDecision = ReuseDecision.NO_MATCH;
             try {
                 var candidate = disk.reusable(job.inputKey, job.registration.setup(), this);
                 if (candidate.isEmpty())
+                    return Optional.empty();
+                if (!candidate.orElseThrow().view().projectionProfile().map(profile::equals).orElse(false))
                     return Optional.empty();
                 var result = candidate.orElseThrow().view().result().orElseThrow();
                 var graph = result.graph().orElseThrow();
@@ -478,6 +520,16 @@ public final class AnalysisJobs implements AutoCloseable {
 
         void withholdReuse() {
             job.inputKey = null;
+        }
+
+        public void recordAcquisitionTelemetry(long acquisitionAttempts, long pomAttempts) {
+            long safeAcq = Math.max(0L, acquisitionAttempts);
+            long safePom = Math.max(0L, pomAttempts);
+            synchronized (AnalysisJobs.this) {
+                job.acquisitionTelemetryRecorded = true;
+                job.cacheMetrics.put("acquisitionAttempts", safeAcq);
+                job.cacheMetrics.put("pomAttempts", safePom);
+            }
         }
 
         public void recordCacheMetrics(Map<String, Long> metrics) {
@@ -668,6 +720,8 @@ public final class AnalysisJobs implements AutoCloseable {
         boolean force;
         AnalysisMode mode = AnalysisMode.FULL;
         Optional<String> requestedRef = Optional.empty();
+        String projectionProfile = LocalAnalysisRunner.configuredProjectionProfileName();
+        boolean acquisitionTelemetryRecorded;
         ContentDigest inputKey;
         Reuse reuse;
         volatile ReuseDecision reuseDecision;
@@ -692,6 +746,7 @@ public final class AnalysisJobs implements AutoCloseable {
                 this.revision = previous.view().revision() + 1;
                 this.force = previous.view().force();
                 this.mode = previous.view().mode().orElse(AnalysisMode.FULL);
+                this.projectionProfile = normalizeProjectionProfile(previous.view().projectionProfile());
             }
             stageStartNanos.put(stage, submittedNanos);
             events.add(new Event(stage, Instant.now()));
@@ -871,6 +926,44 @@ public final class AnalysisJobs implements AutoCloseable {
         return saved(id).telemetry().flatMap(AnalysisJobDiskStore.PersistedTelemetry::incremental);
     }
 
+    public synchronized Optional<AcquisitionSummary> acquisitionSummary(UUID id) {
+        Objects.requireNonNull(id);
+        requireJobAccess(id);
+        var active = jobs.get(id);
+        if (active != null) {
+            return acquisitionSummaryFrom(active.cacheMetrics, active.acquisitionTelemetryRecorded,
+                    Optional.of(active.projectionProfile));
+        }
+        var recent = completedTelemetry.get(id);
+        if (recent != null) {
+            return recent.acquisitionSummary();
+        }
+        var historical = saved(id);
+        return acquisitionSummaryFrom(
+                historical.telemetry().map(AnalysisJobDiskStore.PersistedTelemetry::cacheMetrics).orElse(Map.of()),
+                false,
+                historical.view().projectionProfile());
+    }
+
+    private static Optional<AcquisitionSummary> acquisitionSummaryFrom(
+            Map<String, Long> cacheMetrics,
+            boolean explicitlyRecorded,
+            Optional<String> projectionProfile) {
+        if (cacheMetrics == null) {
+            return Optional.empty();
+        }
+        boolean hasCounts = explicitlyRecorded
+                || cacheMetrics.containsKey("acquisitionAttempts")
+                || cacheMetrics.containsKey("pomAttempts");
+        if (!hasCounts) {
+            return Optional.empty();
+        }
+        long acquisitionAttempts = Math.max(0L, cacheMetrics.getOrDefault("acquisitionAttempts", 0L));
+        long pomAttempts = Math.max(0L, cacheMetrics.getOrDefault("pomAttempts", 0L));
+        String profile = projectionProfile.orElseGet(LocalAnalysisRunner::configuredProjectionProfileName);
+        return Optional.of(new AcquisitionSummary(acquisitionAttempts, pomAttempts, profile));
+    }
+
     public AnalysisJobEventBroker.Subscription subscribe(UUID id, long lastEventId) {
         Objects.requireNonNull(id);
         LiveProgress snapshot;
@@ -949,21 +1042,27 @@ public final class AnalysisJobs implements AutoCloseable {
     }
 
     public Submission submit(String setup, String idempotencyKey) {
-        return submit(setup, idempotencyKey, false, AnalysisMode.FULL, Optional.empty());
+        return submit(setup, idempotencyKey, false, AnalysisMode.FULL, Optional.empty(), Optional.empty());
     }
 
     public Submission submit(String setup, String idempotencyKey, boolean force) {
-        return submit(setup, idempotencyKey, force, AnalysisMode.FULL, Optional.empty());
+        return submit(setup, idempotencyKey, force, AnalysisMode.FULL, Optional.empty(), Optional.empty());
     }
 
     public Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode) {
-        return submit(setup, idempotencyKey, force, mode, Optional.empty());
+        return submit(setup, idempotencyKey, force, mode, Optional.empty(), Optional.empty());
+    }
+
+    public Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode,
+            Optional<String> ref) {
+        return submit(setup, idempotencyKey, force, mode, ref, Optional.empty());
     }
 
     public synchronized Submission submit(String setup, String idempotencyKey, boolean force, AnalysisMode mode,
-            Optional<String> ref) {
+            Optional<String> ref, Optional<String> projectionProfile) {
         Objects.requireNonNull(mode);
         var normalizedRef = normalizeRef(ref);
+        String resolvedProfile = normalizeProjectionProfile(projectionProfile);
         identifier(setup);
         identifier(idempotencyKey);
         if (closed)
@@ -973,7 +1072,8 @@ public final class AnalysisJobs implements AutoCloseable {
         var existing = retries.get(retryKey);
         if (existing != null) {
             if (!existing.registration.setup().id().equals(setup) || existing.force != force || existing.mode != mode
-                    || !existing.requestedRef.equals(normalizedRef))
+                    || !existing.requestedRef.equals(normalizedRef)
+                    || !existing.projectionProfile.equals(resolvedProfile))
                 throw new Rejected("IDEMPOTENCY_CONFLICT");
             return new Submission(view(existing), false);
         }
@@ -986,8 +1086,10 @@ public final class AnalysisJobs implements AutoCloseable {
             try {
                 previous = disk.retry(persistedRetryKey).orElse(null);
                 if (previous != null && isJobVisibleToCaller(UUID.fromString(previous.view().id()))) {
+                    String prevProfile = previous.view().projectionProfile().orElse("strict");
                     if (!previous.view().setup().equals(setup) || previous.view().force() != force
                             || previous.view().mode().orElse(AnalysisMode.FULL) != mode
+                            || !prevProfile.equals(resolvedProfile)
                             || !disk.intent(UUID.fromString(previous.view().id())).equals(registration.setup()))
                         throw new Rejected("IDEMPOTENCY_CONFLICT");
                     if (terminal(previous.view().state())
@@ -1007,6 +1109,7 @@ public final class AnalysisJobs implements AutoCloseable {
         job.force = force;
         job.mode = mode;
         job.requestedRef = normalizedRef;
+        job.projectionProfile = resolvedProfile;
         job.retry = idempotencyKey;
         job.ownerUserId = callerUserId;
         job.requestContext = com.evolution.backend.auth.RequestContext.current().orElse(null);
@@ -1054,9 +1157,11 @@ public final class AnalysisJobs implements AutoCloseable {
                     ended.map(end -> Math.max(0L, end.toEpochMilli() - ev.at().toEpochMilli())).orElse(0L));
             stages.add(new StageTiming(ev.stage(), dur, ev.at(), ended));
         }
+        var profileOpt = Optional.of(job.projectionProfile);
+        var acqSummary = acquisitionSummaryFrom(job.cacheMetrics, job.acquisitionTelemetryRecorded, profileOpt);
         return new Telemetry(job.id.toString(), job.registration.setup().id(), Optional.of(job.mode), job.state,
                 job.stage, job.reuse != null, Optional.ofNullable(job.reuseDecision), totalMs, stageMs, stages,
-                job.cacheMetrics, Optional.ofNullable(job.incrementalMetrics));
+                job.cacheMetrics, Optional.ofNullable(job.incrementalMetrics), profileOpt, acqSummary);
     }
 
     private static LinkedHashMap<String, Long> computeStageMillis(Job job, long nowNanos) {
@@ -1160,9 +1265,10 @@ public final class AnalysisJobs implements AutoCloseable {
                 .orElse(Map.of());
         Optional<IncrementalMetrics> incremental = persisted
                 .flatMap(AnalysisJobDiskStore.PersistedTelemetry::incremental);
+        var acqSummary = acquisitionSummaryFrom(cacheMetrics, false, view.projectionProfile());
         return new Telemetry(view.id(), view.setup(), view.mode(), view.state(), view.stage(),
                 view.reuse().isPresent(), view.reuseDecision(), view.elapsedMillis(), stageMs, stages,
-                cacheMetrics, incremental);
+                cacheMetrics, incremental, view.projectionProfile(), acqSummary);
     }
 
     public synchronized View get(UUID id) {
@@ -1232,7 +1338,8 @@ public final class AnalysisJobs implements AutoCloseable {
                 return v;
             var next = new View(v.id(), v.setup(), State.CANCELLED, Stage.FINISHED, v.revision() + 1, v.submittedAt(),
                     v.startedAt(), Optional.of(Instant.now()), v.elapsedMillis(), Optional.of(Stop.USER_CANCELLED),
-                    Optional.empty(), v.events(), v.result(), v.force(), Optional.empty(), v.reuseDecision(), v.mode());
+                    Optional.empty(), v.events(), v.result(), v.force(), Optional.empty(), v.reuseDecision(),
+                    v.mode(), v.projectionProfile());
             try {
                 disk.save(previous.retry(), disk.intent(id), next, previous.gaps(), previous.inputProblems());
             } catch (IOException failure) {
@@ -1310,7 +1417,7 @@ public final class AnalysisJobs implements AutoCloseable {
                     var rejected = new View(v.id(), v.setup(), State.FAILED, Stage.FINISHED, v.revision() + 1,
                             v.submittedAt(), v.startedAt(), Optional.of(Instant.now()), v.elapsedMillis(),
                             Optional.empty(), Optional.of("SETUP_CONFIGURATION_CHANGED"), v.events(), v.result(),
-                            v.force(), Optional.empty(), Optional.empty(), v.mode());
+                            v.force(), Optional.empty(), Optional.empty(), v.mode(), v.projectionProfile());
                     disk.save(selected.retry(), intended, rejected, selected.gaps(), selected.inputProblems());
                     continue;
                 }
@@ -1624,6 +1731,24 @@ public final class AnalysisJobs implements AutoCloseable {
         return Optional.of(trimmed);
     }
 
+    public static String normalizeProjectionProfile(Optional<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return LocalAnalysisRunner.configuredProjectionProfileName();
+        }
+        String trimmed = raw.orElseThrow().strip();
+        if (trimmed.isEmpty()) {
+            return LocalAnalysisRunner.configuredProjectionProfileName();
+        }
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        if ("strict".equals(lower)) {
+            return "strict";
+        }
+        if ("dfd-export".equals(lower) || "dfd_export".equals(lower)) {
+            return "dfd-export";
+        }
+        throw new IllegalArgumentException("Invalid projectionProfile");
+    }
+
     public static boolean terminal(State state) {
         return state != State.QUEUED && state != State.RUNNING && state != State.CANCELLING;
     }
@@ -1637,7 +1762,7 @@ public final class AnalysisJobs implements AutoCloseable {
                 Optional.ofNullable(job.stop),
                 Optional.ofNullable(job.error), List.copyOf(job.events), Optional.ofNullable(job.result),
                 job.force, Optional.ofNullable(job.reuse), Optional.ofNullable(job.reuseDecision),
-                Optional.of(job.mode));
+                Optional.of(job.mode), Optional.of(job.projectionProfile));
     }
 
     /**

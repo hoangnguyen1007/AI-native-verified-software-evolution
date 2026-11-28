@@ -113,6 +113,15 @@ public final class GradleScan {
             Optional<UniversalBuildModel> model, Path cache,
             Optional<PlatformInput> fallback, DependencyAcquisitionPolicy policy, Map<Integer, PlatformInput> platforms,
             Optional<Path> androidSdk, BuildDeltaCache deltaCache) {
+        return augment(prior, acquisition, model, cache, fallback, policy, platforms, androidSdk, deltaCache,
+                (build, depPolicy) -> new GradleDependencyArtifactResolver(cache).resolve(build, depPolicy));
+    }
+
+    static MavenScan.Inputs augment(MavenScan.Inputs prior, RepositoryAcquisitionResult acquisition,
+            Optional<UniversalBuildModel> model, Path cache,
+            Optional<PlatformInput> fallback, DependencyAcquisitionPolicy policy, Map<Integer, PlatformInput> platforms,
+            Optional<Path> androidSdk, BuildDeltaCache deltaCache,
+            java.util.function.BiFunction<UniversalBuildModel, DependencyAcquisitionPolicy, GradleDependencyArtifactResolver.Result> gradleResolver) {
         if (model.isEmpty())
             return prior;
         MavenScan.prepareCache(cache, policy.remoteRepositories());
@@ -124,18 +133,19 @@ public final class GradleScan {
             if (cached.isPresent()) {
                 result = cached.orElseThrow();
             } else {
-                result = new GradleDependencyArtifactResolver(cache).resolve(build, policy);
+                result = gradleResolver.apply(build, policy);
                 deltaCache.putGradleResolution(d3Key, result);
             }
         } else {
-            result = new GradleDependencyArtifactResolver(cache).resolve(build, policy);
+            result = gradleResolver.apply(build, policy);
         }
         var resolutions = new HashMap<>(prior.resolutions());
         var gaps = new TreeSet<>(prior.gaps());
         var ledgers = new ArrayList<>(prior.ledgers());
         var context = EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity());
+        var canonicalFailed = MavenScan.canonicalFailedAcquisitions(result.acquisitions(), policy, null);
         var ledger = CapabilityGapNormalizer.normalize(context,
-                EvidenceNormalizationInput.builder().dependencyAcquisitions(result.acquisitions()).build());
+                EvidenceNormalizationInput.builder().dependencyAcquisitions(canonicalFailed).build());
         ledgers.add(ledger);
         gaps.addAll(ledger.gaps());
         var reasons = new TreeMap<String, Long>();
@@ -265,12 +275,14 @@ public final class GradleScan {
         }
         long unique = allBinaries.stream().map(BinaryInput::entry).distinct().count();
         var summary = new TreeMap<>(prior.summary());
+        int acquisitionAttempts = result.acquisitions().stream().mapToInt(a -> a.attempts().size()).sum();
         summary.put("gradle",
                 Map.of("provider", GradleDependencyArtifactResolver.PROVIDER, "model", build.identity(), "contexts",
                         result.contexts().size(), "binaryInputs", recovered, "uniqueBinaryArtifacts", unique,
                         "problemsByReason", reasons,
                         "trust", "PASSIVE_RECOVERY", "effectiveGradleContext", false, "acquisitionReceipts",
-                        result.acquisitions().stream().map(a -> a.identity()).toList()));
+                        result.acquisitions().stream().map(a -> a.identity()).toList(),
+                        "acquisitionAttempts", acquisitionAttempts));
         if (prior.resolutions().isEmpty())
             summary.put("mode", policy.remoteRepositories().isEmpty() ? "PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT"
                     : "EXPLICIT_ARTIFACT_ACQUISITION");

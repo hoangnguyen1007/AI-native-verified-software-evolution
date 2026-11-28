@@ -865,7 +865,16 @@ if [ "${{EVO_BUILD_TOOL}}" = "gradle" ]; then
   if [ "${{COMPILE_EXIT}}" -eq 0 ]; then
     emit "EVO_CHECK candidate.compile"
     if [ "${{EVO_SKIP_TESTS:-false}}" = "true" ]; then TEST_EXIT=0; emit "EVO_TESTS_SKIPPED true"
-    else set +e; gradle ${{GRADLE_ARGS}} test > /tmp/test.log 2>&1; TEST_EXIT=$?; set -e; fi
+    else
+      GRADLE_TEST_ARGS="${{GRADLE_ARGS}} test"
+      if [ -n "${{EVO_SELECTED_TESTS:-}}" ]; then
+        IFS=',' read -r -a SEL_ARR <<< "${{EVO_SELECTED_TESTS}}"
+        for pat in "${{SEL_ARR[@]}}"; do
+          if [ -n "${{pat}}" ]; then GRADLE_TEST_ARGS="${{GRADLE_TEST_ARGS}} --tests ${{pat}}"; fi
+        done
+      fi
+      set +e; gradle ${{GRADLE_TEST_ARGS}} > /tmp/test.log 2>&1; TEST_EXIT=$?; set -e
+    fi
   fi
 else
   MVN_ARGS="-o -B -ntp -Dmaven.repo.local=/inputs/m2 -Duser.home=/work"
@@ -875,7 +884,11 @@ else
   if [ "${{COMPILE_EXIT}}" -eq 0 ]; then
     emit "EVO_CHECK candidate.compile"
     if [ "${{EVO_SKIP_TESTS:-false}}" = "true" ]; then TEST_EXIT=0; emit "EVO_TESTS_SKIPPED true"
-    else set +e; mvn ${{MVN_ARGS}} -DfailIfNoTests=false test > /tmp/test.log 2>&1; TEST_EXIT=$?; set -e; fi
+    else
+      MVN_TEST_ARGS="${{MVN_ARGS}} -DfailIfNoTests=false"
+      if [ -n "${{EVO_SELECTED_TESTS:-}}" ]; then MVN_TEST_ARGS="${{MVN_TEST_ARGS}} -Dtest=${{EVO_SELECTED_TESTS}}"; fi
+      set +e; mvn ${{MVN_TEST_ARGS}} test > /tmp/test.log 2>&1; TEST_EXIT=$?; set -e
+    fi
   fi
 fi
 emit "EVO_TEST_EXIT ${{TEST_EXIT}}"
@@ -1979,13 +1992,20 @@ def effective_behavioral_diff_enabled(behavioral_diff: bool, skip_tests: bool) -
     return bool(behavioral_diff and not skip_tests)
 
 
-def build_spec_env(build_tool: str, mvn_pl_list: list[str], skip_tests: bool, behavioral_diff: bool) -> str:
+def build_spec_env(
+    build_tool: str,
+    mvn_pl_list: list[str],
+    skip_tests: bool,
+    behavioral_diff: bool,
+    selected_tests: str = "",
+) -> str:
     effective_diff = effective_behavioral_diff_enabled(behavioral_diff, skip_tests)
     return (
         f"EVO_BUILD_TOOL={shlex.quote(build_tool)}\n"
         f"EVO_MVN_PL={shlex.quote(','.join(mvn_pl_list))}\n"
         f"EVO_SKIP_TESTS={shlex.quote('true' if skip_tests else 'false')}\n"
         f"EVO_BEHAVIORAL_DIFF={shlex.quote('true' if effective_diff else 'false')}\n"
+        f"EVO_SELECTED_TESTS={shlex.quote(selected_tests)}\n"
     )
 
 
@@ -2007,6 +2027,7 @@ def main():
     parser.add_argument("--behavioral-probes", type=Path, help="Optional JSON file of syntax-gated characterization test probes")
     parser.add_argument("--gradle-cache-max-mb", type=int, default=2048, help="Max Gradle cache MiB to stage (default 2048)")
     parser.add_argument("--skip-tests", action="store_true", help="Skip test execution after compile passes")
+    parser.add_argument("--selected-tests", default="", help="Optional SKG-RTS comma-separated test class filter")
     parser.add_argument("--out", required=True, type=Path, help="Output capture directory")
     parser.add_argument("--base", default=DEFAULT_BASE_IMAGE, help="Pinned official image digest (eclipse-temurin|node|python|golang@sha256:...)")
     parser.add_argument("--base-cache-tag", default="", help="Optional Docker cache tag for fast layer reuse")
@@ -2173,7 +2194,10 @@ def main():
         for mod in mvn_pl_list:
             if not is_safe_mvn_module_path(mod):
                 raise ValueError(f"UNSAFE_MVN_MODULE_PATH: {mod}")
-        build_spec = build_spec_env(build_tool, mvn_pl_list, args.skip_tests, args.behavioral_diff)
+        raw_selected = (args.selected_tests or "").strip()
+        if raw_selected and not re.fullmatch(r"[A-Za-z0-9_.$#,*?/-]{1,2048}", raw_selected):
+            raise ValueError("UNSAFE_SELECTED_TESTS_FILTER")
+        build_spec = build_spec_env(build_tool, mvn_pl_list, args.skip_tests, args.behavioral_diff, raw_selected)
         (inputs_dir / "build-spec.env").write_text(build_spec, encoding="utf-8", newline="\n")
 
         manifest_entries = []

@@ -55,6 +55,7 @@ public final class InjectionBindings {
         private final List<BindingProcessing.Issue> issues;
         private final List<ObligationRow> obligations;
         private final List<CapabilityGapRecord> gaps;
+        private volatile ContentDigest cachedIdentity;
         Result(ContentDigest input, DiscoveryTransitions.ContextIdentity context, BeanRegistrationTransitions.Result registration,
                List<Row> rows, List<ObligationRow> obligations, List<BindingProcessing.Issue> issues, SpringBuildContext build) {
             this.input = input; this.context = context; this.registration = registration;
@@ -76,7 +77,13 @@ public final class InjectionBindings {
             rows.forEach(r -> counts.merge(r.outcome().name(), 1, Integer::sum));
             return new Coverage(rows.size(), counts);
         }
-        public ContentDigest identity() { return BindingIdentity.digest(canonicalForm()); }
+        public ContentDigest identity() {
+            ContentDigest cached = cachedIdentity;
+            if (cached != null) return cached;
+            ContentDigest computed = BindingIdentity.digest(canonicalForm());
+            cachedIdentity = computed;
+            return computed;
+        }
         public BeanRegistrationTransitions.Result registration() { return registration; }
         public BindingCandidateIdentity candidateIdentity(InjectionPoint.Identity point, BeanDefinitionCandidate.Identity candidate) {
             if (rows.stream().noneMatch(r -> r.point().equals(point)) || registration.candidates().stream().noneMatch(c -> c.candidate().equals(candidate)))
@@ -94,7 +101,15 @@ public final class InjectionBindings {
     }
     public static Result evaluate(InjectionBindingPlan plan, ConditionModel model, ConfigurationAssignment assignment,
                                   ExogenousConditionEvaluator.Limits exogenousLimits) {
-        var registration = BeanRegistrationTransitions.evaluate(plan.registrationPlan(), model, assignment, exogenousLimits);
+        return evaluate(plan, model, assignment, exogenousLimits, null);
+    }
+
+    /** Evaluates binding reusing an already-evaluated exogenous result when its exact input identity matches. */
+    public static Result evaluate(InjectionBindingPlan plan, ConditionModel model, ConfigurationAssignment assignment,
+                                  ExogenousConditionEvaluator.Limits exogenousLimits,
+                                  ExogenousConditionEvaluator.Result precomputedExogenous) {
+        var registration = BeanRegistrationTransitions.evaluate(plan.registrationPlan(), model, assignment,
+                exogenousLimits, precomputedExogenous);
         return new BindingResolution(plan, registration, model.space().identity(), exogenousLimits).run();
     }
 }

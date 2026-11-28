@@ -36,9 +36,9 @@ import javax.xml.stream.*;
  * UniversalArchitectureReport.
  */
 public final class UniversalArchitecturePipeline {
-    public static final long DISK_SPILL_MIN_BYTES = 16_000_000L;
-    public static final int DISK_SPILL_MIN_FILES = 400;
-    public static final int DISK_SPILL_MIN_CONTEXTS = 8;
+    public static final long DISK_SPILL_MIN_BYTES = 64_000_000L;
+    public static final int DISK_SPILL_MIN_FILES = 5_000;
+    public static final int DISK_SPILL_MIN_CONTEXTS = 64;
 
     private final AnalysisWorkspace workspace;
     private final int aggregationWorkers;
@@ -67,11 +67,25 @@ public final class UniversalArchitecturePipeline {
         this.springCache = springCache;
     }
 
-    /** Centralized bounded-memory disk-spill admission heuristic (prevents heap OOM on dense multi-module repos). */
+    /**
+     * Centralized bounded-memory disk-spill admission heuristic (prevents heap OOM
+     * on dense multi-module repos).
+     */
     public static boolean shouldUseDiskSpill(long acquiredBytesTotal, int acquiredFileCount, int buildContextCount) {
-        return acquiredBytesTotal >= DISK_SPILL_MIN_BYTES
-                || acquiredFileCount >= DISK_SPILL_MIN_FILES
-                || buildContextCount >= DISK_SPILL_MIN_CONTEXTS;
+        return shouldUseDiskSpill(acquiredBytesTotal, acquiredFileCount, buildContextCount,
+                Runtime.getRuntime().maxMemory());
+    }
+
+    public static boolean shouldUseDiskSpill(long acquiredBytesTotal, int acquiredFileCount, int buildContextCount,
+            long maxHeapBytes) {
+        long safeHeap = maxHeapBytes > 0 && maxHeapBytes < Long.MAX_VALUE ? maxHeapBytes : 0L;
+        long defaultMinBytes = Math.max(DISK_SPILL_MIN_BYTES, safeHeap / 16L);
+        long minBytes = Math.max(1L, Long.getLong("evo.spill.minBytes", defaultMinBytes));
+        int minFiles = Math.max(1, Integer.getInteger("evo.spill.minFiles", DISK_SPILL_MIN_FILES));
+        int minContexts = Math.max(1, Integer.getInteger("evo.spill.minContexts", DISK_SPILL_MIN_CONTEXTS));
+        return acquiredBytesTotal >= minBytes
+                || acquiredFileCount >= minFiles
+                || buildContextCount >= minContexts;
     }
 
     public Optional<IncrementalSpringCache> springCache() {
@@ -1279,14 +1293,16 @@ public final class UniversalArchitecturePipeline {
                     try {
                         boolean autoSat = policy.springSatMode() == SpringSatMode.AUTO_MULTI_CONFIG_SAT;
                         var unitOutcome = outcomesBySet.get(unit.sourceSet());
-                        var unitRequestOpt = unitOutcome == null ? Optional.<FrontendRequest>empty() : unitOutcome.request();
+                        var unitRequestOpt = unitOutcome == null ? Optional.<FrontendRequest>empty()
+                                : unitOutcome.request();
                         ContentDigest springExactKey = null;
                         ContentDigest springSemanticKey = null;
                         ContentDigest springFrontendDigest = null;
                         ContentDigest configDataDigest = null;
                         List<CapabilityGapRecord> unitRelatedGaps = null;
                         Optional<IncrementalSpringCache.CachedOutcome> cachedSpring = Optional.empty();
-                        if (springCache != null && unitRequestOpt.isPresent() && !unitRequestOpt.orElseThrow().sources().isEmpty()) {
+                        if (springCache != null && unitRequestOpt.isPresent()
+                                && !unitRequestOpt.orElseThrow().sources().isEmpty()) {
                             var req = unitRequestOpt.orElseThrow();
                             var fw = frameworkCache.computeIfAbsent(req.manifest().identity(),
                                     ignored -> extractSpringFramework(req));
@@ -1343,78 +1359,86 @@ public final class UniversalArchitecturePipeline {
                                 }
                             });
                         } else {
-                        Optional<SourceToSpringPlan.Result> planOpt = Optional.empty();
-                        if (hasExplicitSpringScope || !autoSat) {
-                            var scope = resolveScope(policy, unit, outcomesBySet, frameworkCache, frontend);
-                            if (scope.isPresent()) {
-                                if (unitRelatedGaps == null) {
-                                    var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
-                                    related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
-                                    var relatedRows = workspace.<CapabilityGapRecord>list();
-                                    relatedRows.addAll(related);
-                                    unitRelatedGaps = workspace.freeze(relatedRows);
-                                }
-                                var scopedPipeline = new UniversalIngestionPipeline.Result(
-                                        pipelineResult.inputIdentity(),
-                                        pipelineResult.sourceIngestion(), List.of(unit), List.of(),
-                                        unitRelatedGaps);
-                                int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
-                                planOpt = Optional
-                                        .of(pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(),
-                                                springLimit, validationMode));
-                            }
-                        } else {
-                            var evidenceOpt = autoScopeEvidence(outcomesBySet, unit.sourceSet(), frontend);
-                            if (evidenceOpt.isPresent()) {
-                                if (unitRelatedGaps == null) {
-                                    var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
-                                    related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
-                                    var relatedRows = workspace.<CapabilityGapRecord>list();
-                                    relatedRows.addAll(related);
-                                    unitRelatedGaps = workspace.freeze(relatedRows);
-                                }
-                                var scopedPipeline = new UniversalIngestionPipeline.Result(
-                                        pipelineResult.inputIdentity(),
-                                        pipelineResult.sourceIngestion(), List.of(unit), List.of(),
-                                        unitRelatedGaps);
-                                int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
-                                planOpt = Optional.of(pipeline.prepareSpringAutoScoped(scopedPipeline, unit.sourceSet(),
-                                        "architecture-scope", evidenceOpt.get(), springLimit, validationMode));
-                            }
-                        }
-                        if (planOpt.isPresent()) {
-                            var plan = planOpt.get();
-                            allGaps.addAll(plan.gaps());
-                            var unitBuiltGaps = new ArrayList<CapabilityGapRecord>();
-                            int artifactIndex = springArtifacts.size();
-                            springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(
-                                    unit.sourceSet(), plan,
-                                    Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
-                            collectSpringPlanReportRows(plan, typeIdentityToFqn, components, producers, injectionSites);
-
-                            // Truth evaluation
-                            if (policy.truthEvaluationMode() != TruthEvaluationMode.NONE) {
-                                var spaceOpt = policy.configurationSpace();
-                                var baselineOpt = policy.baselineConfiguration();
-                                if (spaceOpt.isEmpty() && (policy.truthEvaluationMode() == TruthEvaluationMode.AUTO
-                                        || policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC && autoSat)) {
-                                    var configuration = Objects.requireNonNull(outcomesBySet.get(unit.sourceSet())).configuration();
-                                    if (autoSat) {
-                                        var built = RepositoryConfigurationSpaceBuilder.build(
-                                                plan.binding().registrationPlan().discoveryPlan().buildContext(),
-                                                configuration, plan.conditions().occurrences());
-                                        spaceOpt = Optional.of(built.space());
-                                        baselineOpt = Optional.of(built.baseline());
-                                        allGaps.addAll(built.gaps());
-                                        unitBuiltGaps.addAll(built.gaps());
-                                    } else {
-                                        var selected = RepositoryBaselineConfiguration.select(
-                                                plan.binding().registrationPlan().discoveryPlan().buildContext(),
-                                                configuration, plan.conditions().occurrences());
-                                        spaceOpt = Optional.of(selected.space());
-                                        baselineOpt = Optional.of(selected.baseline());
+                            Optional<SourceToSpringPlan.Result> planOpt = Optional.empty();
+                            if (hasExplicitSpringScope || !autoSat) {
+                                var scope = resolveScope(policy, unit, outcomesBySet, frameworkCache, frontend);
+                                if (scope.isPresent()) {
+                                    if (unitRelatedGaps == null) {
+                                        var related = workspace
+                                                .gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                                        related.addAll(
+                                                contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                                        var relatedRows = workspace.<CapabilityGapRecord>list();
+                                        relatedRows.addAll(related);
+                                        unitRelatedGaps = workspace.freeze(relatedRows);
                                     }
+                                    var scopedPipeline = new UniversalIngestionPipeline.Result(
+                                            pipelineResult.inputIdentity(),
+                                            pipelineResult.sourceIngestion(), List.of(unit), List.of(),
+                                            unitRelatedGaps);
+                                    int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
+                                    planOpt = Optional
+                                            .of(pipeline.prepareSpring(scopedPipeline, unit.sourceSet(), scope.get(),
+                                                    springLimit, validationMode));
                                 }
+                            } else {
+                                var evidenceOpt = autoScopeEvidence(outcomesBySet, unit.sourceSet(), frontend);
+                                if (evidenceOpt.isPresent()) {
+                                    if (unitRelatedGaps == null) {
+                                        var related = workspace
+                                                .gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
+                                        related.addAll(
+                                                contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
+                                        var relatedRows = workspace.<CapabilityGapRecord>list();
+                                        relatedRows.addAll(related);
+                                        unitRelatedGaps = workspace.freeze(relatedRows);
+                                    }
+                                    var scopedPipeline = new UniversalIngestionPipeline.Result(
+                                            pipelineResult.inputIdentity(),
+                                            pipelineResult.sourceIngestion(), List.of(unit), List.of(),
+                                            unitRelatedGaps);
+                                    int springLimit = Math.min(MAX_SPRING_PLAN_LIMIT, Math.max(1, policy.maxTypes()));
+                                    planOpt = Optional.of(pipeline.prepareSpringAutoScoped(scopedPipeline,
+                                            unit.sourceSet(),
+                                            "architecture-scope", evidenceOpt.get(), springLimit, validationMode));
+                                }
+                            }
+                            if (planOpt.isPresent()) {
+                                var plan = planOpt.get();
+                                allGaps.addAll(plan.gaps());
+                                var unitBuiltGaps = new ArrayList<CapabilityGapRecord>();
+                                int artifactIndex = springArtifacts.size();
+                                springArtifacts.add(new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(
+                                        unit.sourceSet(), plan,
+                                        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
+                                collectSpringPlanReportRows(plan, typeIdentityToFqn, components, producers,
+                                        injectionSites);
+
+                                // Truth evaluation
+                                if (policy.truthEvaluationMode() != TruthEvaluationMode.NONE) {
+                                    var spaceOpt = policy.configurationSpace();
+                                    var baselineOpt = policy.baselineConfiguration();
+                                    if (spaceOpt.isEmpty() && (policy.truthEvaluationMode() == TruthEvaluationMode.AUTO
+                                            || policy.truthEvaluationMode() == TruthEvaluationMode.SYMBOLIC
+                                                    && autoSat)) {
+                                        var configuration = Objects.requireNonNull(outcomesBySet.get(unit.sourceSet()))
+                                                .configuration();
+                                        if (autoSat) {
+                                            var built = RepositoryConfigurationSpaceBuilder.build(
+                                                    plan.binding().registrationPlan().discoveryPlan().buildContext(),
+                                                    configuration, plan.conditions().occurrences());
+                                            spaceOpt = Optional.of(built.space());
+                                            baselineOpt = Optional.of(built.baseline());
+                                            allGaps.addAll(built.gaps());
+                                            unitBuiltGaps.addAll(built.gaps());
+                                        } else {
+                                            var selected = RepositoryBaselineConfiguration.select(
+                                                    plan.binding().registrationPlan().discoveryPlan().buildContext(),
+                                                    configuration, plan.conditions().occurrences());
+                                            spaceOpt = Optional.of(selected.space());
+                                            baselineOpt = Optional.of(selected.baseline());
+                                        }
+                                    }
                                 if (spaceOpt.isPresent()) {
                                     var rawSpace = spaceOpt.get();
                                     var planBuildContext = plan.binding().registrationPlan().discoveryPlan()
@@ -1435,7 +1459,8 @@ public final class UniversalArchitecturePipeline {
                                         var symbolic = plan.evaluateSymbolic(space, baseline, policy.truthLimits(),
                                                 ContentDigest.sha256Utf8("symbolic-truth-evaluator"),
                                                 DEFAULT_SAT_MAX_SIGNATURES,
-                                                SymbolicConfiguration.Limits.defaults());
+                                                SymbolicConfiguration.Limits.defaults(),
+                                                Boolean.getBoolean("evo.spring.verifyWitnessReplay"));
                                         allGaps.addAll(symbolic.truth().gaps()); // plan gaps already retained above
                                         springArtifacts.set(artifactIndex,
                                                 new com.evolution.analysis.graph.CanonicalGraphInput.SpringSlice(
@@ -1489,16 +1514,16 @@ public final class UniversalArchitecturePipeline {
                                         }
                                     }
                                 }
+                                }
+                                if (springCache != null && springExactKey != null && springSemanticKey != null) {
+                                    springCache.recordComputed(unit.sourceSet(), springExactKey, springSemanticKey,
+                                            new IncrementalSpringCache.CachedOutcome(
+                                                    springArtifacts.get(artifactIndex),
+                                                    unitBuiltGaps,
+                                                    springFrontendDigest,
+                                                    configDataDigest));
+                                }
                             }
-                            if (springCache != null && springExactKey != null && springSemanticKey != null) {
-                                springCache.recordComputed(unit.sourceSet(), springExactKey, springSemanticKey,
-                                        new IncrementalSpringCache.CachedOutcome(
-                                                springArtifacts.get(artifactIndex),
-                                                unitBuiltGaps,
-                                                springFrontendDigest,
-                                                configDataDigest));
-                            }
-                        }
                         }
                     } catch (RuntimeException failure) {
                         System.getLogger(UniversalArchitecturePipeline.class.getName()).log(
@@ -1650,10 +1675,13 @@ public final class UniversalArchitecturePipeline {
                             cand.exposedTypes().getFirst().value()))
                     .strip();
             String fqn = (type.isEmpty() ? cand.identity().value() : type).strip();
-            if (fqn.isEmpty()) fqn = "Component";
-            if (beanName.isEmpty()) beanName = fqn;
+            if (fqn.isEmpty())
+                fqn = "Component";
+            if (beanName.isEmpty())
+                beanName = fqn;
             String containerKey = cand.producer().containerKey().strip();
-            if (containerKey.isEmpty()) containerKey = "default";
+            if (containerKey.isEmpty())
+                containerKey = "default";
             components.add(new UniversalArchitectureReport.ComponentRecord(
                     "component:" + fqn, beanName, fqn,
                     cand.producer().producerKind().name(), containerKey,
@@ -1661,7 +1689,8 @@ public final class UniversalArchitecturePipeline {
             if (cand.producer().producerKind() == BeanProducer.Kind.BEAN_METHOD) {
                 String factoryType = containerKey;
                 String methodName = cand.producer().declarationSlot().strip();
-                if (methodName.isEmpty()) methodName = "bean";
+                if (methodName.isEmpty())
+                    methodName = "bean";
                 String productType = type.isEmpty() ? "Object" : type;
                 producers.add(new UniversalArchitectureReport.ProducerRecord(
                         factoryType, methodName, productType, beanName, List.of()));
@@ -1669,11 +1698,14 @@ public final class UniversalArchitecturePipeline {
         }
         for (var dep : plan.binding().dependencies()) {
             String owner = dep.owner().map(BeanDefinitionCandidate.Identity::value).orElse("external").strip();
-            if (owner.isEmpty()) owner = "external";
+            if (owner.isEmpty())
+                owner = "external";
             String memberName = (dep.point().ownerDeclarationKey() + "#" + dep.point().siteSlot()).strip();
-            if (memberName.isEmpty()) memberName = "<init>";
+            if (memberName.isEmpty())
+                memberName = "<init>";
             String reqType = dep.requestedType().spelling().strip();
-            if (reqType.isEmpty()) reqType = "Object";
+            if (reqType.isEmpty())
+                reqType = "Object";
             injectionSites.add(new UniversalArchitectureReport.InjectionSiteRecord(
                     owner, memberName, reqType, dep.point().siteKind().name(),
                     dep.dependencyName().value().map(String::strip).filter(s -> !s.isEmpty())

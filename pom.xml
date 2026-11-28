@@ -43,6 +43,8 @@
         <test.excludedGroups>native-campaign</test.excludedGroups>
         <test.groups></test.groups>
         <test.fast>false</test.fast>
+        <test.failIfNoTests>true</test.failIfNoTests>
+        <test.failIfNoSpecifiedTests>true</test.failIfNoSpecifiedTests>
 
         <!-- Build plugins -->
         <maven.clean.plugin.version>3.5.0</maven.clean.plugin.version>
@@ -135,7 +137,8 @@
                     <configuration>
                         <groups>${test.groups}</groups>
                         <excludedGroups>${test.excludedGroups}</excludedGroups>
-                        <failIfNoTests>true</failIfNoTests>
+                        <failIfNoTests>${test.failIfNoTests}</failIfNoTests>
+                        <failIfNoSpecifiedTests>${test.failIfNoSpecifiedTests}</failIfNoSpecifiedTests>
                     </configuration>
                 </plugin>
             </plugins>

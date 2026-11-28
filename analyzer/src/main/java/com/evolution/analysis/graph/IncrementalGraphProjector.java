@@ -7,16 +7,28 @@ import com.evolution.analysis.contract.semantic.Entity;
 import com.evolution.analysis.contract.semantic.EntityKind;
 import com.evolution.analysis.contract.semantic.EntityOrigin;
 import com.evolution.analysis.frontend.FrontendResult;
+import com.evolution.analysis.frontend.SourceOutcome;
 import com.evolution.analysis.graph.KnowledgeGraph.Edge;
 import com.evolution.analysis.graph.KnowledgeGraph.Node;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * Layer-4 Incremental Graph Projector.
@@ -34,6 +46,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class IncrementalGraphProjector {
     private static final int MAX_TEMPLATES = Integer.getInteger("evo.incremental.graphTemplateMaxEntries", 256);
     private static final int MAX_SOURCE_CONTENT_ENTRIES = Integer.getInteger("evo.incremental.sourceContentMaxEntries", 16_384);
+    private static final String DISK_MAGIC = "EVOGT2";
+    private final Path cacheDirectory;
+
+    public IncrementalGraphProjector() {
+        this(null);
+    }
+
+    public IncrementalGraphProjector(Path cacheDirectory) {
+        this.cacheDirectory = cacheDirectory == null ? null : cacheDirectory.toAbsolutePath().normalize();
+    }
 
     public record Stats(int reusedContexts, int rebuiltContexts, int reusedSourceContents) {}
 
@@ -112,6 +134,12 @@ public final class IncrementalGraphProjector {
     synchronized ProjectedFrontendTemplate getFrontendTemplate(ContentDigest structuralKey) {
         if (Boolean.getBoolean("evo.incremental.disabled")) return null;
         ProjectedFrontendTemplate found = frontendTemplates.get(structuralKey);
+        if (found == null && cacheDirectory != null) {
+            found = loadTemplateFromDisk(structuralKey);
+            if (found != null) {
+                frontendTemplates.put(structuralKey, found);
+            }
+        }
         if (found != null) {
             reusedContexts.incrementAndGet();
         }
@@ -122,6 +150,236 @@ public final class IncrementalGraphProjector {
         rebuiltContexts.incrementAndGet();
         if (Boolean.getBoolean("evo.incremental.disabled")) return;
         frontendTemplates.put(template.structuralKey(), template);
+        if (cacheDirectory != null) {
+            saveTemplateToDisk(template);
+        }
+    }
+
+    private Path templatePath(ContentDigest structuralKey) {
+        String raw = structuralKey.value();
+        String hex = raw.startsWith("sha256:") ? raw.substring(7) : raw;
+        return cacheDirectory.resolve(hex + ".gt2");
+    }
+
+    private ProjectedFrontendTemplate loadTemplateFromDisk(ContentDigest structuralKey) {
+        Path file = templatePath(structuralKey);
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return null;
+        try (var gz = new GZIPInputStream(Files.newInputStream(file))) {
+            byte[] all = gz.readAllBytes();
+            if (all.length < 32) return null;
+            int payloadLen = all.length - 32;
+            byte[] payload = Arrays.copyOfRange(all, 0, payloadLen);
+            byte[] expectedHash = Arrays.copyOfRange(all, payloadLen, all.length);
+            byte[] actualHash = MessageDigest.getInstance("SHA-256").digest(payload);
+            if (!MessageDigest.isEqual(actualHash, expectedHash)) return null;
+            try (var in = new DataInputStream(new ByteArrayInputStream(payload))) {
+                if (!DISK_MAGIC.equals(readLongUtf(in))) return null;
+                ContentDigest storedKey = new ContentDigest(readLongUtf(in));
+                if (!structuralKey.equals(storedKey)) return null;
+                int evCount = in.readInt();
+                var evList = new ArrayList<GraphEvidence>(evCount);
+                for (int i = 0; i < evCount; i++) {
+                    ContentDigest id = new ContentDigest(readLongUtf(in));
+                    String family = readLongUtf(in);
+                    String json = readLongUtf(in);
+                    evList.add(GraphEvidence.fromAuthenticatedCache(id, family, json));
+                }
+                int nodeCount = in.readInt();
+                var nodeList = new ArrayList<ContextNode>(nodeCount);
+                for (int i = 0; i < nodeCount; i++) {
+                    String id = readLongUtf(in);
+                    String kind = readLongUtf(in);
+                    nodeList.add(new ContextNode(id, kind, readDigestList(in)));
+                }
+                int edgeCount = in.readInt();
+                var edgeList = new ArrayList<ContextEdge>(edgeCount);
+                for (int i = 0; i < edgeCount; i++) {
+                    String id = readLongUtf(in);
+                    String kind = readLongUtf(in);
+                    String source = readLongUtf(in);
+                    var state = KnowledgeGraph.TargetState.values()[in.readUnsignedByte()];
+                    var targetIds = readStringList(in);
+                    Optional<String> unresolved = in.readBoolean() ? Optional.of(readLongUtf(in)) : Optional.empty();
+                    var edgeEv = readDigestList(in);
+                    Optional<String> region = in.readBoolean() ? Optional.of(readLongUtf(in)) : Optional.empty();
+                    edgeList.add(new ContextEdge(id, kind, source, new KnowledgeGraph.Target(state, targetIds, unresolved), edgeEv, region));
+                }
+                int stCount = in.readInt();
+                var stList = new ArrayList<StatementRef>(stCount);
+                for (int i = 0; i < stCount; i++) {
+                    stList.add(new StatementRef(readLongUtf(in), readLongUtf(in), new ContentDigest(readLongUtf(in))));
+                }
+                int dsCount = in.readInt();
+                var dsList = new ArrayList<DeclarationSupportRef>(dsCount);
+                for (int i = 0; i < dsCount; i++) {
+                    dsList.add(new DeclarationSupportRef(readLongUtf(in), readLongUtf(in), readStringList(in)));
+                }
+                int mgCount = in.readInt();
+                var mgList = new ArrayList<MissingOwnerGap>(mgCount);
+                for (int i = 0; i < mgCount; i++) {
+                    mgList.add(new MissingOwnerGap(readLongUtf(in), new ContentDigest(readLongUtf(in))));
+                }
+                var scopes = readStringList(in);
+                var declDocs = readStringList(in);
+                var occDocs = readStringList(in);
+                var declPayloads = readDigestList(in);
+                var occPayloads = readDigestList(in);
+                var obsPayloads = readDigestList(in);
+                var typeUsePayloads = readDigestList(in);
+                var annPayloads = readDigestList(in);
+                var derivedPayloads = readDigestList(in);
+                var typeShapePayloads = readDigestList(in);
+                var memberShapePayloads = readDigestList(in);
+                var ctorPayloads = readDigestList(in);
+                var diagPayloads = readDigestList(in);
+                int sumCount = in.readInt();
+                var sourceSummaries = new ArrayList<Map<String, Object>>(sumCount);
+                for (int i = 0; i < sumCount; i++) {
+                    var doc = new SourceDocumentIdentity(readLongUtf(in));
+                    var state = SourceOutcome.State.valueOf(readLongUtf(in));
+                    var ev = new ContentDigest(readLongUtf(in));
+                    sourceSummaries.add(Map.of("document", doc, "state", state, "evidence", ev));
+                }
+                return new ProjectedFrontendTemplate(
+                        storedKey, List.copyOf(evList), List.copyOf(nodeList), List.copyOf(edgeList),
+                        List.copyOf(stList), List.copyOf(dsList), List.copyOf(mgList),
+                        scopes, declDocs, occDocs,
+                        declPayloads, occPayloads, obsPayloads, typeUsePayloads, annPayloads,
+                        derivedPayloads, typeShapePayloads, memberShapePayloads, ctorPayloads, diagPayloads,
+                        List.copyOf(sourceSummaries));
+            }
+        } catch (IOException | RuntimeException | NoSuchAlgorithmException corrupt) {
+            return null;
+        }
+    }
+
+    private void saveTemplateToDisk(ProjectedFrontendTemplate template) {
+        try {
+            Files.createDirectories(cacheDirectory);
+            var baos = new ByteArrayOutputStream(8192);
+            try (var out = new DataOutputStream(baos)) {
+                writeLongUtf(out, DISK_MAGIC);
+                writeLongUtf(out, template.structuralKey().value());
+                out.writeInt(template.evidence().size());
+                for (var ev : template.evidence()) {
+                    writeLongUtf(out, ev.identity().value());
+                    writeLongUtf(out, ev.family());
+                    writeLongUtf(out, ev.canonicalJson());
+                }
+                out.writeInt(template.nodes().size());
+                for (var n : template.nodes()) {
+                    writeLongUtf(out, n.identity());
+                    writeLongUtf(out, n.kind());
+                    writeDigestList(out, n.evidence());
+                }
+                out.writeInt(template.edges().size());
+                for (var e : template.edges()) {
+                    writeLongUtf(out, e.identity());
+                    writeLongUtf(out, e.kind());
+                    writeLongUtf(out, e.source());
+                    out.writeByte(e.target().state().ordinal());
+                    writeStringList(out, e.target().identities());
+                    out.writeBoolean(e.target().unresolvedReference().isPresent());
+                    if (e.target().unresolvedReference().isPresent()) writeLongUtf(out, e.target().unresolvedReference().orElseThrow());
+                    writeDigestList(out, e.evidence());
+                    out.writeBoolean(e.region().isPresent());
+                    if (e.region().isPresent()) writeLongUtf(out, e.region().orElseThrow());
+                }
+                out.writeInt(template.statements().size());
+                for (var s : template.statements()) {
+                    writeLongUtf(out, s.family());
+                    writeLongUtf(out, s.identity());
+                    writeLongUtf(out, s.payload().value());
+                }
+                out.writeInt(template.declarationSupports().size());
+                for (var ds : template.declarationSupports()) {
+                    writeLongUtf(out, ds.entityIdentity());
+                    writeLongUtf(out, ds.entityKind());
+                    writeStringList(out, ds.inputIdentities());
+                }
+                out.writeInt(template.missingOwnerGaps().size());
+                for (var mg : template.missingOwnerGaps()) {
+                    writeLongUtf(out, mg.relationIdentity());
+                    writeLongUtf(out, mg.payload().value());
+                }
+                writeStringList(out, template.projectEntityScopes());
+                writeStringList(out, template.declarationDocIds());
+                writeStringList(out, template.occurrenceDocIds());
+                writeDigestList(out, template.declarationPayloads());
+                writeDigestList(out, template.occurrencePayloads());
+                writeDigestList(out, template.observationPayloads());
+                writeDigestList(out, template.typeUsePayloads());
+                writeDigestList(out, template.annotationPayloads());
+                writeDigestList(out, template.derivedPayloads());
+                writeDigestList(out, template.typeShapePayloads());
+                writeDigestList(out, template.memberShapePayloads());
+                writeDigestList(out, template.ctorCandidatePayloads());
+                writeDigestList(out, template.diagnosticPayloads());
+                out.writeInt(template.sourceSummaries().size());
+                for (var sum : template.sourceSummaries()) {
+                    var doc = (SourceDocumentIdentity) Objects.requireNonNull(sum.get("document"));
+                    var st = (SourceOutcome.State) Objects.requireNonNull(sum.get("state"));
+                    var ev = (ContentDigest) Objects.requireNonNull(sum.get("evidence"));
+                    writeLongUtf(out, doc.value());
+                    writeLongUtf(out, st.name());
+                    writeLongUtf(out, ev.value());
+                }
+                out.flush();
+            }
+            byte[] payload = baos.toByteArray();
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(payload);
+            Path target = templatePath(template.structuralKey());
+            Path tmp = Files.createTempFile(cacheDirectory, "gt2-", ".tmp");
+            try {
+                try (var gz = new GZIPOutputStream(Files.newOutputStream(tmp))) {
+                    gz.write(payload);
+                    gz.write(hash);
+                }
+                try {
+                    Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
+        } catch (IOException | RuntimeException | NoSuchAlgorithmException ignored) {
+            // Operational cache writes never fail canonical builds.
+        }
+    }
+
+    private static String readLongUtf(DataInputStream in) throws IOException {
+        int len = in.readInt();
+        if (len < 0 || len > 128_000_000) throw new IOException("INVALID_STRING_LENGTH");
+        byte[] bytes = in.readNBytes(len);
+        if (bytes.length != len) throw new IOException("TRUNCATED_STRING");
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static List<String> readStringList(DataInputStream in) throws IOException {
+        int n = in.readInt();
+        if (n < 0 || n > 10_000_000) throw new IOException("INVALID_LIST_LENGTH");
+        var list = new ArrayList<String>(Math.min(n, 4096));
+        for (int i = 0; i < n; i++) list.add(readLongUtf(in));
+        return List.copyOf(list);
+    }
+
+    private static List<ContentDigest> readDigestList(DataInputStream in) throws IOException {
+        int n = in.readInt();
+        if (n < 0 || n > 10_000_000) throw new IOException("INVALID_LIST_LENGTH");
+        var list = new ArrayList<ContentDigest>(Math.min(n, 4096));
+        for (int i = 0; i < n; i++) list.add(new ContentDigest(readLongUtf(in)));
+        return List.copyOf(list);
+    }
+
+    private static void writeStringList(DataOutputStream out, List<String> list) throws IOException {
+        out.writeInt(list.size());
+        for (String s : list) writeLongUtf(out, s);
+    }
+
+    private static void writeDigestList(DataOutputStream out, List<ContentDigest> list) throws IOException {
+        out.writeInt(list.size());
+        for (var d : list) writeLongUtf(out, d.value());
     }
 
     /**

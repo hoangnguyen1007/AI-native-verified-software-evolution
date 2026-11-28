@@ -32,8 +32,11 @@ import java.util.function.Supplier;
  * PublishedReports, recording every observation as a citable evidence item (E#) with deterministic provenance.
  */
 final class ArchitectureAgent {
-    static final int MAX_ROUNDS = 10;
+    static final int MAX_ROUNDS = 18;
     static final int MAX_TOOL_JSON_BYTES = 48_000;
+    private static final int COMPACT_PROTECTED_RECENT_MESSAGES = 6;
+    private static final List<String> COMPACT_ITEM_LIST_KEYS = List.of(
+            "items", "matches", "nodes", "findings", "files", "callers", "edges", "regions");
     static final Set<String> SERVICE_BRIDGE_KINDS =
             com.evolution.backend.query.mcp.McpToolDispatcher.SERVICE_BRIDGE_KINDS;
 
@@ -92,7 +95,7 @@ final class ArchitectureAgent {
             var userPrompt = model.buildUserPrompt(input, initialContext, initPacket.files(), stop);
 
             var messages = new ArrayList<Map<String, Object>>();
-            messages.add(Map.of("role", "system", "content", model.instructions(input.reviewer(), true)));
+            messages.add(Map.of("role", "system", "content", model.instructions(input.reviewer(), true, !input.reviewer())));
             messages.add(Map.of("role", "user", "content", userPrompt));
 
             var tools = toolSchemas(input.includeSource());
@@ -197,15 +200,15 @@ final class ArchitectureAgent {
         return msg;
     }
 
-    private static void compactToolMessages(List<Map<String, Object>> messages, int byteBudget) {
+    static void compactToolMessages(List<Map<String, Object>> messages, int byteBudget) {
         int estimated = 0;
         for (var m : messages) {
             Object c = m.get("content");
             if (c instanceof String s) estimated += s.length();
         }
         if (estimated <= byteBudget) return;
-        // Trim oldest tool responses first while keeping system prompt, user question, and most recent 4 messages intact.
-        int protectFrom = Math.max(2, messages.size() - 4);
+        // Sliding window: keep system prompt, user question, and most recent 6 messages verbatim.
+        int protectFrom = Math.max(2, messages.size() - COMPACT_PROTECTED_RECENT_MESSAGES);
         for (int i = 2; i < protectFrom && estimated > byteBudget; i++) {
             var m = messages.get(i);
             if (!"tool".equals(m.get("role"))) continue;
@@ -219,16 +222,33 @@ final class ArchitectureAgent {
         }
     }
 
-    private static String extractCompactToolSummary(String toolJson) {
+    static String extractCompactToolSummary(String toolJson) {
         try {
             var obj = GraphJson.object(GraphJson.read(toolJson, GraphJson.Limits.defaults()));
             var kept = new LinkedHashMap<String, Object>();
-            if (obj.containsKey("evidenceId")) kept.put("evidenceId", obj.get("evidenceId"));
-            if (obj.containsKey("count")) kept.put("count", obj.get("count"));
-            if (obj.containsKey("symbol")) kept.put("symbol", obj.get("symbol"));
-            if (obj.containsKey("path")) kept.put("path", obj.get("path"));
+            for (String key : List.of("evidenceId", "tool", "count", "symbol", "path", "startLine", "endLine", "classification")) {
+                if (obj.containsKey(key)) kept.put(key, obj.get(key));
+            }
+            var digests = new ArrayList<Map<String, Object>>();
+            for (String listKey : COMPACT_ITEM_LIST_KEYS) {
+                if (digests.size() >= 8) break;
+                Object rawList = obj.get(listKey);
+                if (!(rawList instanceof List<?> items)) continue;
+                for (Object item : items) {
+                    if (digests.size() >= 8) break;
+                    if (!(item instanceof Map<?, ?> m)) continue;
+                    var entry = new LinkedHashMap<String, Object>();
+                    for (String f : List.of("id", "name", "symbol", "kind", "path", "line", "startLine")) {
+                        if (m.containsKey(f) && m.get(f) != null) entry.put(f, m.get(f));
+                    }
+                    if (!entry.isEmpty()) digests.add(Collections.unmodifiableMap(entry));
+                }
+            }
+            if (!digests.isEmpty()) {
+                kept.put("itemDigests", List.copyOf(digests));
+            }
             kept.put("compacted", true);
-            kept.put("note", "Earlier tool payload compacted to stay within model context budget; evidenceId remains valid.");
+            kept.put("note", "Earlier tool payload compacted by sliding window; evidenceId and key symbol/path anchors preserved.");
             return CanonicalJson.write(kept);
         } catch (RuntimeException ignored) {
             return CanonicalJson.write(Map.of("compacted", true, "excerpt", toolJson.substring(0, Math.min(400, toolJson.length()))));

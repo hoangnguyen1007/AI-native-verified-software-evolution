@@ -21,6 +21,8 @@ public final class CapturedRepairRunner {
     public static final String NOT_CONFIGURED = "ISOLATED_RUNNER_NOT_CONFIGURED";
     public static final String OFFLINE_TOOLCHAIN_MISSING = "OFFLINE_TOOLCHAIN_MISSING";
     public static final Set<String> SUPPORTED_BUILD_TOOLS = Set.of("auto", "maven", "gradle", "node", "python", "go");
+    private static final java.util.regex.Pattern SAFE_TEST_FILTER =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9_.$#,*?/-]{1,2048}$");
     public static final java.util.regex.Pattern PINNED_BASE_IMAGE_PATTERN =
             java.util.regex.Pattern.compile("^(?:docker\\.io/library/)?(?:eclipse-temurin|node|python|golang)@sha256:[0-9a-f]{64}$");
     public static final String DEFAULT_JAVA_BASE_IMAGE =
@@ -262,6 +264,18 @@ public final class CapturedRepairRunner {
             boolean behavioralDiff,
             Optional<String> behavioralProbesJson,
             BooleanSupplier cancelled) throws IOException {
+        return run(repoRoot, proposalOutcome, initialVerification, behavioralDiff, behavioralProbesJson,
+                Optional.empty(), cancelled);
+    }
+
+    public InvocationResult run(
+            Path repoRoot,
+            CapturedRepair.Outcome proposalOutcome,
+            CapturedRepairVerification.Result initialVerification,
+            boolean behavioralDiff,
+            Optional<String> behavioralProbesJson,
+            Optional<String> selectedTests,
+            BooleanSupplier cancelled) throws IOException {
         Objects.requireNonNull(repoRoot);
         Objects.requireNonNull(proposalOutcome);
         Objects.requireNonNull(initialVerification);
@@ -287,7 +301,7 @@ public final class CapturedRepairRunner {
         }
 
         var command = buildCommand(controlsDir.resolve("run.py"), repoRoot.toAbsolutePath().normalize(),
-                proposalFile, planFile, outDir, config, behavioralDiff, probesFile);
+                proposalFile, planFile, outDir, config, behavioralDiff, probesFile, selectedTests);
         var process = new ProcessBuilder(command)
                 .directory(runDir.toFile())
                 .redirectErrorStream(true)
@@ -394,6 +408,20 @@ public final class CapturedRepairRunner {
             Config config,
             boolean behavioralDiff,
             Optional<Path> behavioralProbesFile) {
+        return buildCommand(runPy, repoRoot, proposalFile, verificationFile, outDir, config,
+                behavioralDiff, behavioralProbesFile, Optional.empty());
+    }
+
+    static List<String> buildCommand(
+            Path runPy,
+            Path repoRoot,
+            Path proposalFile,
+            Path verificationFile,
+            Path outDir,
+            Config config,
+            boolean behavioralDiff,
+            Optional<Path> behavioralProbesFile,
+            Optional<String> selectedTests) {
         var cmd = new ArrayList<String>();
         cmd.add(config.pythonExecutable());
         cmd.add(runPy.toString());
@@ -458,6 +486,16 @@ public final class CapturedRepairRunner {
         if (!config.skipTests() && behavioralProbesFile != null && behavioralProbesFile.isPresent()) {
             cmd.add("--behavioral-probes");
             cmd.add(behavioralProbesFile.orElseThrow().toAbsolutePath().normalize().toString());
+        }
+        if (!config.skipTests() && selectedTests != null && selectedTests.isPresent()) {
+            String filter = selectedTests.orElseThrow().strip();
+            if (!filter.isEmpty()) {
+                if (!SAFE_TEST_FILTER.matcher(filter).matches()) {
+                    throw new IllegalArgumentException("UNSAFE_SELECTED_TESTS_FILTER");
+                }
+                cmd.add("--selected-tests");
+                cmd.add(filter);
+            }
         }
         return List.copyOf(cmd);
     }

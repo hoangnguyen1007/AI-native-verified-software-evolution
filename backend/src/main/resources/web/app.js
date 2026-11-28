@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const M = window.EvoModel, $ = id => document.getElementById(id);
-  const state = { setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 8, cy: null, online: false, retry: null, submitting: null, autoOpenLog: false, observedJobStates: new Map(), eventSource: null, liveProgress: null, truthTier: 'NONE', previewMeta: null, promotedFromPreview: false, incrementalSummary: null, scoreV2Cache: new Map(), pendingGraphViewport: null };
+  const state = { setups: [], connections: [], jobs: [], labels: new Map(), setup: null, job: null, resultJob: null, graph: null, contexts: [], reports: [], context: '', tab: 'overview', epoch: 0, pollGeneration: 0, historyLimit: 8, cy: null, online: false, retry: null, submitting: null, autoOpenLog: false, observedJobStates: new Map(), eventSource: null, liveProgress: null, truthTier: 'NONE', previewMeta: null, promotedFromPreview: false, incrementalSummary: null, scoreV2Cache: new Map(), pendingGraphViewport: null, projectionProfile: 'strict', projectionProfileTouched: false };
   let openChatOnFirstResult = new URLSearchParams(location.search).get('view') === 'chat';
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; };
   const append = (parent, ...children) => { children.filter(Boolean).forEach(child => parent.append(child)); return parent; };
@@ -225,6 +225,21 @@
     banner.replaceChildren(main, actions);
   }
   function resetResult() { closeJobStream(); state.discovery?.abort(); state.publication?.abort(); $('result-opening').hidden = true; clearReadiness(); clearLiveTelemetryUi(); invalidate(); state.graphFocus = null; state.explorer = null; state.metricSubject = null; state.graph = null; state.resultJob = null; state.context = ''; state.contexts = []; state.reports = []; state.contextKinds = new Map(); state.discoveryEnriched = false; state.truthTier = 'NONE'; state.previewMeta = null; state.promotedFromPreview = false; state.scoreV2Cache = new Map(); renderTruthBanner(); document.querySelectorAll('[data-spring-view]').forEach(c => c.hidden = true); const stepper = $('job-stage-stepper'); if (stepper) { stepper.hidden = true; stepper.replaceChildren(); } const gapStrip = $('job-gap-action-strip'); if (gapStrip) { gapStrip.hidden = true; gapStrip.replaceChildren(); } $('context').replaceChildren(); notifyContextsUpdated(); $('analysis-workspace').hidden = true; $('welcome').hidden = false; updateResultStatus(); }
+  function isOnlineOnlyMode() {
+    return Boolean(state.capabilities?.onlineMode || state.capabilities?.localCheckoutAllowed === false);
+  }
+  function syncOnlineModeUi() {
+    if (!isOnlineOnlyMode()) return;
+    $('connection-status').textContent = 'Online server connected';
+    const tabManual = $('connect-tab-manual');
+    if (tabManual) tabManual.textContent = 'Git / GitHub URL';
+    const repoInput = $('repository-source');
+    if (repoInput) repoInput.placeholder = 'https://github.com/owner/repo  or  owner/repo  or  PR URL';
+    const sourceHelp = $('source-help');
+    if (sourceHelp) sourceHelp.textContent = 'Public or private GitHub URL, owner/repo, or PR URL. Source is acquired online and never executed on the host.';
+    const firstPillar = document.querySelector('#welcome .welcome-pillar');
+    if (firstPillar) firstPillar.textContent = 'Online GitHub & HTTPS Git';
+  }
   function showRepositoryPrompt() {
     window.EvoGitHubAuth?.clearInlineAuthGate?.($('welcome'));
     $('repository-title').textContent = 'Explore your architecture';
@@ -233,7 +248,10 @@
     const ghBar = $('github-hub-bar');
     if (ghBar) { ghBar.hidden = true; ghBar.replaceChildren(); }
     $('welcome').querySelector('h2').textContent = 'Connect a repository';
-    $('welcome').querySelector('p').textContent = 'Use a local folder or a Git repository to explore dependencies and findings.';
+    $('welcome').querySelector('p').textContent = isOnlineOnlyMode()
+      ? 'Connect a GitHub or HTTPS Git repository to explore architecture, Spring wiring, and verified AI repairs.'
+      : 'Use a local folder or a Git repository to explore dependencies and findings.';
+    syncOnlineModeUi();
     const connectBtn = $('welcome').querySelector('button[data-action=connect]');
     if (connectBtn) connectBtn.hidden = false;
     const signInCta = $('welcome-github-signin');
@@ -280,6 +298,52 @@
     }
     if ($('result-status').textContent !== message) $('result-status').textContent = message;
   }
+  const PROJECTION_PROFILES = [
+    { value: 'strict', label: 'Strict Canonical (Direct Evidence)', pill: 'STRICT', tone: 'strict', note: 'Strict Canonical emits direct evidence only; DFD Compatibility adds derived cross-service flows.' },
+    { value: 'dfd-export', label: 'DFD Compatibility (Derived Flows)', pill: 'DFD_EXPORT', tone: 'dfd', note: 'DFD Compatibility preserves canonical facts and adds derived flow projections for DFD exports.' }
+  ];
+  function normalizeProjectionProfile(raw) {
+    const clean = String(raw || '').trim().toLowerCase().replace(/_/g, '-');
+    return clean === 'dfd-export' ? 'dfd-export' : 'strict';
+  }
+  function projectionProfileMeta(raw) {
+    const norm = normalizeProjectionProfile(raw);
+    return PROJECTION_PROFILES.find(p => p.value === norm) || PROJECTION_PROFILES[0];
+  }
+  function syncProjectionProfileSelectors(preferred) {
+    const allowedRaw = Array.isArray(state.capabilities?.projectionProfiles) && state.capabilities.projectionProfiles.length
+      ? state.capabilities.projectionProfiles.map(normalizeProjectionProfile)
+      : PROJECTION_PROFILES.map(p => p.value);
+    const allowedSet = new Set(allowedRaw);
+    const options = PROJECTION_PROFILES.filter(p => allowedSet.has(p.value));
+    const list = options.length ? options : PROJECTION_PROFILES;
+    const next = normalizeProjectionProfile(preferred ?? state.projectionProfile ?? state.capabilities?.defaultProjectionProfile ?? 'strict');
+    state.projectionProfile = list.some(p => p.value === next) ? next : list[0].value;
+    for (const id of ['projection-profile', 'connect-projection-profile']) {
+      const sel = $(id);
+      if (!sel) continue;
+      if (sel.options.length !== list.length || [...sel.options].some((o, i) => o.value !== list[i].value)) {
+        sel.replaceChildren(...list.map(p => new Option(p.label, p.value)));
+      }
+      sel.value = state.projectionProfile;
+    }
+    const note = $('projection-profile-note');
+    if (note) note.textContent = projectionProfileMeta(state.projectionProfile).note;
+  }
+  function renderJobProfilePill(rawProfile) {
+    const pill = $('job-profile-pill');
+    if (!pill) return;
+    if (!rawProfile && !state.job && !state.submitting) {
+      pill.hidden = true;
+      return;
+    }
+    const meta = projectionProfileMeta(rawProfile ?? state.projectionProfile ?? state.capabilities?.defaultProjectionProfile ?? 'strict');
+    pill.textContent = meta.pill;
+    pill.dataset.profile = meta.tone;
+    pill.title = meta.label;
+    pill.setAttribute('aria-label', 'Projection profile: ' + meta.pill);
+    pill.hidden = false;
+  }
   function syncRunControls() {
     const busy = state.submitting || (state.job && !M.terminal(state.job));
     const unavailable = !state.online || !state.setup || Boolean(busy);
@@ -287,6 +351,15 @@
     $('analysis-mode-field').hidden = !state.capabilities?.analysisModes?.includes('FAST_ARCHITECTURE');
     $('analysis-mode').disabled = unavailable;
     $('analysis-mode-note').hidden = $('analysis-mode-field').hidden || $('analysis-mode').value !== 'FAST_ARCHITECTURE';
+    const profileField = $('projection-profile-field');
+    const profileSelect = $('projection-profile');
+    const profileNote = $('projection-profile-note');
+    if (profileField && profileSelect) {
+      const showProfile = Boolean(state.capabilities?.analysisJobsEnabled);
+      profileField.hidden = !showProfile;
+      profileSelect.disabled = unavailable;
+      if (profileNote) profileNote.hidden = !showProfile;
+    }
     $('artifact-recovery-note').hidden = !state.setups.find(setup => setup.id === state.setup)?.artifactPolicy;
     $('analyze').disabled = unavailable;
     $('analyze').classList.toggle('is-busy', Boolean(busy));
@@ -297,7 +370,7 @@
     $('analyze-force').disabled = unavailable || Boolean(state.retry);
     $('disconnect-repo').hidden = !state.connections.some(connection => connection.setup === state.setup);
     $('disconnect-repo').disabled = Boolean(busy);
-    $('run-options').hidden = $('analysis-mode-field').hidden && $('analyze-force').hidden && $('disconnect-repo').hidden;
+    $('run-options').hidden = $('analysis-mode-field').hidden && Boolean(profileField?.hidden) && $('analyze-force').hidden && $('disconnect-repo').hidden;
   }
   function cleanRepoName(setupId, conn, setup) {
     let name = conn?.label || '';
@@ -373,7 +446,14 @@
     notice('');
     try {
       state.capabilities = await api(''); state.online = true;
-      $('connection-status').textContent = 'Local server connected'; $('connection-dot').classList.add('online');
+      $('connection-status').textContent = isOnlineOnlyMode() ? 'Online server connected' : 'Local server connected';
+      $('connection-dot').classList.add('online');
+      syncOnlineModeUi();
+      if (!state.projectionProfileTouched) {
+        syncProjectionProfileSelectors(state.capabilities?.defaultProjectionProfile || 'strict');
+      } else {
+        syncProjectionProfileSelectors(state.projectionProfile);
+      }
       const authState = await window.EvoGitHubAuth?.refreshAuth?.({ notifyOnChange: false });
       window.EvoGitHubHub?.syncConnectTabsVisibility?.();
       $('view-insights').hidden = !state.capabilities.architectureInsightsEnabled;
@@ -625,7 +705,7 @@
     }
     window.EvoGitHubHub?.syncPipelineStepper?.(job, activeProgress);
   }
-  function showSubmittingLog(mode = 'FULL') {
+  function showSubmittingLog(mode = 'FULL', projectionProfile = state.projectionProfile) {
     stopActivityClock();
     $('job-panel').hidden = false;
     $('welcome').hidden = true;
@@ -633,6 +713,7 @@
     $('job-elapsed').textContent = '0 s';
     $('job-failure').hidden = true;
     showProgressConnection();
+    renderJobProfilePill(projectionProfile);
     const modeNote = $('job-mode');
     modeNote.textContent = mode === 'FAST_ARCHITECTURE'
       ? 'Quick analysis · reduced Java detail · installed Node packages inventoried'
@@ -666,11 +747,12 @@
     notice('');
     const setup = state.setup, generation = state.pollGeneration;
     const mode = $('analysis-mode-field').hidden ? 'FULL' : $('analysis-mode').value;
+    const projectionProfile = normalizeProjectionProfile($('projection-profile')?.value || state.projectionProfile || state.capabilities?.defaultProjectionProfile || 'strict');
     const selectedRef = window.EvoGitHubHub?.getSelectedRef?.(setup) || '';
-    const request = state.retry ||= { setup, idempotencyKey: crypto.randomUUID(), ...(force ? { force: true } : {}), ...(mode === 'FAST_ARCHITECTURE' ? { mode: 'FAST_ARCHITECTURE' } : {}), ...(selectedRef ? { ref: selectedRef } : {}) };
+    const request = state.retry ||= { setup, idempotencyKey: crypto.randomUUID(), projectionProfile, ...(force ? { force: true } : {}), ...(mode === 'FAST_ARCHITECTURE' ? { mode: 'FAST_ARCHITECTURE' } : {}), ...(selectedRef ? { ref: selectedRef } : {}) };
     state.autoOpenLog = true;
     $('run-options').open = false; state.submitting = request; syncRunControls(); updateResultStatus();
-    showSubmittingLog(mode);
+    showSubmittingLog(mode, projectionProfile);
     try {
       const job = await api('/analysis/jobs', request, undefined, 'POST', 15000);
       if (state.retry === request) state.retry = null;
@@ -875,6 +957,7 @@
     const summary = job.state === 'CANCELLING' ? 'Cancelling run' : runOutcomes[job.state] ?? analysisSteps[job.stage]?.[0] ?? 'Analysis in progress';
     if ($('job-description').textContent !== summary) $('job-description').textContent = summary;
     updateJobProgressUi(job, false);
+    renderJobProfilePill(job.projectionProfile || job.result?.projectionProfile || state.projectionProfile || state.capabilities?.defaultProjectionProfile || 'strict');
     const details = $('run-details');
     if (details.dataset.job !== job.id) {
       details.dataset.job = job.id;
@@ -2763,7 +2846,7 @@
   }
 
   function architectureScoreV2Card(env, { detailed = false } = {}) {
-    const node = card('Architecture Health', 'Structural, modular, framework, and policy health — kept separate from analysis confidence.');
+    const node = card('Architecture Health', detailed ? 'Structural, modular, framework, and policy health.' : '');
     node.classList.add('evo-v2-card');
     if (M.isPreliminaryTier?.(state.truthTier)) {
       const info = M.truthTierInfo(state.truthTier, state.previewMeta);
@@ -2866,7 +2949,7 @@
       if (gapTotal > 0) {
         confFooter.append(btn(`Inspect ${gapTotal.toLocaleString()} coverage gaps →`, () => loadTab('coverage'), 'text-button'));
       }
-      confFooter.append(btn('Raw JSON', () => inspect('Architecture Health', 'ASSESSMENT V2', v2), 'text-button'));
+      if (detailed) confFooter.append(btn('Raw JSON', () => inspect('Architecture Health', 'ASSESSMENT V2', v2), 'text-button'));
       confPanel.append(confFooter);
 
       const hero = append(el('div', 'evo-v2-hero'), leftCol, confPanel);
@@ -2885,7 +2968,7 @@
         const titleWrap = append(el('div', 'evo-v2-dim-title-wrap'),
           dot,
           el('span', 'evo-v2-dim-name', dim.displayName || dim.id),
-          el('span', 'evo-v2-dim-meta', `${dim.iso25010Mapping || ''} · weight ${Number(dim.weight || 0)}%`));
+          el('span', 'evo-v2-dim-meta', detailed && dim.iso25010Mapping ? `${dim.iso25010Mapping} · ${Number(dim.weight || 0)}%` : `${Number(dim.weight || 0)}%`));
 
         const end = el('div', 'evo-dim-end');
         const meter = el('span', 'evo-micro-meter' + (dNum == null ? ' is-empty' : ''));
@@ -2954,7 +3037,7 @@
       const pieces = [hero, dimsWrap];
 
       // Whole-Repository Context Breakdown (clickable module/service drilldown)
-      if (Array.isArray(v2.contextBreakdown) && v2.contextBreakdown.length) {
+      if (detailed && Array.isArray(v2.contextBreakdown) && v2.contextBreakdown.length) {
         const ctxList = el('div', 'evo-context-score-list');
         for (const item of v2.contextBreakdown) {
           const scoreLabel = item.score != null ? Number(item.score).toFixed(1) : (item.status === 'WITHHELD' ? 'Withheld' : 'N/A');
@@ -2978,7 +3061,7 @@
       }
 
       // Inferred Architecture Style & Layer Map + 1-click Customize as Policy YAML
-      if (v2.inferredLayers && v2.inferredLayers.style) {
+      if (detailed && v2.inferredLayers && v2.inferredLayers.style) {
         const styleStrip = el('div', 'evo-layer-map-strip');
         const layerNames = Object.keys(v2.inferredLayers.layerPackages || {});
         append(styleStrip,
@@ -3911,8 +3994,9 @@
         const v2Hero = architectureScoreV2Card(env, { detailed: true });
         v2Hero.style.marginBottom = '20px';
         node.append(v2Hero);
+      } else {
+        node.append(architectureScoreCard(env));
       }
-      node.append(architectureScoreCard(env));
       const catalog = await env.query('metric-catalog', {}, { size: 50 }), metricCard = card('Architecture metrics', 'Choose a metric and scope.'); metricCard.style.marginTop = '20px'; node.append(metricCard);
       const metricNames = { 'metric.ca': 'Incoming coupling (Ca)', 'metric.ce': 'Outgoing coupling (Ce)', 'metric.scc': 'Connected components (SCC)', 'metric.physical-loc': 'Physical lines of code (LOC)', 'metric.inventory': 'Captured inventory', 'metric.fan-in': 'Incoming dependencies (Fan-in)', 'metric.fan-out': 'Outgoing dependencies (Fan-out)', 'metric.hotspots': 'Dependency hotspots', 'metric.crossings': 'Layer boundary crossings', 'metric.operational': 'Measured runtime', 'metric.spring': 'Spring inventory' };
       const metric = selectControl('Metric', catalog.items.filter(id => id !== 'metric.quality').map(id => [id, metricNames[id] || id.replace(/^metric\./, '').replaceAll('-', ' ').replace(/^./, letter => letter.toUpperCase())]), env.springContext ? 'metric.spring' : 'metric.inventory');
@@ -4273,6 +4357,18 @@
   $('connect-form').addEventListener('submit', connectRepository);
   $('disconnect-form')?.addEventListener('submit', disconnectRepository);
   $('analysis-mode').addEventListener('change', () => { state.retry = null; syncRunControls(); });
+  $('projection-profile')?.addEventListener('change', event => {
+    state.projectionProfileTouched = true;
+    state.retry = null;
+    syncProjectionProfileSelectors(event.target.value);
+    syncRunControls();
+  });
+  $('connect-projection-profile')?.addEventListener('change', event => {
+    state.projectionProfileTouched = true;
+    state.retry = null;
+    syncProjectionProfileSelectors(event.target.value);
+    syncRunControls();
+  });
   $('run-details').addEventListener('toggle', () => { if ($('run-details').open) requestAnimationFrame(syncStepTrackGeometry); });
   $('job-events').addEventListener('toggle', () => requestAnimationFrame(syncStepTrackGeometry), true);
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => syncStepTrackGeometry()).observe($('job-events'));
@@ -4384,9 +4480,13 @@
     $('workspace-tools').open = false;
     void window.EvoCommunityAdvisory?.openWikiDossierModal?.(api, state.graph, state.context);
   });
+  $('header-mcp-trigger')?.addEventListener('click', () => {
+    $('workspace-tools').open = false;
+    void (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api, state.capabilities);
+  });
   $('open-mcp-setup')?.addEventListener('click', () => {
     $('workspace-tools').open = false;
-    void (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api);
+    void (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api, state.capabilities);
   });
   $('open-scip-upgrade')?.addEventListener('click', () => {
     $('workspace-tools').open = false;
@@ -4423,7 +4523,7 @@
       return window.EvoCommunityAdvisory?.openWikiDossierModal?.(api, state.graph, state.context);
     },
     openMcpSetup() {
-      return (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api);
+      return (window.EvoMcpScipHub?.openMcpStudio || window.EvoCommunityAdvisory?.openMcpSetupModal)?.(api, state.capabilities);
     },
     openScipUpgrade() {
       return window.EvoMcpScipHub?.openScipDrawer?.(api, { graphId: state.graph, contextId: state.context });

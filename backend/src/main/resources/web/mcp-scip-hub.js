@@ -11,6 +11,64 @@
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const CLIENT_STORAGE_KEY = 'evo-mcp-client-tab';
 
+  const DEFAULT_MCP_TOOLS = [
+    { name: 'jobs_list', description: 'List recent analysis jobs and their graph, snapshot, and status.' },
+    { name: 'graph_get', description: 'Read published graph contexts and report identities.' },
+    { name: 'graph_query', description: 'Query bounded architecture evidence (impact, cycles, paths, Spring, metrics, visual-graph).' },
+    { name: 'architecture_insights', description: 'Compute Tarjan SCC cycles, Martin instability/SDP, blast radius, hotspots, and Leiden communities.' },
+    { name: 'get_architecture_score', description: 'Compute 7-dimension Architecture Health Score v2 with independent Analysis Confidence.' },
+    { name: 'architecture_brief', description: 'One-call executive overview: Score v2, confidence tier, Leiden communities, tangles, and hotspots.' },
+    { name: 'policy_findings', description: 'Read published architecture policy rules, MUST/MAY/UNKNOWN findings, and assessments.' },
+    { name: 'job_coverage', description: 'Read completion state, obligation breakdown, and top capability-gap reasons for a job.' },
+    { name: 'repository_score', description: 'Read repository engineering practices rubric score and evidence paths.' },
+    { name: 'list_captured_files', description: 'List captured files across Java and polyglot languages with path/language filters.' },
+    { name: 'read_captured_source', description: 'Read up to 250 line-numbered secret-redacted lines from a captured file.' },
+    { name: 'search_captured_source', description: 'Pre-redacted SQLite FTS5 BM25 or streaming regex search across captured text files.' },
+    { name: 'read_markdown_section', description: 'List Markdown headings or read one exact heading section with SHA-256 provenance.' },
+    { name: 'inspect_advisory_links', description: 'Inspect quarantined ADVISORY_UNVERIFIED links (ADR, SQL DDL <-> JPA, Terraform, MCP).' },
+    { name: 'inspect_codeowners', description: 'Inspect passive CODEOWNERS rules and resolve path ownership.' },
+    { name: 'repo_map', description: 'Compute deterministic Hybrid PPR + BM25 + Trigram RRF repository map with declarations and edges.' },
+    { name: 'suggest_policy', description: 'Auto-detect Clean, Hexagonal, or Layered rules and return compiled architecture-policy:v1 YAML.' },
+    { name: 'repair_options', description: 'Inspect deterministic repair recipes, captured source eligibility, and isolated runner readiness.' },
+    { name: 'connections', description: 'Inspect cross-service HTTP, gRPC, and async event bridge relationships.' },
+    { name: 'vertical_trace', description: 'Trace full-stack execution across 8 architectural layers from frontend to persistence.' },
+    { name: 'trace_slice', description: 'Compute pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file.' }
+  ];
+
+  const DEFAULT_MCP_RESOURCES = [
+    { uri: 'evo://score-v2', name: 'Architecture Health Score v2', description: '7-dimension Architecture Health Score v2 with independent Analysis Confidence.' },
+    { uri: 'evo://report', name: 'Architecture Insights Report', description: 'Executive Markdown report covering tangles, hotspots, SDP, and Leiden communities.' },
+    { uri: 'evo://gaps', name: 'Capability Gaps', description: 'Active capability gaps and evidence obligations for the default graph.' },
+    { uri: 'evo://hotspots', name: 'Architecture Hotspots', description: 'Top blast-radius and complexity hotspots plus misplaced types.' },
+    { uri: 'evo://cycles', name: 'Dependency Cycles & Tangles', description: 'Tarjan SCC dependency cycles and minimal cycle-breaking edge candidates.' },
+    { uri: 'evo://spring-summary', name: 'Spring Wiring Summary', description: 'Spring bean candidates, producers, endpoints, and conditional realizations.' }
+  ];
+
+  function copyTextSafely(text) {
+    const value = String(text || '');
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(value).catch(() => {});
+        return true;
+      }
+    } catch (_) {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      ta.style.pointerEvents = 'none';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand?.('copy');
+      ta.remove();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function el(tag, cls, text) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -94,30 +152,35 @@
     };
   }
 
-  function normalizeMcpSetup(raw, origin = '') {
+  function normalizeMcpSetup(raw, origin = '', capabilities = null) {
     const src = raw && typeof raw === 'object' ? raw : {};
+    const caps = capabilities && typeof capabilities === 'object' ? capabilities : {};
     const clients = src.clients && typeof src.clients === 'object' ? src.clients : {};
     const port = Number(src.workbenchPort || 0) || 8080;
     const baseOrigin = String(origin || '').replace(/\/$/, '');
+    const rawEndpoint = String(src.mcpEndpoint || caps.mcpEndpoint || '/mcp').trim() || '/mcp';
+    const endpointPath = rawEndpoint.startsWith('/') ? rawEndpoint : '/' + rawEndpoint;
     const streamUrl = src.streamableHttpUrl
       || src.streamableHttp?.url
       || clients.antigravity?.url
       || clients.cursor?.url
-      || (baseOrigin ? baseOrigin + '/mcp' : `http://127.0.0.1:${port}/mcp`);
-    const resources = Array.isArray(src.resources) ? src.resources : [];
-    const patRequired = Boolean(src.patRequired ?? src.multiUserMode);
+      || (baseOrigin ? baseOrigin + endpointPath : `http://127.0.0.1:${port}${endpointPath}`);
+    const resources = Array.isArray(src.resources) && src.resources.length ? src.resources : DEFAULT_MCP_RESOURCES;
+    const patRequired = Boolean(src.patRequired ?? src.multiUserMode ?? caps.multiUserMode);
     return {
-      evoJarPath: String(src.evoJarPath || src.jarPath || 'cli/target/evo.jar'),
+      evoJarPath: String(src.evoJarPath || src.jarPath || 'backend/target/evo-workbench.jar'),
       storeDir: String(src.storeDir || '~/.evo'),
       defaultGraph: String(src.defaultGraph || ''),
       defaultContext: String(src.defaultContext || ''),
+      mcpEndpoint: endpointPath,
       streamableHttpUrl: String(streamUrl),
-      protocolVersion: String(src.protocolVersion || '2025-11-25'),
-      toolCount: Number(src.toolCount || 21),
-      resourceCount: Number(src.resourceCount || resources.length || 6),
+      protocolVersion: String(src.protocolVersion || caps.mcpProtocolVersion || '2025-11-25'),
+      toolCount: Number(src.toolCount || DEFAULT_MCP_TOOLS.length),
+      resourceCount: Number(src.resourceCount || resources.length || DEFAULT_MCP_RESOURCES.length),
       patRequired,
       patMintSupported: Boolean(src.patMintSupported ?? src.multiUserMode ?? patRequired),
       multiUserMode: Boolean(src.multiUserMode ?? patRequired),
+      onlineMode: Boolean(src.onlineMode ?? caps.onlineMode ?? caps.localCheckoutAllowed === false),
       resources,
       agentRuleSnippet: String(src.agentRuleSnippet || ''),
       clients: {
@@ -145,15 +208,16 @@
   }
 
   function buildMcpClientTabs(rawSetup, options = {}) {
-    const setup = normalizeMcpSetup(rawSetup, options.origin || '');
+    const setup = normalizeMcpSetup(rawSetup, options.origin || '', options.capabilities || null);
     const url = setup.streamableHttpUrl;
     const headers = setup.patRequired ? { Authorization: 'Bearer ${EVO_MCP_TOKEN}' } : undefined;
     const httpEntry = headers ? { url, headers } : { url };
-    const antigravityFallback = {
+    const claudeFallback = {
       mcpServers: {
-        'evo-workbench': headers
-          ? { serverUrl: url, headers }
-          : { serverUrl: url }
+        'evo-workbench': {
+          type: 'http',
+          ...httpEntry
+        }
       }
     };
     const cursorFallback = {
@@ -161,11 +225,32 @@
         'evo-workbench': httpEntry
       }
     };
-    const claudeFallback = {
+    const antigravityFallback = {
       mcpServers: {
-        'evo-workbench': {
-          type: 'http',
-          ...httpEntry
+        'evo-workbench': headers
+          ? { serverUrl: url, headers }
+          : { serverUrl: url }
+      }
+    };
+    const genericHttpFallback = {
+      transport: 'streamable-http',
+      protocolVersion: setup.protocolVersion,
+      endpoint: url,
+      methods: ['POST', 'DELETE'],
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'MCP-Protocol-Version': setup.protocolVersion,
+        ...(headers || {})
+      },
+      initializeRequest: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: setup.protocolVersion,
+          capabilities: {},
+          clientInfo: { name: 'mcp-agent', version: '1.0.0' }
         }
       }
     };
@@ -182,8 +267,8 @@
         'evo-offline': {
           command: 'java',
           args: [
-            '-jar', setup.evoJarPath,
-            'mcp',
+            '-cp', setup.evoJarPath,
+            'com.evolution.backend.query.WorkbenchMcpMain',
             '--store', setup.storeDir,
             ...(setup.defaultGraph ? ['--graph', setup.defaultGraph] : [])
           ]
@@ -193,12 +278,12 @@
 
     const specs = [
       {
-        id: 'antigravity',
-        label: 'Antigravity',
-        fileHint: '~/.gemini/antigravity/mcp_config.json',
-        caption: 'Connects Antigravity directly to this running Workbench over Streamable HTTP.',
-        candidate: setup.clients.antigravity,
-        fallback: antigravityFallback
+        id: 'claude',
+        label: 'Claude Code',
+        fileHint: '.mcp.json',
+        caption: 'Streamable HTTP MCP server entry for Claude Code CLI & Desktop.',
+        candidate: setup.clients.claude,
+        fallback: claudeFallback
       },
       {
         id: 'cursor',
@@ -209,12 +294,20 @@
         fallback: cursorFallback
       },
       {
-        id: 'claude',
-        label: 'Claude Code',
-        fileHint: '.mcp.json',
-        caption: 'Streamable HTTP MCP server entry for Claude Code CLI & Desktop.',
-        candidate: setup.clients.claude,
-        fallback: claudeFallback
+        id: 'antigravity',
+        label: 'Antigravity / Windsurf',
+        fileHint: '~/.gemini/antigravity/mcp_config.json · ~/.codeium/windsurf/mcp_config.json',
+        caption: 'Connects Antigravity or Windsurf directly to this Workbench over Streamable HTTP.',
+        candidate: setup.clients.antigravity,
+        fallback: antigravityFallback
+      },
+      {
+        id: 'streamable-http',
+        label: `Streamable HTTP (${setup.protocolVersion})`,
+        fileHint: `POST ${setup.mcpEndpoint} · JSON-RPC 2.0`,
+        caption: `Generic Streamable HTTP MCP (${setup.protocolVersion}) endpoint, headers, and initialize handshake.`,
+        candidate: null,
+        fallback: genericHttpFallback
       },
       {
         id: 'vscode',
@@ -339,11 +432,7 @@
     let timer = 0;
     btn.addEventListener('click', () => {
       const text = typeof valueProvider === 'function' ? valueProvider() : String(valueProvider || '');
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(text).catch(() => {});
-        }
-      } catch (_) {}
+      copyTextSafely(text);
       clearTimeout(timer);
       wrap.classList.remove('is-copied');
       void wrap.offsetWidth;
@@ -357,6 +446,43 @@
       }, 1700);
     });
     return { wrap, valSpan, btn };
+  }
+
+  function createSnippetCopyButton(valueProvider) {
+    const wrap = el('div', 'evo-mcp-copy-wrap');
+    const btn = el('button', 'evo-mcp-copy-btn');
+    btn.type = 'button';
+    btn.dataset.mcpCopy = 'snippet';
+    btn.setAttribute('aria-label', 'Copy client MCP configuration');
+    const iconBox = el('span', 'evo-mcp-copy-ic');
+    iconBox.setAttribute('aria-hidden', 'true');
+    iconBox.append(buildCopyButtonIcon('cp'), buildCopyButtonIcon('ok'));
+    const label = el('span', 'evo-mcp-copy-label', 'Copy config');
+    btn.append(iconBox, label);
+    const live = el('span', 'sr-only');
+    live.setAttribute('role', 'status');
+    live.setAttribute('aria-live', 'polite');
+    wrap.append(btn, live);
+
+    let timer = 0;
+    btn.addEventListener('click', () => {
+      const text = typeof valueProvider === 'function' ? valueProvider() : String(valueProvider || '');
+      copyTextSafely(text);
+      clearTimeout(timer);
+      btn.classList.remove('is-copied');
+      void btn.offsetWidth;
+      btn.classList.add('is-copied');
+      label.textContent = 'Copied!';
+      live.textContent = 'MCP configuration copied to clipboard.';
+      timer = setTimeout(() => {
+        if (btn.isConnected) {
+          btn.classList.remove('is-copied');
+          label.textContent = 'Copy config';
+          live.textContent = '';
+        }
+      }, 1700);
+    });
+    return { wrap, btn, label };
   }
 
   /* Pure DOM syntax-highlighted JSON renderer (DOM-only, zero raw HTML strings) */
@@ -473,17 +599,25 @@
     } catch (_) {}
   }
 
-  async function openMcpStudio(api) {
+  async function openMcpStudio(api, capabilities = null) {
     const dialog = document.getElementById('mcp-setup-dialog');
     const body = document.getElementById('mcp-setup-body');
     if (!dialog || !body) return;
     body.replaceChildren(el('p', 'muted', 'Loading live MCP Studio…'));
     if (!dialog.open) dialog.showModal();
 
+    const caps = capabilities || window.EvoApp?.state?.capabilities || {};
     try {
-      const raw = await api('/mcp/setup', undefined, undefined, 'GET');
-      const setup = normalizeMcpSetup(raw, window.location.origin);
-      const clientTabs = buildMcpClientTabs(setup, { origin: window.location.origin });
+      let raw = null;
+      try {
+        if (typeof api === 'function') {
+          raw = await api('/mcp/setup', undefined, undefined, 'GET');
+        }
+      } catch (_) {
+        raw = {};
+      }
+      const setup = normalizeMcpSetup(raw, window.location.origin, caps);
+      const clientTabs = buildMcpClientTabs(setup, { origin: window.location.origin, capabilities: caps });
       const rm = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
       const shell = el('div', 'evo-hub-shell ux');
@@ -503,9 +637,9 @@
 
       const barsRow = el('div', 'u238-bars-row');
       const channels = [
-        ['Streamable HTTP', 'Ready'],
-        ['Read-Only Tools', `${setup.toolCount} tools`],
-        ['Auth Policy', setup.patRequired ? 'PAT Bearer' : 'Loopback']
+        ['Streamable HTTP', `v${setup.protocolVersion}`],
+        ['Read-Only Catalog', `${setup.toolCount} tools · ${setup.resourceCount} resources`],
+        ['Auth & Origin', setup.patRequired ? 'PAT + Origin Guard' : 'Loopback + Origin Guard']
       ];
       channels.forEach(([label, stateTxt], ci) => {
         const item = el('div', 'u238-it');
@@ -513,7 +647,7 @@
         const bar = el('div', 'u238-bar');
         for (let b = 0; b < 18; b++) {
           const tick = el('i');
-          if (label === 'Auth Policy' && setup.patRequired && b === 17) tick.className = 'w';
+          if (label === 'Auth & Origin' && setup.patRequired && b === 17) tick.className = 'w';
           tick.style.transitionDelay = (b * 0.016 + ci * 0.05) + 's';
           bar.append(tick);
         }
@@ -530,9 +664,9 @@
       const step2 = el('section', 'evo-hub-step');
       step2.append(
         append(el('div', 'evo-hub-step-head'),
-          append(el('h3', 'evo-hub-step-title'), el('span', 'evo-hub-step-num', '1'), el('span', '', 'Choose your IDE or CLI client')),
+          append(el('h3', 'evo-hub-step-title'), el('span', 'evo-hub-step-num', '1'), el('span', '', 'Choose your AI agent or IDE client')),
           el('span', 'small muted', setup.defaultGraph ? `Default graph: ${shortSha(setup.defaultGraph)}` : 'Auto-binds latest snapshot')),
-        el('p', 'evo-hub-caption', 'Select a client below and paste the generated snippet. No custom wrapper scripts needed.')
+        el('p', 'evo-hub-caption', 'Select a client below and copy the auto-populated Streamable HTTP configuration.')
       );
 
       const box = el('div', 'u272-hub');
@@ -550,7 +684,7 @@
       hintWrap.append(captionSpan, pathCode);
 
       let activeTabIdx = 0;
-      const snippetCopy = createCopyPill('', () => clientTabs[activeTabIdx]?.snippet || '', 'Copy client MCP configuration');
+      const snippetCopy = createSnippetCopyButton(() => clientTabs[activeTabIdx]?.snippet || '');
       bar.append(hintWrap, snippetCopy.wrap);
 
       const pre = el('pre', 'u272-pre');
@@ -658,11 +792,55 @@
         step2.append(patBanner);
       }
 
+      // ── Step 2b: Security Posture, 6 evo:// Resources & 21 Read-Only Tools ──
+      const postureStep = el('section', 'evo-hub-step evo-mcp-posture-step');
+      postureStep.append(
+        append(el('div', 'evo-hub-step-head'),
+          append(el('h3', 'evo-hub-step-title'), el('span', 'evo-hub-step-num', '2'), el('span', '', 'Security posture & read-only surface')),
+          el('span', 'badge good', `${setup.toolCount} tools · ${setup.resourceCount} evo:// resources`))
+      );
+      const postureGrid = el('div', 'evo-mcp-posture-grid');
+      const postureCards = [
+        ['Scoped PAT Auth', 'Supports mcp:read (read-only MCP & graph queries), api:read, and api:write. Tokens are stored as SHA-256 hashes only; /mcp exposes zero mutating tools.'],
+        ['Origin & DNS-Rebinding Guard', 'Validates Host and Origin headers on /mcp (HTTP 403 FORBIDDEN_ORIGIN on untrusted cross-origin browser calls) with bounded LRU/TTL Mcp-Session-Id isolation.'],
+        ['Shannon-Entropy Secret Redaction', 'Pre-redacts captured source, search snippets, and program slices using 11 secret patterns + Shannon entropy >= 4.2 bits/char. Zero host build execution.']
+      ];
+      for (const [heading, detail] of postureCards) {
+        postureGrid.append(append(el('article', 'evo-mcp-posture-card'),
+          el('strong', '', heading),
+          el('p', 'small muted', detail)));
+      }
+      postureStep.append(postureGrid);
+
+      const resWrapStatic = el('div', 'evo-mcp-catalog-group');
+      resWrapStatic.append(append(el('div', 'evo-mcp-catalog-heading'),
+        el('span', '', 'evo:// Resources'),
+        el('span', '', `${setup.resources.length}`)));
+      const resGridStatic = el('div', 'evo-mcp-resources-grid');
+      for (const r of setup.resources) {
+        resGridStatic.append(append(el('div', 'evo-mcp-resource-card'),
+          el('code', '', r.uri || ''),
+          el('span', '', r.description || r.name || 'MCP resource')));
+      }
+      resWrapStatic.append(resGridStatic);
+      postureStep.append(resWrapStatic);
+
+      const toolsDetails = el('details', 'evo-mcp-catalog-details');
+      toolsDetails.append(el('summary', '', `Inspect all ${DEFAULT_MCP_TOOLS.length} read-only MCP tools`));
+      const staticChips = el('div', 'evo-mcp-chips');
+      for (const t of DEFAULT_MCP_TOOLS) {
+        const chip = el('span', 'evo-mcp-chip is-static', t.name);
+        chip.title = t.description;
+        staticChips.append(chip);
+      }
+      toolsDetails.append(staticChips);
+      postureStep.append(toolsDetails);
+
       // ── Step 3: Lucian #239 Interactive Live Connection Tester ──
       const step3 = el('section', 'evo-hub-step');
       step3.append(
         append(el('div', 'evo-hub-step-head'),
-          append(el('h3', 'evo-hub-step-title'), el('span', 'evo-hub-step-num', '2'), el('span', '', 'Test live connection & browse tools'))),
+          append(el('h3', 'evo-hub-step-title'), el('span', 'evo-hub-step-num', '3'), el('span', '', 'Test live connection & browse tools'))),
         el('p', 'evo-hub-caption', 'Runs a real JSON-RPC 2.0 handshake (initialize → tools/list → resources/list) against this Workbench.')
       );
 
@@ -814,7 +992,7 @@
       });
 
       step3.append(tester);
-      shell.append(statusCard, step2, step3);
+      shell.append(statusCard, step2, postureStep, step3);
       body.replaceChildren(shell);
     } catch (err) {
       body.replaceChildren(el('p', 'muted', 'Could not load MCP Studio: ' + err.message));

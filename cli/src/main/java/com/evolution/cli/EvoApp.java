@@ -46,831 +46,1811 @@ import picocli.CommandLine.*;
 import picocli.CommandLine.Model.*;
 import static com.evolution.analysis.query.ArchitectureQuery.*;
 
-/** Commands embed canonical services. No HTTP server or graph database is started. */
+/**
+ * Commands embed canonical services. No HTTP server or graph database is
+ * started.
+ */
 public final class EvoApp {
-    public static final String RELEASE="0.1.0";
-    public static final String VERSION="evo "+RELEASE+" / architecture.cli:m7.2-v1";
-    private final Path directory;private final BufferedReader input;private final PrintWriter out,err;
-    private final boolean terminal;private final Map<String,String> environment;
+    public static final String RELEASE = "0.1.0";
+    public static final String VERSION = "evo " + RELEASE + " / architecture.cli:m7.2-v1";
+    private final Path directory;
+    private final BufferedReader input;
+    private final PrintWriter out, err;
+    private final boolean terminal;
+    private final Map<String, String> environment;
     private final TerminalSession.Profile terminalProfile;
     private final com.evolution.analysis.execution.RegisteredExecutionPort executions;
     private GitHubCommand.ContextFactory githubFactory = GitHubCommand.DEFAULT_FACTORY;
-    private String sessionLang="en",sessionColor="auto";private boolean sessionAscii;
+    private String sessionLang = "en", sessionColor = "auto";
+    private boolean sessionAscii;
     private Root interactiveDefaults;
     private KnowledgeGraph sessionGraph;
     private Continuation continuation;
-    private record Continuation(Root options,String name,String operation,KnowledgeGraph graph,InMemoryGraphStore store,
-                                PublishedReports reports,PublishedReports.Report report,String failOn,String path,byte[] body){}
-    public EvoApp(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,Map<String,String> environment) {
-        this(directory,input,out,err,terminal,environment,TerminalSession.Profile.suppliedWriter());
+
+    private record Continuation(Root options, String name, String operation, KnowledgeGraph graph,
+            InMemoryGraphStore store,
+            PublishedReports reports, PublishedReports.Report report, String failOn, String path, byte[] body) {
     }
-    EvoApp(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,Map<String,String> environment,TerminalSession.Profile terminalProfile) {
-        this(directory,input,out,err,terminal,environment,terminalProfile,null);
+
+    public EvoApp(Path directory, Reader input, PrintWriter out, PrintWriter err, boolean terminal,
+            Map<String, String> environment) {
+        this(directory, input, out, err, terminal, environment, TerminalSession.Profile.suppliedWriter());
     }
-    public static EvoApp withExecutions(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,
-            Map<String,String> environment,com.evolution.analysis.execution.RegisteredExecutionPort executions){
-        return new EvoApp(directory,input,out,err,terminal,environment,TerminalSession.Profile.suppliedWriter(),Objects.requireNonNull(executions));
+
+    EvoApp(Path directory, Reader input, PrintWriter out, PrintWriter err, boolean terminal,
+            Map<String, String> environment, TerminalSession.Profile terminalProfile) {
+        this(directory, input, out, err, terminal, environment, terminalProfile, null);
     }
+
+    public static EvoApp withExecutions(Path directory, Reader input, PrintWriter out, PrintWriter err,
+            boolean terminal,
+            Map<String, String> environment, com.evolution.analysis.execution.RegisteredExecutionPort executions) {
+        return new EvoApp(directory, input, out, err, terminal, environment, TerminalSession.Profile.suppliedWriter(),
+                Objects.requireNonNull(executions));
+    }
+
     EvoApp withGitHubFactory(GitHubCommand.ContextFactory factory) {
         this.githubFactory = Objects.requireNonNull(factory);
         return this;
     }
-    private EvoApp(Path directory,Reader input,PrintWriter out,PrintWriter err,boolean terminal,Map<String,String> environment,
-            TerminalSession.Profile terminalProfile,com.evolution.analysis.execution.RegisteredExecutionPort executions) {
-        this.directory=directory.toAbsolutePath().normalize();this.input=new BufferedReader(input);this.out=out;this.err=err;
-        this.executions=executions;
-        this.terminal=terminal;this.environment=Map.copyOf(environment);
-        this.terminalProfile=Objects.requireNonNull(terminalProfile);
+
+    private EvoApp(Path directory, Reader input, PrintWriter out, PrintWriter err, boolean terminal,
+            Map<String, String> environment,
+            TerminalSession.Profile terminalProfile,
+            com.evolution.analysis.execution.RegisteredExecutionPort executions) {
+        this.directory = directory.toAbsolutePath().normalize();
+        this.input = new BufferedReader(input);
+        this.out = out;
+        this.err = err;
+        this.executions = executions;
+        this.terminal = terminal;
+        this.environment = Map.copyOf(environment);
+        this.terminalProfile = Objects.requireNonNull(terminalProfile);
     }
-    @Command(name="evo",version=VERSION,mixinStandardHelpOptions=true,sortOptions=false)
+
+    @Command(name = "evo", version = VERSION, mixinStandardHelpOptions = true, sortOptions = false)
     private final class Root implements Callable<Integer> {
-        @Option(names={"-w","--workspace"},scope=ScopeType.INHERIT,paramLabel="DIR",description="Session directory / Thư mục phiên") Path workspace=directory;
-        @Option(names={"-g","--graph"},scope=ScopeType.INHERIT,paramLabel="FILE|SHA256",description="Canonical snapshot file or digest / Snapshot canonical hoặc digest") String graph;
-        @Option(names={"-c","--context"},scope=ScopeType.INHERIT,paramLabel="ID|N",description="Exact context ID or index / Ngữ cảnh chính xác") String context;
-        @Option(names="--lang",scope=ScopeType.INHERIT,paramLabel="en|vi",description="Interface language / Ngôn ngữ") String lang=sessionLang;
-        @Option(names="--color",scope=ScopeType.INHERIT,paramLabel="auto|always|never",description="Terminal color / Màu terminal") String color=sessionColor;
-        @Option(names="--ascii",scope=ScopeType.INHERIT,description="ASCII decoration / Trang trí ASCII") boolean ascii=sessionAscii;
-        @Option(names="--width",scope=ScopeType.INHERIT,paramLabel="32..160",description="Report width / Chiều rộng") int width=defaultWidth();
-        @Option(names="--json",scope=ScopeType.INHERIT,description="Canonical JSON only / Chỉ JSON canonical") boolean json;
-        @Option(names="--details",scope=ScopeType.INHERIT,description="Full report fields / Chi tiết đầy đủ") boolean details;
-        @Option(names="--debug",scope=ScopeType.INHERIT,description="Sanitized failure frames / Vị trí lỗi đã lọc") boolean debug;
-        @Option(names={"-s","--scope"},scope=ScopeType.INHERIT,paramLabel="SCOPE",description="entity|type|package|module|spring-component / Phạm vi") String scope="type";
-        @Option(names={"-v","--view"},scope=ScopeType.INHERIT,paramLabel="VIEW",description="union|must|may|unknown|realized / Phép chiếu") String projection="union";
-        @Option(names="--world",scope=ScopeType.INHERIT,paramLabel="ID",description="Explicit realized world / Thế giới cấu hình") String world;
-        @Option(names="--assignment",scope=ScopeType.INHERIT,paramLabel="FILE",description="Symbolic Boolean assignment / Gán biến Boolean JSON") Path assignment;
-        @Option(names="--incoming",scope=ScopeType.INHERIT,description="Dependents / Phụ thuộc đến") boolean incoming;
-        @Option(names="--kinds",scope=ScopeType.INHERIT,split=",",paramLabel="KIND,...",description="Relationship kinds / Loại quan hệ") Set<String> kinds=Set.of("graph.depends-on");
-        @Option(names={"-n","--limit"},scope=ScopeType.INHERIT,paramLabel="1..50",description="Page/result size / Kích thước trang") int limit=20;
-        @Option(names="--depth",scope=ScopeType.INHERIT,paramLabel="1..20",description="Traversal depth / Độ sâu duyệt") int depth=5;
-        @Option(names="--cursor",scope=ScopeType.INHERIT,paramLabel="TOKEN",description="Continue same query / Tiếp tục cùng truy vấn") String cursor;
-        @Option(names="--request",scope=ScopeType.INHERIT,paramLabel="FILE",description="Exact M7.1 request JSON / Yêu cầu JSON M7.1") Path request;
-        @Option(names="--args",scope=ScopeType.INHERIT,paramLabel="JSON",description="Generic operation arguments / Tham số thao tác") String arguments;
-        @Option(names="--other",scope=ScopeType.INHERIT,paramLabel="FILE",description="Other graph for compatibility / Đồ thị đối chiếu tương thích") Path other;
-        @Option(names="--policy",scope=ScopeType.INHERIT,paramLabel="FILE",description="Explicit policy / Chính sách đầu vào") Path policy;
-        @Spec CommandSpec spec;
+        @Option(names = { "-w",
+                "--workspace" }, scope = ScopeType.INHERIT, paramLabel = "DIR", description = "Session directory / Thư mục phiên")
+        Path workspace = directory;
+        @Option(names = { "-g",
+                "--graph" }, scope = ScopeType.INHERIT, paramLabel = "FILE|SHA256", description = "Canonical snapshot file or digest / Snapshot canonical hoặc digest")
+        String graph;
+        @Option(names = { "-c",
+                "--context" }, scope = ScopeType.INHERIT, paramLabel = "ID|N", description = "Exact context ID or index / Ngữ cảnh chính xác")
+        String context;
+        @Option(names = "--lang", scope = ScopeType.INHERIT, paramLabel = "en|vi", description = "Interface language / Ngôn ngữ")
+        String lang = sessionLang;
+        @Option(names = "--color", scope = ScopeType.INHERIT, paramLabel = "auto|always|never", description = "Terminal color / Màu terminal")
+        String color = sessionColor;
+        @Option(names = "--ascii", scope = ScopeType.INHERIT, description = "ASCII decoration / Trang trí ASCII")
+        boolean ascii = sessionAscii;
+        @Option(names = "--width", scope = ScopeType.INHERIT, paramLabel = "32..160", description = "Report width / Chiều rộng")
+        int width = defaultWidth();
+        @Option(names = "--json", scope = ScopeType.INHERIT, description = "Canonical JSON only / Chỉ JSON canonical")
+        boolean json;
+        @Option(names = "--details", scope = ScopeType.INHERIT, description = "Full report fields / Chi tiết đầy đủ")
+        boolean details;
+        @Option(names = "--debug", scope = ScopeType.INHERIT, description = "Sanitized failure frames / Vị trí lỗi đã lọc")
+        boolean debug;
+        @Option(names = { "-s",
+                "--scope" }, scope = ScopeType.INHERIT, paramLabel = "SCOPE", description = "entity|type|package|module|spring-component / Phạm vi")
+        String scope = "type";
+        @Option(names = { "-v",
+                "--view" }, scope = ScopeType.INHERIT, paramLabel = "VIEW", description = "union|must|may|unknown|realized / Phép chiếu")
+        String projection = "union";
+        @Option(names = "--world", scope = ScopeType.INHERIT, paramLabel = "ID", description = "Explicit realized world / Thế giới cấu hình")
+        String world;
+        @Option(names = "--assignment", scope = ScopeType.INHERIT, paramLabel = "FILE", description = "Symbolic Boolean assignment / Gán biến Boolean JSON")
+        Path assignment;
+        @Option(names = "--incoming", scope = ScopeType.INHERIT, description = "Dependents / Phụ thuộc đến")
+        boolean incoming;
+        @Option(names = "--kinds", scope = ScopeType.INHERIT, split = ",", paramLabel = "KIND,...", description = "Relationship kinds / Loại quan hệ")
+        Set<String> kinds = Set.of("graph.depends-on");
+        @Option(names = { "-n",
+                "--limit" }, scope = ScopeType.INHERIT, paramLabel = "1..50", description = "Page/result size / Kích thước trang")
+        int limit = 20;
+        @Option(names = "--depth", scope = ScopeType.INHERIT, paramLabel = "1..20", description = "Traversal depth / Độ sâu duyệt")
+        int depth = 5;
+        @Option(names = "--cursor", scope = ScopeType.INHERIT, paramLabel = "TOKEN", description = "Continue same query / Tiếp tục cùng truy vấn")
+        String cursor;
+        @Option(names = "--request", scope = ScopeType.INHERIT, paramLabel = "FILE", description = "Exact M7.1 request JSON / Yêu cầu JSON M7.1")
+        Path request;
+        @Option(names = "--args", scope = ScopeType.INHERIT, paramLabel = "JSON", description = "Generic operation arguments / Tham số thao tác")
+        String arguments;
+        @Option(names = "--other", scope = ScopeType.INHERIT, paramLabel = "FILE", description = "Other graph for compatibility / Đồ thị đối chiếu tương thích")
+        Path other;
+        @Option(names = "--policy", scope = ScopeType.INHERIT, paramLabel = "FILE", description = "Explicit policy / Chính sách đầu vào")
+        Path policy;
+        @Spec
+        CommandSpec spec;
         Request activeRequest;
-        Map<String,String> labels=Map.of();
-        Map<String,List<Map<String,Object>>> descriptors=Map.of();
-        String stage="command";
-        Workspace storage(){return new Workspace(resolve(workspace));}
-        TerminalView view(){validate();return new TerminalView(out,lang.equals("vi"),!json&&colors(color),ascii,width);}
-        void validate(){if(!Set.of("en","vi").contains(lang)||!Set.of("auto","always","never").contains(color)||width<32||width>160||limit<1||limit>50||depth<1||depth>20)throw new IllegalArgumentException();}
-        public Integer call() throws Exception {validate();if(terminal&&!json)return interact(this);help(spec.commandLine(),this);return 0;}
+        Map<String, String> labels = Map.of();
+        Map<String, List<Map<String, Object>>> descriptors = Map.of();
+        String stage = "command";
+
+        Workspace storage() {
+            return new Workspace(resolve(workspace));
+        }
+
+        TerminalView view() {
+            validate();
+            return new TerminalView(out, lang.equals("vi"), !json && colors(color), ascii, width);
+        }
+
+        void validate() {
+            if (!Set.of("en", "vi").contains(lang) || !Set.of("auto", "always", "never").contains(color) || width < 32
+                    || width > 160 || limit < 1 || limit > 50 || depth < 1 || depth > 20)
+                throw new IllegalArgumentException();
+        }
+
+        public Integer call() throws Exception {
+            validate();
+            if (terminal && !json)
+                return interact(this);
+            help(spec.commandLine(), this);
+            return 0;
+        }
     }
+
     public int execute(String... arguments) {
-        var root=new Root();
-        if(interactiveDefaults!=null){var d=interactiveDefaults;root.workspace=d.workspace;root.graph=d.graph;root.context=d.context;root.scope=d.scope;root.projection=d.projection;root.world=d.world;root.assignment=d.assignment;root.incoming=d.incoming;root.kinds=d.kinds;root.limit=d.limit;root.depth=d.depth;root.width=d.width;root.details=d.details;root.debug=d.debug;}
-        var command=new CommandLine(root);configure(command,root);command.setOut(out).setErr(err);
-        command.setExecutionStrategy(parse->{try{root.validate();}catch(IllegalArgumentException invalid){return error(root,2,"INVALID_INPUT","Invalid language, color, width or query limit.","Ngôn ngữ, màu, chiều rộng hoặc giới hạn không hợp lệ.");}
-            var active=parse;while(active.subcommand()!=null)active=active.subcommand();if(active!=parse)root.stage=active.commandSpec().name();
-            if(parse.subcommand()==null&&parse.isUsageHelpRequested()){help(command,root);return 0;}
-            if(parse.subcommand()==null&&parse.isVersionHelpRequested()&&root.json)return emit(root,"version",envelope(Map.of("version",VERSION)),0);
-            return new RunLast().execute(parse);});
-        command.setParameterExceptionHandler((failure,args)->error(root,2,"INVALID_USAGE","Invalid command or option. Run evo help.","Lệnh hoặc tùy chọn không hợp lệ. Chạy evo help."));
-        command.setExecutionExceptionHandler((failure,cmd,parse)->{
-            var diagnostics=FailureDiagnostics.describe(failure,root.stage,root.debug);
-            if(root.debug&&!root.json)FailureDiagnostics.debug(err,diagnostics);
-            boolean invalid=failure instanceof IllegalArgumentException||failure instanceof java.nio.charset.CharacterCodingException;
-            if(failure instanceof InputFailure f)return inputError(root,f.getMessage());
-            if(failure instanceof GraphStoreException f)return error(root,1,"SNAPSHOT_"+f.reason(),"Snapshot storage failed ("+f.reason()+"). The previous selection is preserved. Check storage permissions and graph limits.","Không lưu được snapshot ("+f.reason()+"). Lựa chọn trước được giữ lại. Kiểm tra quyền ghi và giới hạn đồ thị.",diagnostics);
-            if(failure instanceof GraphJson.LimitExceededException)return error(root,3,"GRAPH_LIMIT","Graph/evidence exceeds the declared structural limit. Narrow the scan or query scope.","Đồ thị/bằng chứng vượt giới hạn cấu trúc. Thu hẹp phạm vi quét hoặc truy vấn.");
-            if(failure instanceof FileAlreadyExistsException)return error(root,1,"OUTPUT_EXISTS","Output already exists. Choose another --out file.","Tệp đầu ra đã tồn tại. Chọn tệp --out khác.");
-            if(failure instanceof BoundedJson.TooLarge)return error(root,3,"OUTPUT_LIMIT","Canonical output exceeds the limit. Narrow the query or reduce --limit.","Đầu ra canonical vượt giới hạn. Thu hẹp truy vấn hoặc giảm --limit.");
-            var category=FailureDiagnostics.classification(failure);
-            if(category!=null) {
-                String en=switch(category){case "STORAGE_BUSY"->"Storage is locked or busy. Close competing writers and retry the saved operation.";case "STORAGE_FULL"->"Storage capacity or disk reserve is exhausted. Free or allocate space before retrying.";case "STORAGE_PERMISSION_DENIED"->"Storage access was denied or the database is read-only. Check the configured storage permissions.";case "STORAGE_NOT_FOUND"->"A required storage input is absent. Check the selected registration or captured path.";case "STORAGE_CORRUPT"->"Storage integrity validation failed. Preserve the evidence and inspect the affected store.";case "STORAGE_OPEN_FAILED"->"The storage database could not be opened. Check its location and access.";case "CANCELLED"->"Operation cancelled; incomplete output was not selected.";case "MEMORY_LIMIT"->"Worker memory exhausted. Retain captured inputs and use an adequately sized worker.";default->"Storage I/O failed. Inspect the stage and cause chain; retry after the underlying storage failure is resolved.";};
-                String vi=switch(category){case "STORAGE_BUSY"->"Kho lưu trữ đang bị khóa hoặc bận. Đóng tác vụ ghi cạnh tranh rồi thử lại thao tác đã lưu.";case "STORAGE_FULL"->"Hết dung lượng hoặc chạm mức dự trữ đĩa. Bổ sung dung lượng trước khi thử lại.";case "STORAGE_PERMISSION_DENIED"->"Bị từ chối quyền truy cập hoặc cơ sở dữ liệu chỉ đọc. Kiểm tra quyền của kho lưu trữ.";case "STORAGE_NOT_FOUND"->"Thiếu đầu vào lưu trữ bắt buộc. Kiểm tra đăng ký hoặc đường dẫn đã chọn.";case "STORAGE_CORRUPT"->"Kiểm tra toàn vẹn lưu trữ thất bại. Giữ nguyên bằng chứng và kiểm tra kho liên quan.";case "STORAGE_OPEN_FAILED"->"Không mở được cơ sở dữ liệu lưu trữ. Kiểm tra vị trí và quyền truy cập.";case "CANCELLED"->"Đã hủy thao tác; đầu ra chưa hoàn tất không được chọn.";case "MEMORY_LIMIT"->"Worker hết bộ nhớ. Giữ đầu vào đã thu nhận và dùng worker đủ tài nguyên.";default->"Lỗi I/O lưu trữ. Xem giai đoạn và chuỗi nguyên nhân; xử lý lỗi gốc trước khi thử lại.";};
-                return error(root,category.equals("CANCELLED")?130:category.equals("MEMORY_LIMIT")?3:1,category,en,vi,diagnostics);
+        var root = new Root();
+        if (interactiveDefaults != null) {
+            var d = interactiveDefaults;
+            root.workspace = d.workspace;
+            root.graph = d.graph;
+            root.context = d.context;
+            root.scope = d.scope;
+            root.projection = d.projection;
+            root.world = d.world;
+            root.assignment = d.assignment;
+            root.incoming = d.incoming;
+            root.kinds = d.kinds;
+            root.limit = d.limit;
+            root.depth = d.depth;
+            root.width = d.width;
+            root.details = d.details;
+            root.debug = d.debug;
+        }
+        var command = new CommandLine(root);
+        configure(command, root);
+        command.setOut(out).setErr(err);
+        command.setExecutionStrategy(parse -> {
+            try {
+                root.validate();
+            } catch (IllegalArgumentException invalid) {
+                return error(root, 2, "INVALID_INPUT", "Invalid language, color, width or query limit.",
+                        "Ngôn ngữ, màu, chiều rộng hoặc giới hạn không hợp lệ.");
             }
-            if(root.debug)return error(root,invalid?2:1,invalid?"INVALID_INPUT":"OPERATION_FAILED","Check selected inputs, context, paths and limits. Run evo help.","Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.",diagnostics);
-            return error(root,invalid?2:1,invalid?"INVALID_INPUT":"OPERATION_FAILED","Check selected inputs, context, paths and limits. Run evo help.","Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.");});
-        try{return command.execute(arguments);}
-        catch(OutOfMemoryError limit){if(root.debug&&!root.json)err.println("[DEBUG] stage="+root.stage);return error(root,3,"MEMORY_LIMIT","Semantic worker memory exhausted. Captured inventory and the previous selection remain on disk; rerun with an adequately sized worker.","Worker ngữ nghĩa đã hết bộ nhớ. Inventory đã thu nhận và lựa chọn trước vẫn ở trên đĩa; chạy lại với worker có đủ tài nguyên.");}
-        finally{out.flush();err.flush();}
+            var active = parse;
+            while (active.subcommand() != null)
+                active = active.subcommand();
+            if (active != parse)
+                root.stage = active.commandSpec().name();
+            if (parse.subcommand() == null && parse.isUsageHelpRequested()) {
+                help(command, root);
+                return 0;
+            }
+            if (parse.subcommand() == null && parse.isVersionHelpRequested() && root.json)
+                return emit(root, "version", envelope(Map.of("version", VERSION)), 0);
+            return new RunLast().execute(parse);
+        });
+        command.setParameterExceptionHandler((failure, args) -> error(root, 2, "INVALID_USAGE",
+                "Invalid command or option. Run evo help.", "Lệnh hoặc tùy chọn không hợp lệ. Chạy evo help."));
+        command.setExecutionExceptionHandler((failure, cmd, parse) -> {
+            var diagnostics = FailureDiagnostics.describe(failure, root.stage, root.debug);
+            if (root.debug && !root.json)
+                FailureDiagnostics.debug(err, diagnostics);
+            boolean invalid = failure instanceof IllegalArgumentException
+                    || failure instanceof java.nio.charset.CharacterCodingException;
+            if (failure instanceof InputFailure f)
+                return inputError(root, f.getMessage());
+            if (failure instanceof GraphStoreException f)
+                return error(root, 1, "SNAPSHOT_" + f.reason(),
+                        "Snapshot storage failed (" + f.reason()
+                                + "). The previous selection is preserved. Check storage permissions and graph limits.",
+                        "Không lưu được snapshot (" + f.reason()
+                                + "). Lựa chọn trước được giữ lại. Kiểm tra quyền ghi và giới hạn đồ thị.",
+                        diagnostics);
+            if (failure instanceof GraphJson.LimitExceededException)
+                return error(root, 3, "GRAPH_LIMIT",
+                        "Graph/evidence exceeds the declared structural limit. Narrow the scan or query scope.",
+                        "Đồ thị/bằng chứng vượt giới hạn cấu trúc. Thu hẹp phạm vi quét hoặc truy vấn.");
+            if (failure instanceof FileAlreadyExistsException)
+                return error(root, 1, "OUTPUT_EXISTS", "Output already exists. Choose another --out file.",
+                        "Tệp đầu ra đã tồn tại. Chọn tệp --out khác.");
+            if (failure instanceof BoundedJson.TooLarge)
+                return error(root, 3, "OUTPUT_LIMIT",
+                        "Canonical output exceeds the limit. Narrow the query or reduce --limit.",
+                        "Đầu ra canonical vượt giới hạn. Thu hẹp truy vấn hoặc giảm --limit.");
+            var category = FailureDiagnostics.classification(failure);
+            if (category != null) {
+                String en = switch (category) {
+                    case "STORAGE_BUSY" ->
+                        "Storage is locked or busy. Close competing writers and retry the saved operation.";
+                    case "STORAGE_FULL" ->
+                        "Storage capacity or disk reserve is exhausted. Free or allocate space before retrying.";
+                    case "STORAGE_PERMISSION_DENIED" ->
+                        "Storage access was denied or the database is read-only. Check the configured storage permissions.";
+                    case "STORAGE_NOT_FOUND" ->
+                        "A required storage input is absent. Check the selected registration or captured path.";
+                    case "STORAGE_CORRUPT" ->
+                        "Storage integrity validation failed. Preserve the evidence and inspect the affected store.";
+                    case "STORAGE_OPEN_FAILED" ->
+                        "The storage database could not be opened. Check its location and access.";
+                    case "CANCELLED" -> "Operation cancelled; incomplete output was not selected.";
+                    case "MEMORY_LIMIT" ->
+                        "Worker memory exhausted. Retain captured inputs and use an adequately sized worker.";
+                    default ->
+                        "Storage I/O failed. Inspect the stage and cause chain; retry after the underlying storage failure is resolved.";
+                };
+                String vi = switch (category) {
+                    case "STORAGE_BUSY" ->
+                        "Kho lưu trữ đang bị khóa hoặc bận. Đóng tác vụ ghi cạnh tranh rồi thử lại thao tác đã lưu.";
+                    case "STORAGE_FULL" ->
+                        "Hết dung lượng hoặc chạm mức dự trữ đĩa. Bổ sung dung lượng trước khi thử lại.";
+                    case "STORAGE_PERMISSION_DENIED" ->
+                        "Bị từ chối quyền truy cập hoặc cơ sở dữ liệu chỉ đọc. Kiểm tra quyền của kho lưu trữ.";
+                    case "STORAGE_NOT_FOUND" ->
+                        "Thiếu đầu vào lưu trữ bắt buộc. Kiểm tra đăng ký hoặc đường dẫn đã chọn.";
+                    case "STORAGE_CORRUPT" ->
+                        "Kiểm tra toàn vẹn lưu trữ thất bại. Giữ nguyên bằng chứng và kiểm tra kho liên quan.";
+                    case "STORAGE_OPEN_FAILED" ->
+                        "Không mở được cơ sở dữ liệu lưu trữ. Kiểm tra vị trí và quyền truy cập.";
+                    case "CANCELLED" -> "Đã hủy thao tác; đầu ra chưa hoàn tất không được chọn.";
+                    case "MEMORY_LIMIT" -> "Worker hết bộ nhớ. Giữ đầu vào đã thu nhận và dùng worker đủ tài nguyên.";
+                    default -> "Lỗi I/O lưu trữ. Xem giai đoạn và chuỗi nguyên nhân; xử lý lỗi gốc trước khi thử lại.";
+                };
+                return error(root, category.equals("CANCELLED") ? 130 : category.equals("MEMORY_LIMIT") ? 3 : 1,
+                        category, en, vi, diagnostics);
+            }
+            if (root.debug)
+                return error(root, invalid ? 2 : 1, invalid ? "INVALID_INPUT" : "OPERATION_FAILED",
+                        "Check selected inputs, context, paths and limits. Run evo help.",
+                        "Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.", diagnostics);
+            return error(root, invalid ? 2 : 1, invalid ? "INVALID_INPUT" : "OPERATION_FAILED",
+                    "Check selected inputs, context, paths and limits. Run evo help.",
+                    "Kiểm tra đầu vào, ngữ cảnh, đường dẫn và giới hạn. Chạy evo help.");
+        });
+        try {
+            return command.execute(arguments);
+        } catch (OutOfMemoryError limit) {
+            if (root.debug && !root.json)
+                err.println("[DEBUG] stage=" + root.stage);
+            return error(root, 3, "MEMORY_LIMIT",
+                    "Semantic worker memory exhausted. Captured inventory and the previous selection remain on disk; rerun with an adequately sized worker.",
+                    "Worker ngữ nghĩa đã hết bộ nhớ. Inventory đã thu nhận và lựa chọn trước vẫn ở trên đĩa; chạy lại với worker có đủ tài nguyên.");
+        } finally {
+            out.flush();
+            err.flush();
+        }
     }
-    private void configure(CommandLine command,Root r) {
+
+    private void configure(CommandLine command, Root r) {
         command.setColorScheme(new Help.ColorScheme.Builder(Help.Ansi.OFF).build());
         command.getCommandSpec().usageMessage().description("Architecture intelligence / Trí tuệ kiến trúc phần mềm")
-                .footer("evo scan .  ->  evo show  ->  evo find Controller  ->  evo impact <id>","--json: canonical | --lang vi: Tiếng Việt | --color always: RGB",
+                .footer("evo scan .  ->  evo show  ->  evo find Controller  ->  evo impact <id>",
+                        "--json: canonical | --lang vi: Tiếng Việt | --color always: RGB",
                         "Exit: 0 complete, 1 operational, 2 input, 3 incomplete, 4 policy threshold, 130 cancelled");
-        command.addSubcommand("help",CommandSpec.wrapWithoutInspection((Callable<Integer>)()->{help(command,r);return 0;}).name("help"));
-        command.addSubcommand("scan",new Scan(r));
-        command.addSubcommand("execution",new Execution(r));
-        command.addSubcommand("core-mvp",new CoreMvp(r));
-        command.addSubcommand("captured-java",new CapturedJava(r));
-        command.addSubcommand("graph-pages",new GraphPages(r));
+        command.addSubcommand("help", CommandSpec.wrapWithoutInspection((Callable<Integer>) () -> {
+            help(command, r);
+            return 0;
+        }).name("help"));
+        command.addSubcommand("scan", new Scan(r));
+        command.addSubcommand("execution", new Execution(r));
+        command.addSubcommand("core-mvp", new CoreMvp(r));
+        command.addSubcommand("captured-java", new CapturedJava(r));
+        command.addSubcommand("graph-pages", new GraphPages(r));
         var evolution = new CommandLine(new EvolutionCommand.Group());
-        evolution.addSubcommand("compare",new EvolutionCommand.Compare(directory,out,()->r.storage().root,()->r.request));
-        evolution.addSubcommand("inspect",new EvolutionCommand.Inspect(directory,out,()->r.storage().root,()->r.cursor));
-        evolution.addSubcommand("export",new EvolutionCommand.Export(directory,out,()->r.storage().root,()->r.cursor));
-        command.addSubcommand("evolution",evolution);
-        command.addSubcommand("build",new NativeBuild(r));
-        command.addSubcommand("build-register",new NativeBuildRegister(r));
-        command.addSubcommand("build-profile",new NativeBuildDescribe(r));
-        command.addSubcommand("build-recover",new NativeBuildRecover(r));
-        command.addSubcommand("verify-repair",new VerifyRepair(r));
-        command.addSubcommand("repair",new RepairCommand(r));
-        command.addSubcommand("github",new GitHubCommand.GitHubGroup(directory,out,err,()->r.json,githubFactory));
-        command.addSubcommand("pr",new GitHubCommand.PrGroup(directory,out,err,()->r.storage().root,()->r.json,githubFactory));
-        command.addSubcommand("issue",new GitHubCommand.IssueGroup(directory,out,err,()->r.json,githubFactory));
-        command.addSubcommand("login",new GitHubCommand.LoginCmd(out,err,()->r.storage().root,()->r.json,githubFactory));
-        command.addSubcommand("logout",new GitHubCommand.LogoutCmd(out,err,()->r.storage().root,()->r.json,githubFactory));
-        command.addSubcommand("whoami",new GitHubCommand.WhoamiCmd(out,err,()->r.json,githubFactory));
-        command.addSubcommand("users",new GitHubCommand.UsersGroup(out,err,()->r.storage().root,()->r.json));
-        command.addSubcommand("semantic",new SemanticInspect(r));
-        command.addSubcommand("bridges",new BridgeInspect(r));
-        command.addSubcommand("acquire",new Acquire(r));
-        command.addSubcommand("inventory",new Inventory(r));
-        command.addSubcommand("readiness",new Readiness(r));
-        String[][] commands={{"show","summary","Snapshot overview / Tổng quan"},{"find","entities","Search symbols / Tìm symbol"},{"deps","dependencies","Dependencies / Phụ thuộc"},
-                {"impact","impact","Potential structural impact / Ảnh hưởng cấu trúc tiềm năng"},{"paths","paths","Feasible paths / Đường đi khả thi"},{"cycles","cycles","Feasible cycles / Chu trình khả thi"},
-                {"reach","reachability","Bounded reachability / Khả năng đi tới có giới hạn"},{"evidence","evidence","Exact evidence / Bằng chứng chính xác"},{"explain","explain","Entity evidence / Bằng chứng thực thể"},
-                {"gaps","gaps","Explicit limitations / Hạn chế tường minh"},{"spring","spring","Spring inventory / Danh mục Spring"},{"config","configurations","Configurations & witnesses / Cấu hình & nhân chứng"},
-                {"provenance","provenance","Analysis provenance / Nguồn gốc phân tích"},{"metrics","metric-catalog","Metric catalog or one metric / Danh mục hoặc một metric"},{"query","","All canonical operations / Mọi thao tác canonical"},
-                {"check","rules","Check rules / Kiểm tra quy tắc"},{"findings","findings","Observed findings / Phát hiện quan sát được"},
-                {"rules","rules","Closed rule denominator / Toàn bộ mẫu số luật"},{"bundle","bundle","Finding evidence bundle / Gói bằng chứng"},{"witness","bundle","Witness replay inputs / Đầu vào tái hiện nhân chứng"},{"replay","replay","Re-evaluate bundle formula / Đánh giá lại công thức"},
-                {"visual","visual-graph","Visual workbench graph projection / Phép chiếu đồ thị trực quan"}};
-        for(var row:commands){var child=new CommandLine(new Query(r,row[0],row[1]));child.getCommandSpec().name(row[0]).usageMessage().description(row[2]);command.addSubcommand(row[0],child);}
-        command.addSubcommand("score",new ScoreCommand(r,false));
-        command.addSubcommand("arch-score",new ScoreCommand(r,true));
-        command.addSubcommand("open",new Open(r));command.addSubcommand("use",new Use(r));command.addSubcommand("export",new Export(r));
-        command.addSubcommand("insights",new Insights(r));
-        command.addSubcommand("next",new Next(r));
-        command.addSubcommand("completion",new Completion(command,r));
+        evolution.addSubcommand("compare",
+                new EvolutionCommand.Compare(directory, out, () -> r.storage().root, () -> r.request));
+        evolution.addSubcommand("inspect",
+                new EvolutionCommand.Inspect(directory, out, () -> r.storage().root, () -> r.cursor));
+        evolution.addSubcommand("export",
+                new EvolutionCommand.Export(directory, out, () -> r.storage().root, () -> r.cursor));
+        command.addSubcommand("evolution", evolution);
+        command.addSubcommand("build", new NativeBuild(r));
+        command.addSubcommand("build-register", new NativeBuildRegister(r));
+        command.addSubcommand("build-profile", new NativeBuildDescribe(r));
+        command.addSubcommand("build-recover", new NativeBuildRecover(r));
+        command.addSubcommand("verify-repair", new VerifyRepair(r));
+        command.addSubcommand("repair", new RepairCommand(r));
+        command.addSubcommand("github",
+                new GitHubCommand.GitHubGroup(directory, out, err, () -> r.json, githubFactory));
+        command.addSubcommand("pr",
+                new GitHubCommand.PrGroup(directory, out, err, () -> r.storage().root, () -> r.json, githubFactory));
+        command.addSubcommand("issue", new GitHubCommand.IssueGroup(directory, out, err, () -> r.json, githubFactory));
+        command.addSubcommand("login",
+                new GitHubCommand.LoginCmd(out, err, () -> r.storage().root, () -> r.json, githubFactory));
+        command.addSubcommand("logout",
+                new GitHubCommand.LogoutCmd(out, err, () -> r.storage().root, () -> r.json, githubFactory));
+        command.addSubcommand("whoami", new GitHubCommand.WhoamiCmd(out, err, () -> r.json, githubFactory));
+        command.addSubcommand("users", new GitHubCommand.UsersGroup(out, err, () -> r.storage().root, () -> r.json));
+        command.addSubcommand("semantic", new SemanticInspect(r));
+        command.addSubcommand("bridges", new BridgeInspect(r));
+        command.addSubcommand("acquire", new Acquire(r));
+        command.addSubcommand("inventory", new Inventory(r));
+        command.addSubcommand("readiness", new Readiness(r));
+        command.addSubcommand("spring-spike", new SpringSpike(r));
+        String[][] commands = { { "show", "summary", "Snapshot overview / Tổng quan" },
+                { "find", "entities", "Search symbols / Tìm symbol" },
+                { "deps", "dependencies", "Dependencies / Phụ thuộc" },
+                { "impact", "impact", "Potential structural impact / Ảnh hưởng cấu trúc tiềm năng" },
+                { "paths", "paths", "Feasible paths / Đường đi khả thi" },
+                { "cycles", "cycles", "Feasible cycles / Chu trình khả thi" },
+                { "reach", "reachability", "Bounded reachability / Khả năng đi tới có giới hạn" },
+                { "evidence", "evidence", "Exact evidence / Bằng chứng chính xác" },
+                { "explain", "explain", "Entity evidence / Bằng chứng thực thể" },
+                { "gaps", "gaps", "Explicit limitations / Hạn chế tường minh" },
+                { "spring", "spring", "Spring inventory / Danh mục Spring" },
+                { "config", "configurations", "Configurations & witnesses / Cấu hình & nhân chứng" },
+                { "provenance", "provenance", "Analysis provenance / Nguồn gốc phân tích" },
+                { "metrics", "metric-catalog", "Metric catalog or one metric / Danh mục hoặc một metric" },
+                { "query", "", "All canonical operations / Mọi thao tác canonical" },
+                { "check", "rules", "Check rules / Kiểm tra quy tắc" },
+                { "findings", "findings", "Observed findings / Phát hiện quan sát được" },
+                { "rules", "rules", "Closed rule denominator / Toàn bộ mẫu số luật" },
+                { "bundle", "bundle", "Finding evidence bundle / Gói bằng chứng" },
+                { "witness", "bundle", "Witness replay inputs / Đầu vào tái hiện nhân chứng" },
+                { "replay", "replay", "Re-evaluate bundle formula / Đánh giá lại công thức" },
+                { "visual", "visual-graph", "Visual workbench graph projection / Phép chiếu đồ thị trực quan" } };
+        for (var row : commands) {
+            var child = new CommandLine(new Query(r, row[0], row[1]));
+            child.getCommandSpec().name(row[0]).usageMessage().description(row[2]);
+            command.addSubcommand(row[0], child);
+        }
+        command.addSubcommand("score", new ScoreCommand(r, false));
+        command.addSubcommand("arch-score", new ScoreCommand(r, true));
+        command.addSubcommand("open", new Open(r));
+        command.addSubcommand("use", new Use(r));
+        command.addSubcommand("export", new Export(r));
+        command.addSubcommand("insights", new Insights(r));
+        command.addSubcommand("next", new Next(r));
+        command.addSubcommand("completion", new Completion(command, r));
     }
 
-    private static Map<String,Object> loopbackPost(int port,String path,Map<String,Object> body,int maxBytes,Root root) throws Exception {
-        var uri=java.net.URI.create("http://127.0.0.1:"+port+path);
-        var timeout=java.time.Duration.ofSeconds(300);
-        var request=java.net.http.HttpRequest.newBuilder(uri).timeout(timeout).header("Content-Type","application/json")
+    private static Map<String, Object> loopbackPost(int port, String path, Map<String, Object> body, int maxBytes,
+            Root root) throws Exception {
+        var uri = java.net.URI.create("http://127.0.0.1:" + port + path);
+        var timeout = java.time.Duration.ofSeconds(300);
+        var request = java.net.http.HttpRequest.newBuilder(uri).timeout(timeout)
+                .header("Content-Type", "application/json")
                 .POST(java.net.http.HttpRequest.BodyPublishers.ofString(CanonicalJson.write(body))).build();
-        try (var http=java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5))
+        try (var http = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5))
                 .proxy(java.net.ProxySelector.of(null)).build()) {
-            var response=http.send(request,java.net.http.HttpResponse.BodyHandlers.ofInputStream());
-            try (var stream=response.body()) {
-                byte[] raw=stream.readNBytes(maxBytes+1);
-                if (raw.length>maxBytes) throw new IOException("REPAIR_RESULT_LIMIT");
-                if (response.statusCode()!=200) return Map.of("_httpStatus",response.statusCode(),"_raw",Workspace.utf8(raw));
-                return GraphJson.object(GraphJson.read(Workspace.utf8(raw),new GraphJson.Limits(maxBytes,64,500_000)));
+            var response = http.send(request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            try (var stream = response.body()) {
+                byte[] raw = stream.readNBytes(maxBytes + 1);
+                if (raw.length > maxBytes)
+                    throw new IOException("REPAIR_RESULT_LIMIT");
+                if (response.statusCode() != 200)
+                    return Map.of("_httpStatus", response.statusCode(), "_raw", Workspace.utf8(raw));
+                return GraphJson
+                        .object(GraphJson.read(Workspace.utf8(raw), new GraphJson.Limits(maxBytes, 64, 500_000)));
             }
         }
     }
 
-    @Command(name="repair",mixinStandardHelpOptions=true,description="Discover repair options, propose syntax-checked edits, and run candidate reanalysis")
+    @Command(name = "repair", mixinStandardHelpOptions = true, description = "Discover repair options, propose syntax-checked edits, and run candidate reanalysis")
     private final class RepairCommand implements Callable<Integer> {
         private final Root root;
-        RepairCommand(Root root) { this.root=root; }
-        @Override public Integer call() { help(new CommandLine(this),root); return 0; }
 
-        @Command(name="options",mixinStandardHelpOptions=true,description="List available repair recipes and optional AI offer")
-        public Integer options(
-                @Option(names="--graph-id",required=true) String graph,
-                @Option(names="--report",required=true) String report,
-                @Option(names="--finding",required=true) String finding,
-                @Option(names="--bundle",required=true) String bundle,
-                @Option(names="--diagnosis-input") String diagnosisInput,
-                @Option(names="--port",defaultValue="8080") int port) throws Exception {
-            if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
-            String context=root.context;
-            if (context==null || context.isBlank()) throw new InputFailure("CONTEXT_REQUIRED");
-            String resolvedDiag=resolveDiagnosisInput(port,graph,report,finding,bundle,context,diagnosisInput);
-            if (resolvedDiag==null) return error(root,3,"DIAGNOSIS_WITHHELD","Diagnosis did not yield validated citations.","Chẩn đoán không thu được trích dẫn hợp lệ.");
-            var args=Map.of("identity",new ContentDigest(finding).value(),"bundle",new ContentDigest(bundle).value(),
-                    "context",context,"diagnosisInput",resolvedDiag);
-            var res=loopbackPost(port,"/api/v1/graphs/"+new ContentDigest(graph).value()+"/reports/"+new ContentDigest(report).value()+"/repair-options",
-                    Map.of("arguments",args),1_048_576,root);
-            if (res.containsKey("_httpStatus")) {
-                int code=((Number)res.get("_httpStatus")).intValue();
-                return error(root,code/100==4?2:1,"REPAIR_OPTIONS_HTTP","Workbench rejected repair-options (HTTP "+code+").","Workbench từ chối repair-options (HTTP "+code+").");
-            }
-            return emit(root,"repair-options",res,0);
+        RepairCommand(Root root) {
+            this.root = root;
         }
 
-        @Command(name="propose",mixinStandardHelpOptions=true,description="Generate a syntax-checked RECIPE or AI repair proposal")
+        @Override
+        public Integer call() {
+            help(new CommandLine(this), root);
+            return 0;
+        }
+
+        @Command(name = "options", mixinStandardHelpOptions = true, description = "List available repair recipes and optional AI offer")
+        public Integer options(
+                @Option(names = "--graph-id", required = true) String graph,
+                @Option(names = "--report", required = true) String report,
+                @Option(names = "--finding", required = true) String finding,
+                @Option(names = "--bundle", required = true) String bundle,
+                @Option(names = "--diagnosis-input") String diagnosisInput,
+                @Option(names = "--port", defaultValue = "8080") int port) throws Exception {
+            if (port < 1 || port > 65535)
+                throw new IllegalArgumentException("INVALID_PORT");
+            String context = root.context;
+            if (context == null || context.isBlank())
+                throw new InputFailure("CONTEXT_REQUIRED");
+            String resolvedDiag = resolveDiagnosisInput(port, graph, report, finding, bundle, context, diagnosisInput);
+            if (resolvedDiag == null)
+                return error(root, 3, "DIAGNOSIS_WITHHELD", "Diagnosis did not yield validated citations.",
+                        "Chẩn đoán không thu được trích dẫn hợp lệ.");
+            var args = Map.of("identity", new ContentDigest(finding).value(), "bundle",
+                    new ContentDigest(bundle).value(),
+                    "context", context, "diagnosisInput", resolvedDiag);
+            var res = loopbackPost(port,
+                    "/api/v1/graphs/" + new ContentDigest(graph).value() + "/reports/"
+                            + new ContentDigest(report).value() + "/repair-options",
+                    Map.of("arguments", args), 1_048_576, root);
+            if (res.containsKey("_httpStatus")) {
+                int code = ((Number) res.get("_httpStatus")).intValue();
+                return error(root, code / 100 == 4 ? 2 : 1, "REPAIR_OPTIONS_HTTP",
+                        "Workbench rejected repair-options (HTTP " + code + ").",
+                        "Workbench từ chối repair-options (HTTP " + code + ").");
+            }
+            return emit(root, "repair-options", res, 0);
+        }
+
+        @Command(name = "propose", mixinStandardHelpOptions = true, description = "Generate a syntax-checked RECIPE or AI repair proposal")
         public Integer propose(
-                @Option(names="--graph-id",required=true) String graph,
-                @Option(names="--report",required=true) String report,
-                @Option(names="--finding",required=true) String finding,
-                @Option(names="--bundle",required=true) String bundle,
-                @Option(names="--diagnosis-input") String diagnosisInput,
-                @Option(names="--strategy",required=true) String strategy,
-                @Option(names="--recipe") String recipe,
-                @Option(names="--model-input") String modelInput,
-                @Option(names="--max-repair-attempts",defaultValue="1",description="Maximum syntax-checked AI repair attempts (1..3)") int maxRepairAttempts,
-                @Option(names="--out") Path outFile,
-                @Option(names="--patch-out") Path patchFile,
-                @Option(names="--port",defaultValue="8080") int port) throws Exception {
-            if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
-            if (maxRepairAttempts<1 || maxRepairAttempts>3) throw new IllegalArgumentException("INVALID_MAX_REPAIR_ATTEMPTS");
-            String context=root.context;
-            if (context==null || context.isBlank()) throw new InputFailure("CONTEXT_REQUIRED");
-            String resolvedDiag=resolveDiagnosisInput(port,graph,report,finding,bundle,context,diagnosisInput);
-            if (resolvedDiag==null) return error(root,3,"DIAGNOSIS_WITHHELD","Diagnosis did not yield validated citations.","Chẩn đoán không thu được trích dẫn hợp lệ.");
-            var args=new TreeMap<String,Object>();
-            args.put("identity",new ContentDigest(finding).value());
-            args.put("bundle",new ContentDigest(bundle).value());
-            args.put("context",context);
-            args.put("diagnosisInput",resolvedDiag);
-            args.put("strategy",strategy);
-            if (maxRepairAttempts>1) args.put("maxRepairAttempts",maxRepairAttempts);
+                @Option(names = "--graph-id", required = true) String graph,
+                @Option(names = "--report", required = true) String report,
+                @Option(names = "--finding", required = true) String finding,
+                @Option(names = "--bundle", required = true) String bundle,
+                @Option(names = "--diagnosis-input") String diagnosisInput,
+                @Option(names = "--strategy", required = true) String strategy,
+                @Option(names = "--recipe") String recipe,
+                @Option(names = "--model-input") String modelInput,
+                @Option(names = "--max-repair-attempts", defaultValue = "1", description = "Maximum syntax-checked AI repair attempts (1..3)") int maxRepairAttempts,
+                @Option(names = "--out") Path outFile,
+                @Option(names = "--patch-out") Path patchFile,
+                @Option(names = "--port", defaultValue = "8080") int port) throws Exception {
+            if (port < 1 || port > 65535)
+                throw new IllegalArgumentException("INVALID_PORT");
+            if (maxRepairAttempts < 1 || maxRepairAttempts > 3)
+                throw new IllegalArgumentException("INVALID_MAX_REPAIR_ATTEMPTS");
+            String context = root.context;
+            if (context == null || context.isBlank())
+                throw new InputFailure("CONTEXT_REQUIRED");
+            String resolvedDiag = resolveDiagnosisInput(port, graph, report, finding, bundle, context, diagnosisInput);
+            if (resolvedDiag == null)
+                return error(root, 3, "DIAGNOSIS_WITHHELD", "Diagnosis did not yield validated citations.",
+                        "Chẩn đoán không thu được trích dẫn hợp lệ.");
+            var args = new TreeMap<String, Object>();
+            args.put("identity", new ContentDigest(finding).value());
+            args.put("bundle", new ContentDigest(bundle).value());
+            args.put("context", context);
+            args.put("diagnosisInput", resolvedDiag);
+            args.put("strategy", strategy);
+            if (maxRepairAttempts > 1)
+                args.put("maxRepairAttempts", maxRepairAttempts);
             if ("RECIPE".equals(strategy)) {
-                if (recipe==null || recipe.isBlank()) throw new IllegalArgumentException("RECIPE_REQUIRED");
-                args.put("recipe",recipe);
+                if (recipe == null || recipe.isBlank())
+                    throw new IllegalArgumentException("RECIPE_REQUIRED");
+                args.put("recipe", recipe);
             } else if ("AI".equals(strategy)) {
-                if (modelInput!=null) args.put("modelInput",new ContentDigest(modelInput).value());
+                if (modelInput != null)
+                    args.put("modelInput", new ContentDigest(modelInput).value());
                 else {
-                    var opts=loopbackPost(port,"/api/v1/graphs/"+new ContentDigest(graph).value()+"/reports/"+new ContentDigest(report).value()+"/repair-options",
-                            Map.of("arguments",Map.of("identity",args.get("identity"),"bundle",args.get("bundle"),"context",context,"diagnosisInput",resolvedDiag)),
-                            1_048_576,root);
+                    var opts = loopbackPost(port,
+                            "/api/v1/graphs/" + new ContentDigest(graph).value() + "/reports/"
+                                    + new ContentDigest(report).value() + "/repair-options",
+                            Map.of("arguments",
+                                    Map.of("identity", args.get("identity"), "bundle", args.get("bundle"), "context",
+                                            context, "diagnosisInput", resolvedDiag)),
+                            1_048_576, root);
                     if (opts.containsKey("_httpStatus")) {
-                        int code=((Number)opts.get("_httpStatus")).intValue();
-                        return error(root,code/100==4?2:1,"REPAIR_OPTIONS_HTTP","Workbench rejected repair-options (HTTP "+code+").","Workbench từ chối repair-options (HTTP "+code+").");
+                        int code = ((Number) opts.get("_httpStatus")).intValue();
+                        return error(root, code / 100 == 4 ? 2 : 1, "REPAIR_OPTIONS_HTTP",
+                                "Workbench rejected repair-options (HTTP " + code + ").",
+                                "Workbench từ chối repair-options (HTTP " + code + ").");
                     }
-                    var optData=GraphJson.object(opts.get("data"));
-                    if (!(optData.get("ai") instanceof Map<?,?> aiMap)) {
-                        return error(root,3,"REPAIR_AI_UNAVAILABLE","AI repair offer is unavailable for this finding or model.","Đề xuất AI không khả dụng cho phát hiện hoặc mô hình này.");
+                    var optData = GraphJson.object(opts.get("data"));
+                    if (!(optData.get("ai") instanceof Map<?, ?> aiMap)) {
+                        return error(root, 3, "REPAIR_AI_UNAVAILABLE",
+                                "AI repair offer is unavailable for this finding or model.",
+                                "Đề xuất AI không khả dụng cho phát hiện hoặc mô hình này.");
                     }
-                    args.put("modelInput",new ContentDigest(GraphJson.string(GraphJson.object(aiMap).get("input"))).value());
+                    args.put("modelInput",
+                            new ContentDigest(GraphJson.string(GraphJson.object(aiMap).get("input"))).value());
                 }
             } else {
                 throw new IllegalArgumentException("INVALID_STRATEGY");
             }
-            var res=loopbackPost(port,"/api/v1/graphs/"+new ContentDigest(graph).value()+"/reports/"+new ContentDigest(report).value()+"/repair-proposal",
-                    Map.of("arguments",args),1_048_576,root);
+            var res = loopbackPost(port,
+                    "/api/v1/graphs/" + new ContentDigest(graph).value() + "/reports/"
+                            + new ContentDigest(report).value() + "/repair-proposal",
+                    Map.of("arguments", args), 1_048_576, root);
             if (res.containsKey("_httpStatus")) {
-                int code=((Number)res.get("_httpStatus")).intValue();
-                return error(root,code/100==4?2:1,"REPAIR_PROPOSAL_HTTP","Workbench rejected repair-proposal (HTTP "+code+").","Workbench từ chối repair-proposal (HTTP "+code+").");
+                int code = ((Number) res.get("_httpStatus")).intValue();
+                return error(root, code / 100 == 4 ? 2 : 1, "REPAIR_PROPOSAL_HTTP",
+                        "Workbench rejected repair-proposal (HTTP " + code + ").",
+                        "Workbench từ chối repair-proposal (HTTP " + code + ").");
             }
-            var data=GraphJson.object(res.get("data"));
-            if (!CanonicalJson.sha256(data).value().equals(res.get("resultIdentity"))) throw new IOException("REPAIR_RESULT_MISMATCH");
-            boolean proposed="PROPOSED".equals(data.get("status"));
-            if (outFile!=null) Files.writeString(resolve(outFile),CanonicalJson.write(data),StandardCharsets.UTF_8);
-            if (patchFile!=null && proposed && data.get("proposal") instanceof Map<?,?> pMap) {
-                var cand=GraphJson.object(GraphJson.object(pMap).get("candidate"));
-                Files.writeString(resolve(patchFile),GraphJson.string(cand.get("patch")),StandardCharsets.UTF_8);
+            var data = GraphJson.object(res.get("data"));
+            if (!CanonicalJson.sha256(data).value().equals(res.get("resultIdentity")))
+                throw new IOException("REPAIR_RESULT_MISMATCH");
+            boolean proposed = "PROPOSED".equals(data.get("status"));
+            if (outFile != null)
+                Files.writeString(resolve(outFile), CanonicalJson.write(data), StandardCharsets.UTF_8);
+            if (patchFile != null && proposed && data.get("proposal") instanceof Map<?, ?> pMap) {
+                var cand = GraphJson.object(GraphJson.object(pMap).get("candidate"));
+                Files.writeString(resolve(patchFile), GraphJson.string(cand.get("patch")), StandardCharsets.UTF_8);
             }
-            return emit(root,"repair-propose",res,proposed?0:3);
+            return emit(root, "repair-propose", res, proposed ? 0 : 3);
         }
 
-        @Command(name="reanalyze",mixinStandardHelpOptions=true,description="Run passive multi-module candidate reanalysis for a saved proposal")
+        @Command(name = "reanalyze", mixinStandardHelpOptions = true, description = "Run passive multi-module candidate reanalysis for a saved proposal")
         public Integer reanalyze(
-                @Parameters(index="0",paramLabel="PROPOSAL_JSON") Path proposalFile,
-                @Option(names="--with-control") boolean withControl,
-                @Option(names="--out") Path outFile,
-                @Option(names="--port",defaultValue="8080") int port) throws Exception {
-            if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
-            var parsed=parseProposalFile(resolve(proposalFile));
-            var res=loopbackReanalyze(port,parsed,withControl,root);
+                @Parameters(index = "0", paramLabel = "PROPOSAL_JSON") Path proposalFile,
+                @Option(names = "--with-control") boolean withControl,
+                @Option(names = "--out") Path outFile,
+                @Option(names = "--port", defaultValue = "8080") int port) throws Exception {
+            if (port < 1 || port > 65535)
+                throw new IllegalArgumentException("INVALID_PORT");
+            var parsed = parseProposalFile(resolve(proposalFile));
+            var res = loopbackReanalyze(port, parsed, withControl, root);
             if (res.containsKey("_httpStatus")) {
-                int code=((Number)res.get("_httpStatus")).intValue();
-                return error(root,code/100==4?2:1,"REPAIR_REANALYSIS_HTTP","Workbench rejected repair-reanalysis (HTTP "+code+").","Workbench từ chối repair-reanalysis (HTTP "+code+").");
+                int code = ((Number) res.get("_httpStatus")).intValue();
+                return error(root, code / 100 == 4 ? 2 : 1, "REPAIR_REANALYSIS_HTTP",
+                        "Workbench rejected repair-reanalysis (HTTP " + code + ").",
+                        "Workbench từ chối repair-reanalysis (HTTP " + code + ").");
             }
-            var data=GraphJson.object(res.get("data"));
-            if (!CanonicalJson.sha256(data).value().equals(res.get("resultIdentity"))) throw new IOException("REPAIR_RESULT_MISMATCH");
-            if (outFile!=null) Files.writeString(resolve(outFile),CanonicalJson.write(data),StandardCharsets.UTF_8);
-            boolean completed="COMPLETED".equals(data.get("status"));
-            return emit(root,"repair-reanalyze",res,completed?0:3);
+            var data = GraphJson.object(res.get("data"));
+            if (!CanonicalJson.sha256(data).value().equals(res.get("resultIdentity")))
+                throw new IOException("REPAIR_RESULT_MISMATCH");
+            if (outFile != null)
+                Files.writeString(resolve(outFile), CanonicalJson.write(data), StandardCharsets.UTF_8);
+            boolean completed = "COMPLETED".equals(data.get("status"));
+            return emit(root, "repair-reanalyze", res, completed ? 0 : 3);
         }
 
-        private String resolveDiagnosisInput(int port,String graph,String report,String finding,String bundle,String context,String explicit) throws Exception {
-            if (explicit!=null && !explicit.isBlank()) return new ContentDigest(explicit).value();
-            var diagRes=loopbackPost(port,"/api/v1/graphs/"+new ContentDigest(graph).value()+"/reports/"+new ContentDigest(report).value()+"/diagnosis",
-                    Map.of("arguments",Map.of("identity",new ContentDigest(finding).value(),"bundle",new ContentDigest(bundle).value(),"context",context)),
-                    1_048_576,root);
-            if (diagRes.containsKey("_httpStatus")) return null;
-            var data=GraphJson.object(diagRes.get("data"));
+        private String resolveDiagnosisInput(int port, String graph, String report, String finding, String bundle,
+                String context, String explicit) throws Exception {
+            if (explicit != null && !explicit.isBlank())
+                return new ContentDigest(explicit).value();
+            var diagRes = loopbackPost(port,
+                    "/api/v1/graphs/" + new ContentDigest(graph).value() + "/reports/"
+                            + new ContentDigest(report).value() + "/diagnosis",
+                    Map.of("arguments",
+                            Map.of("identity", new ContentDigest(finding).value(), "bundle",
+                                    new ContentDigest(bundle).value(), "context", context)),
+                    1_048_576, root);
+            if (diagRes.containsKey("_httpStatus"))
+                return null;
+            var data = GraphJson.object(diagRes.get("data"));
             return data.get("input") instanceof String s ? new ContentDigest(s).value() : null;
         }
     }
 
-    private static Map<String,Object> loopbackReanalyze(int port,ParsedProposal parsed,boolean withControl,Root root) throws Exception {
-        String path="/api/v1/graphs/"+parsed.graph()+"/reports/"+parsed.report()+"/repair-reanalysis";
-        var args=new TreeMap<String,Object>();
-        args.put("identity",parsed.finding());
-        args.put("bundle",parsed.bundle());
-        args.put("context",parsed.context());
-        args.put("diagnosisInput",parsed.diagnosisInput());
-        args.put("proposal",parsed.identity());
-        args.put("includeControl",withControl);
-        return loopbackPost(port,path,Map.of("arguments",args),1_048_576,root);
+    private static Map<String, Object> loopbackReanalyze(int port, ParsedProposal parsed, boolean withControl,
+            Root root) throws Exception {
+        String path = "/api/v1/graphs/" + parsed.graph() + "/reports/" + parsed.report() + "/repair-reanalysis";
+        var args = new TreeMap<String, Object>();
+        args.put("identity", parsed.finding());
+        args.put("bundle", parsed.bundle());
+        args.put("context", parsed.context());
+        args.put("diagnosisInput", parsed.diagnosisInput());
+        args.put("proposal", parsed.identity());
+        args.put("includeControl", withControl);
+        return loopbackPost(port, path, Map.of("arguments", args), 1_048_576, root);
     }
 
-    private record ParsedProposal(String version,boolean demo,String graph,String report,String finding,String bundle,
-                                  String context,String diagnosisInput,String identity,String patch) {}
+    private record ParsedProposal(String version, boolean demo, String graph, String report, String finding,
+            String bundle,
+            String context, String diagnosisInput, String identity, String patch) {
+    }
 
     private ParsedProposal parseProposalFile(Path path) throws IOException {
-        var obj=GraphJson.object(Workspace.json(path,1_048_576));
-        Map<String,Object> envelope;
+        var obj = GraphJson.object(Workspace.json(path, 1_048_576));
+        Map<String, Object> envelope;
         String version;
-        if (obj.containsKey("proposal") && obj.get("proposal") instanceof Map<?,?>) {
-            version=GraphJson.string(obj.get("version"));
-            if (!"PROPOSED".equals(obj.get("status"))) throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
-            envelope=GraphJson.object(obj.get("proposal"));
+        if (obj.containsKey("proposal") && obj.get("proposal") instanceof Map<?, ?>) {
+            version = GraphJson.string(obj.get("version"));
+            if (!"PROPOSED".equals(obj.get("status")))
+                throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
+            envelope = GraphJson.object(obj.get("proposal"));
         } else if (obj.containsKey("identity") && obj.containsKey("candidate")) {
-            envelope=obj;
-            version=CapturedRepair.VERSION;
+            envelope = obj;
+            version = CapturedRepair.VERSION;
         } else {
             throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
         }
-        boolean demo=RepairProposal.VERSION.equals(version);
-        if (!demo && !CapturedRepair.VERSION.equals(version)) throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
-        var candidate=GraphJson.object(envelope.get("candidate"));
-        var pin=GraphJson.object(candidate.get("baseline"));
-        String graph=new ContentDigest(GraphJson.string(pin.get("graph"))).value();
-        String report=new ContentDigest(GraphJson.string(pin.get("report"))).value();
-        String finding=new ContentDigest(GraphJson.string(pin.get("finding"))).value();
-        String bundle=new ContentDigest(GraphJson.string(pin.get("bundle"))).value();
-        String context=GraphJson.string(pin.get("context"));
-        String diagInput=new ContentDigest(GraphJson.string(candidate.get("diagnosisInput"))).value();
-        String identity=new ContentDigest(GraphJson.string(envelope.get("identity"))).value();
-        String patchDigest=new ContentDigest(GraphJson.string(candidate.get("patchDigest"))).value();
-        if (!CanonicalJson.sha256(List.of(version,candidate)).value().equals(identity)
+        boolean demo = RepairProposal.VERSION.equals(version);
+        if (!demo && !CapturedRepair.VERSION.equals(version))
+            throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
+        var candidate = GraphJson.object(envelope.get("candidate"));
+        var pin = GraphJson.object(candidate.get("baseline"));
+        String graph = new ContentDigest(GraphJson.string(pin.get("graph"))).value();
+        String report = new ContentDigest(GraphJson.string(pin.get("report"))).value();
+        String finding = new ContentDigest(GraphJson.string(pin.get("finding"))).value();
+        String bundle = new ContentDigest(GraphJson.string(pin.get("bundle"))).value();
+        String context = GraphJson.string(pin.get("context"));
+        String diagInput = new ContentDigest(GraphJson.string(candidate.get("diagnosisInput"))).value();
+        String identity = new ContentDigest(GraphJson.string(envelope.get("identity"))).value();
+        String patchDigest = new ContentDigest(GraphJson.string(candidate.get("patchDigest"))).value();
+        if (!CanonicalJson.sha256(List.of(version, candidate)).value().equals(identity)
                 || !ContentDigest.sha256Utf8(GraphJson.string(candidate.get("patch"))).value().equals(patchDigest))
             throw new IllegalArgumentException("INVALID_REPAIR_PROPOSAL");
-        return new ParsedProposal(version,demo,graph,report,finding,bundle,context,diagInput,identity,patchDigest);
+        return new ParsedProposal(version, demo, graph, report, finding, bundle, context, diagInput, identity,
+                patchDigest);
     }
 
-    @Command(name="verify-repair",mixinStandardHelpOptions=true,description="Read a pinned repair verdict from the local Workbench verifier")
+    @Command(name = "verify-repair", mixinStandardHelpOptions = true, description = "Read a pinned repair verdict from the local Workbench verifier")
     private final class VerifyRepair implements Callable<Integer> {
         private final Root root;
-        VerifyRepair(Root root) { this.root=root; }
-        @Parameters(index="0",paramLabel="PROPOSAL_JSON",description="Workbench repair proposal export") Path proposal;
-        @Option(names="--port",defaultValue="8080",description="Loopback Workbench port") int port;
-        @Option(names="--candidate-report") String candidateReport;
-        @Option(names="--control-report") String controlReport;
-        @Option(names="--reanalyze",description="Run passive candidate reanalysis before verifying") boolean reanalyze;
-        @Option(names="--with-control",description="Include mutation control reanalysis when --reanalyze is set") boolean withControl;
-        @Option(names="--run-isolated",description="Execute configured isolated QEMU-in-Docker runner on miss") boolean runIsolated;
 
-        @Override public Integer call() throws Exception {
-            if (port<1 || port>65535) throw new IllegalArgumentException("INVALID_PORT");
-            var parsed=parseProposalFile(resolve(proposal));
-            String resolvedCandidate=candidateReport==null?null:new ContentDigest(candidateReport).value();
-            String resolvedControl=controlReport==null?null:new ContentDigest(controlReport).value();
-            if (reanalyze && resolvedCandidate==null) {
-                var reRes=loopbackReanalyze(port,parsed,withControl,root);
+        VerifyRepair(Root root) {
+            this.root = root;
+        }
+
+        @Parameters(index = "0", paramLabel = "PROPOSAL_JSON", description = "Workbench repair proposal export")
+        Path proposal;
+        @Option(names = "--port", defaultValue = "8080", description = "Loopback Workbench port")
+        int port;
+        @Option(names = "--candidate-report")
+        String candidateReport;
+        @Option(names = "--control-report")
+        String controlReport;
+        @Option(names = "--reanalyze", description = "Run passive candidate reanalysis before verifying")
+        boolean reanalyze;
+        @Option(names = "--with-control", description = "Include mutation control reanalysis when --reanalyze is set")
+        boolean withControl;
+        @Option(names = "--run-isolated", description = "Execute configured isolated QEMU-in-Docker runner on miss")
+        boolean runIsolated;
+
+        @Override
+        public Integer call() throws Exception {
+            if (port < 1 || port > 65535)
+                throw new IllegalArgumentException("INVALID_PORT");
+            var parsed = parseProposalFile(resolve(proposal));
+            String resolvedCandidate = candidateReport == null ? null : new ContentDigest(candidateReport).value();
+            String resolvedControl = controlReport == null ? null : new ContentDigest(controlReport).value();
+            if (reanalyze && resolvedCandidate == null) {
+                var reRes = loopbackReanalyze(port, parsed, withControl, root);
                 if (reRes.containsKey("_httpStatus")) {
-                    int code=((Number)reRes.get("_httpStatus")).intValue();
-                    return error(root,code/100==4?2:1,"REPAIR_REANALYSIS_HTTP","Workbench rejected repair-reanalysis (HTTP "+code+").","Workbench từ chối repair-reanalysis (HTTP "+code+").");
+                    int code = ((Number) reRes.get("_httpStatus")).intValue();
+                    return error(root, code / 100 == 4 ? 2 : 1, "REPAIR_REANALYSIS_HTTP",
+                            "Workbench rejected repair-reanalysis (HTTP " + code + ").",
+                            "Workbench từ chối repair-reanalysis (HTTP " + code + ").");
                 }
-                var reData=GraphJson.object(reRes.get("data"));
+                var reData = GraphJson.object(reRes.get("data"));
                 if ("COMPLETED".equals(reData.get("status"))) {
-                    if (reData.get("candidateReport") instanceof String cr) resolvedCandidate=new ContentDigest(cr).value();
-                    if (resolvedControl==null && reData.get("controlReport") instanceof String ctr) resolvedControl=new ContentDigest(ctr).value();
+                    if (reData.get("candidateReport") instanceof String cr)
+                        resolvedCandidate = new ContentDigest(cr).value();
+                    if (resolvedControl == null && reData.get("controlReport") instanceof String ctr)
+                        resolvedControl = new ContentDigest(ctr).value();
                 }
             }
-            var arguments=new TreeMap<String,Object>(Map.of("identity",parsed.finding(),"bundle",parsed.bundle(),
-                    "context",parsed.context(),"diagnosisInput",parsed.diagnosisInput(),"proposal",parsed.identity()));
-            if (resolvedCandidate!=null) arguments.put("candidateReport",resolvedCandidate);
-            if (resolvedControl!=null) arguments.put("controlReport",resolvedControl);
-            if (runIsolated) arguments.put("runIsolated",Boolean.TRUE);
-            var result=loopbackPost(port,"/api/v1/graphs/"+parsed.graph()+"/reports/"+parsed.report()+"/repair-verification",
-                    Map.of("arguments",arguments),1_048_576,root);
+            var arguments = new TreeMap<String, Object>(Map.of("identity", parsed.finding(), "bundle", parsed.bundle(),
+                    "context", parsed.context(), "diagnosisInput", parsed.diagnosisInput(), "proposal",
+                    parsed.identity()));
+            if (resolvedCandidate != null)
+                arguments.put("candidateReport", resolvedCandidate);
+            if (resolvedControl != null)
+                arguments.put("controlReport", resolvedControl);
+            if (runIsolated)
+                arguments.put("runIsolated", Boolean.TRUE);
+            var result = loopbackPost(port,
+                    "/api/v1/graphs/" + parsed.graph() + "/reports/" + parsed.report() + "/repair-verification",
+                    Map.of("arguments", arguments), 1_048_576, root);
             if (result.containsKey("_httpStatus")) {
-                int code=((Number)result.get("_httpStatus")).intValue();
-                return error(root,code/100==4?2:1,"REPAIR_VERIFIER_RESPONSE",
-                        "Workbench rejected the verification request (HTTP "+code+").","Workbench từ chối xác minh (HTTP "+code+").");
+                int code = ((Number) result.get("_httpStatus")).intValue();
+                return error(root, code / 100 == 4 ? 2 : 1, "REPAIR_VERIFIER_RESPONSE",
+                        "Workbench rejected the verification request (HTTP " + code + ").",
+                        "Workbench từ chối xác minh (HTTP " + code + ").");
             }
-            var data=GraphJson.object(result.get("data"));
-            String expectedVersion=parsed.demo()?RepairVerification.VERSION:CapturedRepairVerification.VERSION;
+            var data = GraphJson.object(result.get("data"));
+            String expectedVersion = parsed.demo() ? RepairVerification.VERSION : CapturedRepairVerification.VERSION;
             if (!parsed.identity().equals(data.get("proposal")) || !expectedVersion.equals(data.get("version"))
                     || !parsed.patch().equals(GraphJson.object(data.get("plan")).get("patch"))
                     || !parsed.patch().equals(ContentDigest.sha256Utf8(GraphJson.string(data.get("patch"))).value())
-                    || !CanonicalJson.sha256(data).value().equals(result.get("resultIdentity"))) throw new IOException("REPAIR_RESULT_MISMATCH");
-            int exit=switch (GraphJson.string(data.get("verdict"))) {
+                    || !CanonicalJson.sha256(data).value().equals(result.get("resultIdentity")))
+                throw new IOException("REPAIR_RESULT_MISMATCH");
+            int exit = switch (GraphJson.string(data.get("verdict"))) {
                 case "VERIFIED", "VERIFIED_DEMO" -> 0;
                 case "UNVERIFIED" -> 3;
                 case "REJECTED" -> 4;
                 default -> throw new IOException("REPAIR_RESULT_MISMATCH");
             };
-            return emit(root,"verify-repair",result,exit);
+            return emit(root, "verify-repair", result, exit);
         }
     }
-    @Command(name="bridges",mixinStandardHelpOptions=true,description="Inspect captured cross-context architecture / Đọc liên kết kiến trúc liên context")
-    private final class BridgeInspect implements Callable<Integer>{
-        final Root r;BridgeInspect(Root r){this.r=r;}
-        @Parameters(arity="0..1",defaultValue="summary",paramLabel="summary|page|impact|topology|publish") String operation;
-        @Option(names="--bridge-store",required=true,paramLabel="DIR") Path store;
-        @Option(names="--read-policy",required=true,paramLabel="FILE") Path readPolicy;
-        @Option(names="--bridge-scope",paramLabel="SHA256") String bridgeScope;
-        @Option(names="--section",paramLabel="PARTITIONS|ENDPOINTS|REQUIREMENTS|RELATIONS|GAPS|FACTS|NATIVE_GAPS|ARTIFACTS") String section;
-        @Option(names="--category",paramLabel="B01..B08|A01..A12|F01..F12") String category;
-        @Option(names="--partition",paramLabel="KEY") String partition;
-        @Option(names="--symbol",paramLabel="SHA256") String symbol;
-        @Option(names="--document",paramLabel="CAPTURED_PATH") String document;
-        @Option(names="--target-symbol",paramLabel="SHA256",description="Exact scoped bridge identity for potential impact / Symbol liên context chính xác") String targetSymbol;
-        @Option(names="--bridge-input",paramLabel="FILE",description="Publish an exact prepared CAS input descriptor / Công bố đầu vào CAS đã chuẩn bị") Path bridgeInput;
-        @Option(names="--parent",paramLabel="SHA256",description="Expected publication fence / Fence bản công bố trước") String parent;
-        public Integer call()throws Exception{
-            if(!Set.of("summary","page","impact","topology","publish").contains(operation)||operation.equals("publish")!=(bridgeInput!=null)||Set.of("impact","topology").contains(operation)!=(targetSymbol!=null)||!operation.equals("publish")&&parent!=null||!operation.equals("page")&&(section!=null||category!=null||partition!=null||symbol!=null||document!=null)||operation.equals("page")&&section==null||!operation.equals("publish")&&bridgeScope==null||!operation.equals("page")&&r.cursor!=null)throw new InputFailure("INVALID_BRIDGE_QUERY");
-            Path path=resolve(store);if(!operation.equals("publish")){path=StreamingContentStore.existingDirectory(path);StreamingContentStore.existingDirectory(path.resolve("cas"));StreamingContentStore.existingDirectory(path.resolve("bridges"));}
-            var policy=new BridgeReadPolicy(resolve(readPolicy));var content=new StreamingContentStore(path.resolve("cas"));var tables=new com.evolution.analysis.polyglot.SemanticTables(content,65536);var publications=new BridgePublicationStore(path.resolve("bridges"),content,tables,policy::policy,policy::revoked);Object data;
-            if(operation.equals("publish")){var input=com.evolution.analysis.polyglot.ArchitectureBridges.input(GraphJson.read(Workspace.utf8(Workspace.read(resolve(bridgeInput),65536)),new GraphJson.Limits(65536,32,65536)));if(bridgeScope!=null&&!input.scope().value().equals(bridgeScope))throw new InputFailure("BRIDGE_INPUT_SCOPE_MISMATCH");data=publications.commit(input,Optional.ofNullable(parent).map(ContentDigest::new),()->false);}
-            else{var queries=publications.queries();var scope=new ContentDigest(bridgeScope);data=operation.equals("summary")?queries.summary(scope,()->false):operation.equals("topology")?queries.topology(scope,new ContentDigest(targetSymbol),r.depth,r.limit,1000,()->false):operation.equals("impact")?queries.impact(scope,new ContentDigest(targetSymbol),r.depth,r.limit,1000,()->false):queries.page(scope,new com.evolution.analysis.polyglot.BridgeQueryService.Selection(com.evolution.analysis.polyglot.BridgeQueryService.Section.valueOf(section),Optional.ofNullable(category),Optional.ofNullable(partition),Optional.ofNullable(symbol),Optional.ofNullable(document)),r.limit,Optional.ofNullable(r.cursor).map(v->com.evolution.analysis.polyglot.BridgeQueryService.cursor(GraphJson.read(v,new GraphJson.Limits(65536,16,65536)))),()->false);}
-            return emit(r,"bridges",Map.of("apiVersion",com.evolution.analysis.polyglot.BridgeQueryService.VERSION,"resultIdentity",CanonicalJson.sha256(data),"data",data),3);
+
+    @Command(name = "bridges", mixinStandardHelpOptions = true, description = "Inspect captured cross-context architecture / Đọc liên kết kiến trúc liên context")
+    private final class BridgeInspect implements Callable<Integer> {
+        final Root r;
+
+        BridgeInspect(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(arity = "0..1", defaultValue = "summary", paramLabel = "summary|page|impact|topology|publish")
+        String operation;
+        @Option(names = "--bridge-store", required = true, paramLabel = "DIR")
+        Path store;
+        @Option(names = "--read-policy", required = true, paramLabel = "FILE")
+        Path readPolicy;
+        @Option(names = "--bridge-scope", paramLabel = "SHA256")
+        String bridgeScope;
+        @Option(names = "--section", paramLabel = "PARTITIONS|ENDPOINTS|REQUIREMENTS|RELATIONS|GAPS|FACTS|NATIVE_GAPS|ARTIFACTS")
+        String section;
+        @Option(names = "--category", paramLabel = "B01..B08|A01..A12|F01..F12")
+        String category;
+        @Option(names = "--partition", paramLabel = "KEY")
+        String partition;
+        @Option(names = "--symbol", paramLabel = "SHA256")
+        String symbol;
+        @Option(names = "--document", paramLabel = "CAPTURED_PATH")
+        String document;
+        @Option(names = "--target-symbol", paramLabel = "SHA256", description = "Exact scoped bridge identity for potential impact / Symbol liên context chính xác")
+        String targetSymbol;
+        @Option(names = "--bridge-input", paramLabel = "FILE", description = "Publish an exact prepared CAS input descriptor / Công bố đầu vào CAS đã chuẩn bị")
+        Path bridgeInput;
+        @Option(names = "--parent", paramLabel = "SHA256", description = "Expected publication fence / Fence bản công bố trước")
+        String parent;
+
+        public Integer call() throws Exception {
+            if (!Set.of("summary", "page", "impact", "topology", "publish").contains(operation)
+                    || operation.equals("publish") != (bridgeInput != null)
+                    || Set.of("impact", "topology").contains(operation) != (targetSymbol != null)
+                    || !operation.equals("publish") && parent != null
+                    || !operation.equals("page") && (section != null || category != null || partition != null
+                            || symbol != null || document != null)
+                    || operation.equals("page") && section == null
+                    || !operation.equals("publish") && bridgeScope == null
+                    || !operation.equals("page") && r.cursor != null)
+                throw new InputFailure("INVALID_BRIDGE_QUERY");
+            Path path = resolve(store);
+            if (!operation.equals("publish")) {
+                path = StreamingContentStore.existingDirectory(path);
+                StreamingContentStore.existingDirectory(path.resolve("cas"));
+                StreamingContentStore.existingDirectory(path.resolve("bridges"));
+            }
+            var policy = new BridgeReadPolicy(resolve(readPolicy));
+            var content = new StreamingContentStore(path.resolve("cas"));
+            var tables = new com.evolution.analysis.polyglot.SemanticTables(content, 65536);
+            var publications = new BridgePublicationStore(path.resolve("bridges"), content, tables, policy::policy,
+                    policy::revoked);
+            Object data;
+            if (operation.equals("publish")) {
+                var input = com.evolution.analysis.polyglot.ArchitectureBridges
+                        .input(GraphJson.read(Workspace.utf8(Workspace.read(resolve(bridgeInput), 65536)),
+                                new GraphJson.Limits(65536, 32, 65536)));
+                if (bridgeScope != null && !input.scope().value().equals(bridgeScope))
+                    throw new InputFailure("BRIDGE_INPUT_SCOPE_MISMATCH");
+                data = publications.commit(input, Optional.ofNullable(parent).map(ContentDigest::new), () -> false);
+            } else {
+                var queries = publications.queries();
+                var scope = new ContentDigest(bridgeScope);
+                data = operation.equals("summary") ? queries.summary(scope, () -> false)
+                        : operation.equals("topology")
+                                ? queries.topology(scope, new ContentDigest(targetSymbol), r.depth, r.limit, 1000,
+                                        () -> false)
+                                : operation.equals("impact")
+                                        ? queries.impact(scope, new ContentDigest(targetSymbol), r.depth, r.limit, 1000,
+                                                () -> false)
+                                        : queries.page(scope,
+                                                new com.evolution.analysis.polyglot.BridgeQueryService.Selection(
+                                                        com.evolution.analysis.polyglot.BridgeQueryService.Section
+                                                                .valueOf(section),
+                                                        Optional.ofNullable(category), Optional.ofNullable(partition),
+                                                        Optional.ofNullable(symbol), Optional.ofNullable(document)),
+                                                r.limit,
+                                                Optional.ofNullable(r.cursor)
+                                                        .map(v -> com.evolution.analysis.polyglot.BridgeQueryService
+                                                                .cursor(GraphJson.read(v,
+                                                                        new GraphJson.Limits(65536, 16, 65536)))),
+                                                () -> false);
+            }
+            return emit(r, "bridges", Map.of("apiVersion", com.evolution.analysis.polyglot.BridgeQueryService.VERSION,
+                    "resultIdentity", CanonicalJson.sha256(data), "data", data), 3);
         }
     }
-    @Command(name="semantic",mixinStandardHelpOptions=true,description="Read captured semantic contexts and gaps / Đọc context và khoảng trống ngữ nghĩa")
-    private final class SemanticInspect implements Callable<Integer>{
-        final Root r;SemanticInspect(Root r){this.r=r;}
-        @Parameters(arity="0..1",defaultValue="summary",paramLabel="summary|contexts|gaps|root-gaps|answers") String operation;
-        @Option(names="--semantic-store",required=true,paramLabel="DIR",description="Existing semantic publication directory / Thư mục kết quả đã lưu") Path store;
-        @Option(names="--plan",required=true,paramLabel="SHA256",description="Exact selected-context plan / Kế hoạch context chính xác") String plan;
-        @Option(names="--semantic-policy",paramLabel="SHA256",description="Current policy; required without --semantic-authority / Chính sách hiện tại") String policy;
-        @Option(names="--semantic-authority",paramLabel="DIR",description="Operator public keys, registered methods and signed claims / Khóa công khai và bằng chứng đã ký") Path authority;
-        @Option(names="--context-key",paramLabel="KEY",description="Context key for gaps / Khóa context cần đọc gap") String key;
-        @Option(names="--answer-view",paramLabel="CURRENT|HISTORY|CONFLICTS",description="Semantic answer view / Phép chiếu câu trả lời") String answerView;
-        public Integer call()throws Exception{
-            boolean selected=Set.of("gaps","answers").contains(operation);if(!Set.of("summary","contexts","gaps","root-gaps","answers").contains(operation)||!selected&&key!=null||selected&&key==null||!operation.equals("answers")&&answerView!=null)throw new InputFailure("INVALID_SEMANTIC_QUERY");
-            if(policy==null&&authority==null)throw new InputFailure("SEMANTIC_POLICY_OR_AUTHORITY_REQUIRED");
-            Path path;try{path=StreamingContentStore.existingDirectory(resolve(store));for(var directory:List.of(path.resolve("cas"),path.resolve("publications")))StreamingContentStore.existingDirectory(directory);}catch(IOException unavailable){throw new IOException("SEMANTIC_STORE_UNAVAILABLE",unavailable);}
-            var content=new StreamingContentStore(path.resolve("cas"));var tables=new com.evolution.analysis.polyglot.SemanticTables(content,65536);var trust=policy==null?com.evolution.analysis.filesystem.SemanticAuthorityStore.policy(resolve(authority)):new ContentDigest(policy);Optional<com.evolution.analysis.polyglot.SemanticPublicationValidation> validation=Optional.empty();if(authority!=null){var configured=new com.evolution.analysis.filesystem.SemanticAuthorityStore(resolve(authority),content,tables,trust);validation=Optional.of(configured.validation(()->com.evolution.analysis.filesystem.SqliteSemanticCensusIndex.temporary(path.resolve("semantic-work"),65536)));}var queries=new SemanticPublicationStore(path.resolve("publications"),content,tables,validation).queries(()->trust);var identity=new ContentDigest(plan);var cursor=Optional.ofNullable(r.cursor).map(value->com.evolution.analysis.polyglot.SemanticQueryService.cursor(GraphJson.read(value,new GraphJson.Limits(65536,16,65536))));Object data;
-            if(operation.equals("summary")){if(r.cursor!=null)throw new InputFailure("CURSOR_NOT_APPLICABLE");data=queries.summary(identity,()->false);}else data=operation.equals("contexts")?queries.contexts(identity,r.limit,cursor,()->false):operation.equals("root-gaps")?queries.rootGaps(identity,r.limit,cursor,()->false):operation.equals("answers")?queries.answers(identity,key,answerView==null?"CURRENT":answerView,r.limit,cursor,()->false):queries.gaps(identity,key,r.limit,cursor,()->false);
-            boolean complete=data instanceof com.evolution.analysis.polyglot.SemanticQueryService.Summary summary?summary.complete():((com.evolution.analysis.polyglot.SemanticQueryService.Page<?>)data).summary().complete();return emit(r,"semantic",Map.of("apiVersion",com.evolution.analysis.polyglot.SemanticQueryService.VERSION,"resultIdentity",CanonicalJson.sha256(data),"data",data),complete?0:3);
+
+    @Command(name = "semantic", mixinStandardHelpOptions = true, description = "Read captured semantic contexts and gaps / Đọc context và khoảng trống ngữ nghĩa")
+    private final class SemanticInspect implements Callable<Integer> {
+        final Root r;
+
+        SemanticInspect(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(arity = "0..1", defaultValue = "summary", paramLabel = "summary|contexts|gaps|root-gaps|answers")
+        String operation;
+        @Option(names = "--semantic-store", required = true, paramLabel = "DIR", description = "Existing semantic publication directory / Thư mục kết quả đã lưu")
+        Path store;
+        @Option(names = "--plan", required = true, paramLabel = "SHA256", description = "Exact selected-context plan / Kế hoạch context chính xác")
+        String plan;
+        @Option(names = "--semantic-policy", paramLabel = "SHA256", description = "Current policy; required without --semantic-authority / Chính sách hiện tại")
+        String policy;
+        @Option(names = "--semantic-authority", paramLabel = "DIR", description = "Operator public keys, registered methods and signed claims / Khóa công khai và bằng chứng đã ký")
+        Path authority;
+        @Option(names = "--context-key", paramLabel = "KEY", description = "Context key for gaps / Khóa context cần đọc gap")
+        String key;
+        @Option(names = "--answer-view", paramLabel = "CURRENT|HISTORY|CONFLICTS", description = "Semantic answer view / Phép chiếu câu trả lời")
+        String answerView;
+
+        public Integer call() throws Exception {
+            boolean selected = Set.of("gaps", "answers").contains(operation);
+            if (!Set.of("summary", "contexts", "gaps", "root-gaps", "answers").contains(operation)
+                    || !selected && key != null || selected && key == null
+                    || !operation.equals("answers") && answerView != null)
+                throw new InputFailure("INVALID_SEMANTIC_QUERY");
+            if (policy == null && authority == null)
+                throw new InputFailure("SEMANTIC_POLICY_OR_AUTHORITY_REQUIRED");
+            Path path;
+            try {
+                path = StreamingContentStore.existingDirectory(resolve(store));
+                for (var directory : List.of(path.resolve("cas"), path.resolve("publications")))
+                    StreamingContentStore.existingDirectory(directory);
+            } catch (IOException unavailable) {
+                throw new IOException("SEMANTIC_STORE_UNAVAILABLE", unavailable);
+            }
+            var content = new StreamingContentStore(path.resolve("cas"));
+            var tables = new com.evolution.analysis.polyglot.SemanticTables(content, 65536);
+            var trust = policy == null
+                    ? com.evolution.analysis.filesystem.SemanticAuthorityStore.policy(resolve(authority))
+                    : new ContentDigest(policy);
+            Optional<com.evolution.analysis.polyglot.SemanticPublicationValidation> validation = Optional.empty();
+            if (authority != null) {
+                var configured = new com.evolution.analysis.filesystem.SemanticAuthorityStore(resolve(authority),
+                        content, tables, trust);
+                validation = Optional
+                        .of(configured.validation(() -> com.evolution.analysis.filesystem.SqliteSemanticCensusIndex
+                                .temporary(path.resolve("semantic-work"), 65536)));
+            }
+            var queries = new SemanticPublicationStore(path.resolve("publications"), content, tables, validation)
+                    .queries(() -> trust);
+            var identity = new ContentDigest(plan);
+            var cursor = Optional.ofNullable(r.cursor).map(value -> com.evolution.analysis.polyglot.SemanticQueryService
+                    .cursor(GraphJson.read(value, new GraphJson.Limits(65536, 16, 65536))));
+            Object data;
+            if (operation.equals("summary")) {
+                if (r.cursor != null)
+                    throw new InputFailure("CURSOR_NOT_APPLICABLE");
+                data = queries.summary(identity, () -> false);
+            } else
+                data = operation.equals("contexts") ? queries.contexts(identity, r.limit, cursor, () -> false)
+                        : operation.equals("root-gaps") ? queries.rootGaps(identity, r.limit, cursor, () -> false)
+                                : operation.equals("answers")
+                                        ? queries.answers(identity, key, answerView == null ? "CURRENT" : answerView,
+                                                r.limit, cursor, () -> false)
+                                        : queries.gaps(identity, key, r.limit, cursor, () -> false);
+            boolean complete = data instanceof com.evolution.analysis.polyglot.SemanticQueryService.Summary summary
+                    ? summary.complete()
+                    : ((com.evolution.analysis.polyglot.SemanticQueryService.Page<?>) data).summary().complete();
+            return emit(r, "semantic",
+                    Map.of("apiVersion", com.evolution.analysis.polyglot.SemanticQueryService.VERSION, "resultIdentity",
+                            CanonicalJson.sha256(data), "data", data),
+                    complete ? 0 : 3);
         }
     }
-    @Command(name="completion",mixinStandardHelpOptions=true,description="Generate shell completion / Tạo script hoàn thành lệnh")
-    private final class Completion implements Callable<Integer>{
-        final CommandLine root;final Root options;Completion(CommandLine root,Root options){this.root=root;this.options=options;}
-        @Parameters(arity="0..1",defaultValue="powershell",paramLabel="powershell|bash") String shell;
-        public Integer call(){
-            if(options.json)throw new InputFailure("SCRIPT_OUTPUT_REQUIRED");
-            if(shell.equals("bash")){out.print(AutoComplete.bash("evo",root));return 0;}
-            if(!shell.equals("powershell"))throw new InputFailure("INVALID_SHELL");
-            var commands=new TreeSet<>(root.getSubcommands().keySet());var options=new TreeSet<String>();
-            root.getCommandSpec().options().forEach(o->options.addAll(List.of(o.names())));
-            root.getSubcommands().values().forEach(c->c.getCommandSpec().options().forEach(o->options.addAll(List.of(o.names()))));
+
+    @Command(name = "completion", mixinStandardHelpOptions = true, description = "Generate shell completion / Tạo script hoàn thành lệnh")
+    private final class Completion implements Callable<Integer> {
+        final CommandLine root;
+        final Root options;
+
+        Completion(CommandLine root, Root options) {
+            this.root = root;
+            this.options = options;
+        }
+
+        @Parameters(arity = "0..1", defaultValue = "powershell", paramLabel = "powershell|bash")
+        String shell;
+
+        public Integer call() {
+            if (options.json)
+                throw new InputFailure("SCRIPT_OUTPUT_REQUIRED");
+            if (shell.equals("bash")) {
+                out.print(AutoComplete.bash("evo", root));
+                return 0;
+            }
+            if (!shell.equals("powershell"))
+                throw new InputFailure("INVALID_SHELL");
+            var commands = new TreeSet<>(root.getSubcommands().keySet());
+            var options = new TreeSet<String>();
+            root.getCommandSpec().options().forEach(o -> options.addAll(List.of(o.names())));
+            root.getSubcommands().values()
+                    .forEach(c -> c.getCommandSpec().options().forEach(o -> options.addAll(List.of(o.names()))));
             out.println("Register-ArgumentCompleter -Native -CommandName evo,evo.cmd,evo.ps1 -ScriptBlock {");
             out.println("    param($wordToComplete, $commandAst, $cursorPosition)");
-            out.println("    $evoCommands = @("+commands.stream().map(s->"'"+s+"'").collect(java.util.stream.Collectors.joining(","))+")");
-            out.println("    $evoOptions = @("+options.stream().map(s->"'"+s+"'").collect(java.util.stream.Collectors.joining(","))+")");
-            out.println("    $evoCandidates = if ($wordToComplete.StartsWith('-') -or $commandAst.CommandElements.Count -gt 2 -or ($commandAst.CommandElements.Count -eq 2 -and $wordToComplete -eq '')) { $evoOptions } else { $evoCommands }");
-            out.println("    $evoCandidates | Where-Object { $_.StartsWith($wordToComplete, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }");
-            out.println("}");return 0;
+            out.println("    $evoCommands = @("
+                    + commands.stream().map(s -> "'" + s + "'").collect(java.util.stream.Collectors.joining(","))
+                    + ")");
+            out.println("    $evoOptions = @("
+                    + options.stream().map(s -> "'" + s + "'").collect(java.util.stream.Collectors.joining(",")) + ")");
+            out.println(
+                    "    $evoCandidates = if ($wordToComplete.StartsWith('-') -or $commandAst.CommandElements.Count -gt 2 -or ($commandAst.CommandElements.Count -eq 2 -and $wordToComplete -eq '')) { $evoOptions } else { $evoCommands }");
+            out.println(
+                    "    $evoCandidates | Where-Object { $_.StartsWith($wordToComplete, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }");
+            out.println("}");
+            return 0;
         }
     }
-    @Command(mixinStandardHelpOptions=true)
+
+    @Command(mixinStandardHelpOptions = true)
     private final class Query implements Callable<Integer> {
-        final Root r;final String name,operation;
-        @Parameters(arity="0..3",paramLabel="VALUE",description="Symbol ID, search, metric or operation / ID, tìm kiếm, metric hoặc thao tác") List<String> values=new ArrayList<>();
-        @Option(names="--fail-on",paramLabel="none|info|warning|error",description="CI policy threshold / Ngưỡng chính sách CI") String failOn="none";
-        @Option(names="--gap-view",paramLabel="CURRENT|HISTORY|ALL",description="Current residuals or immutable gap history / Khoảng trống hiện tại hoặc lịch sử") String gapView;
-        Query(Root r,String name,String operation){this.r=r;this.name=name;this.operation=operation;}
+        final Root r;
+        final String name, operation;
+        @Parameters(arity = "0..3", paramLabel = "VALUE", description = "Symbol ID, search, metric or operation / ID, tìm kiếm, metric hoặc thao tác")
+        List<String> values = new ArrayList<>();
+        @Option(names = "--fail-on", paramLabel = "none|info|warning|error", description = "CI policy threshold / Ngưỡng chính sách CI")
+        String failOn = "none";
+        @Option(names = "--gap-view", paramLabel = "CURRENT|HISTORY|ALL", description = "Current residuals or immutable gap history / Khoảng trống hiện tại hoặc lịch sử")
+        String gapView;
+
+        Query(Root r, String name, String operation) {
+            this.r = r;
+            this.name = name;
+            this.operation = operation;
+        }
+
         public Integer call() throws Exception {
             r.validate();
-            if(gapView!=null&&(!Set.of("gaps","query").contains(name)||r.request!=null||r.arguments!=null))throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
-            var graph=load(r);String context=context(r,graph,false);
-            if(name.equals("show")&&context==null)return emit(r,name,discovery(graph),0);
-            if(context==null)throw new InputFailure("CONTEXT_REQUIRED");
-            String op=operation;var operands=new ArrayList<>(values);
-            if(name.equals("query")){if(operands.isEmpty())throw new InputFailure("OPERATION_REQUIRED");op=operands.removeFirst();}
-            if(name.equals("metrics")&&!operands.isEmpty())op="metric";
-            if(name.equals("impact")&&r.policy!=null)op="policy-impact";
-            if(!Set.of("none","info","warning","error").contains(failOn))throw new InputFailure("INVALID_THRESHOLD");
-            var store=new InMemoryGraphStore();store.save(graph);if(r.other!=null)store.save(Workspace.graph(resolve(r.other)));
-            var reports=new PublishedReports();PublishedReports.Report report=null;byte[] policyToRemember=null;
-            boolean isReportOp=(ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)&&!op.equals("visual-graph"))||op.equals("replay")||(op.equals("visual-graph")&&r.policy!=null);
-            if(!failOn.equals("none")&&!isReportOp)throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
-            if(isReportOp){
-                Path policyFile=r.policy;if(name.equals("check")&&!operands.isEmpty())policyFile=Path.of(operands.removeFirst());
-                byte[] policyInput=policyBytes(r,policyFile);report=evaluate(r,graph,context,policyInput);reports.publish(report);
-                if(name.equals("check")&&policyFile!=null)policyToRemember=policyInput;
+            if (gapView != null
+                    && (!Set.of("gaps", "query").contains(name) || r.request != null || r.arguments != null))
+                throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
+            var graph = load(r);
+            String context = context(r, graph, false);
+            if (name.equals("show") && context == null)
+                return emit(r, name, discovery(graph), 0);
+            if (context == null)
+                throw new InputFailure("CONTEXT_REQUIRED");
+            String op = operation;
+            var operands = new ArrayList<>(values);
+            if (name.equals("query")) {
+                if (operands.isEmpty())
+                    throw new InputFailure("OPERATION_REQUIRED");
+                op = operands.removeFirst();
             }
-            if(op.equals("replay")&&!(name.equals("query")&&r.request!=null)){
-                if(operands.size()!=1)throw new InputFailure("BUNDLE_REQUIRED");String id=operands.getFirst();
-                var bundle=report.evaluation().findings().stream().map(PolicyEvaluation.Finding::bundle).filter(b->b.identity().value().equals(id)).findFirst().orElseThrow(()->new InputFailure("BUNDLE_UNAVAILABLE"));
-                var replayed=new ArchitectureMetricsService(graph).queries().ruleCondition(bundle.request(),bundle.predicate());return emit(r,name,envelope(replayed),status(replayed));
+            if (name.equals("metrics") && !operands.isEmpty())
+                op = "metric";
+            if (name.equals("impact") && r.policy != null)
+                op = "policy-impact";
+            if (!Set.of("none", "info", "warning", "error").contains(failOn))
+                throw new InputFailure("INVALID_THRESHOLD");
+            var store = new InMemoryGraphStore();
+            store.save(graph);
+            if (r.other != null)
+                store.save(Workspace.graph(resolve(r.other)));
+            var reports = new PublishedReports();
+            PublishedReports.Report report = null;
+            byte[] policyToRemember = null;
+            boolean isReportOp = (ArchitectureQueryApi.REPORT_OPERATIONS.contains(op) && !op.equals("visual-graph"))
+                    || op.equals("replay") || (op.equals("visual-graph") && r.policy != null);
+            if (!failOn.equals("none") && !isReportOp)
+                throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
+            if (isReportOp) {
+                Path policyFile = r.policy;
+                if (name.equals("check") && !operands.isEmpty())
+                    policyFile = Path.of(operands.removeFirst());
+                byte[] policyInput = policyBytes(r, policyFile);
+                report = evaluate(r, graph, context, policyInput);
+                reports.publish(report);
+                if (name.equals("check") && policyFile != null)
+                    policyToRemember = policyInput;
             }
-            var body=body(r,graph,context,op,operands,isReportOp);
-            if(gapView!=null){
-                if(!op.equals("gaps"))throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
-                try{gapView=com.evolution.analysis.query.ArchitectureQuery.GapView.valueOf(gapView.toUpperCase(Locale.ROOT)).name();}
-                catch(IllegalArgumentException invalid){throw new InputFailure("INVALID_GAP_VIEW");}
-                var payload=new TreeMap<>(GraphJson.object(GraphJson.read(new String(body,StandardCharsets.UTF_8),GraphJson.Limits.defaults())));
-                var arguments=new TreeMap<>(GraphJson.object(payload.get("arguments")));arguments.put("view",gapView);payload.put("arguments",arguments);
-                body=CanonicalJson.write(payload).getBytes(StandardCharsets.UTF_8);
+            if (op.equals("replay") && !(name.equals("query") && r.request != null)) {
+                if (operands.size() != 1)
+                    throw new InputFailure("BUNDLE_REQUIRED");
+                String id = operands.getFirst();
+                var bundle = report.evaluation().findings().stream().map(PolicyEvaluation.Finding::bundle)
+                        .filter(b -> b.identity().value().equals(id)).findFirst()
+                        .orElseThrow(() -> new InputFailure("BUNDLE_UNAVAILABLE"));
+                var replayed = new ArchitectureMetricsService(graph).queries().ruleCondition(bundle.request(),
+                        bundle.predicate());
+                return emit(r, name, envelope(replayed), status(replayed));
             }
-            String path="/api/v1/graphs/"+graph.identity().value();
-            path+=report==null?"/queries/"+op:"/reports/"+report.identity().value()+"/"+op;
-            return queryResponse(r,name,op,graph,store,reports,report,failOn,path,body,policyToRemember);
+            var body = body(r, graph, context, op, operands, isReportOp);
+            if (gapView != null) {
+                if (!op.equals("gaps"))
+                    throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
+                try {
+                    gapView = com.evolution.analysis.query.ArchitectureQuery.GapView
+                            .valueOf(gapView.toUpperCase(Locale.ROOT)).name();
+                } catch (IllegalArgumentException invalid) {
+                    throw new InputFailure("INVALID_GAP_VIEW");
+                }
+                var payload = new TreeMap<>(GraphJson
+                        .object(GraphJson.read(new String(body, StandardCharsets.UTF_8), GraphJson.Limits.defaults())));
+                var arguments = new TreeMap<>(GraphJson.object(payload.get("arguments")));
+                arguments.put("view", gapView);
+                payload.put("arguments", arguments);
+                body = CanonicalJson.write(payload).getBytes(StandardCharsets.UTF_8);
+            }
+            String path = "/api/v1/graphs/" + graph.identity().value();
+            path += report == null ? "/queries/" + op : "/reports/" + report.identity().value() + "/" + op;
+            return queryResponse(r, name, op, graph, store, reports, report, failOn, path, body, policyToRemember);
         }
     }
-    private int queryResponse(Root r,String name,String op,KnowledgeGraph graph,InMemoryGraphStore store,PublishedReports reports,
-                              PublishedReports.Report report,String failOn,String path,byte[] body,byte[] policyToRemember)throws IOException{
-            var response=new ArchitectureQueryApi(store,reports,ApiLimits.defaults()).handle("POST",path,"application/json",body,()->Thread.currentThread().isInterrupted());
-            var tree=GraphJson.object(GraphJson.read(Workspace.utf8(response.body()),GraphJson.Limits.defaults()));
-            int code=response.status()==200?status(tree.get("data")):response.status()<500?2:1;
-            if(!r.json&&report!=null&&op.equals("bundle")&&response.status()==200)r.activeRequest=QueryJson.request(graph.identity(),GraphJson.object(tree.get("data")).get("request"));
-            if(response.status()==200&&policyToRemember!=null)r.storage().policy(policyToRemember);
-            if(response.status()==200&&Set.of("entities","gaps","spring","configurations").contains(op)&&!r.json&&r.activeRequest!=null){var items=GraphJson.array(GraphJson.object(tree.get("data")).get("items"));r.storage().references(r.activeRequest,items.stream().map(v->GraphJson.string(GraphJson.object(v).get("identity"))).toList());}
-            if(code==0&&report!=null&&!failOn.equals("none")&&report.evaluation().findings().stream().anyMatch(f->severity(f.rule().severity().name())>=severity(failOn)))code=4;
-            if(!r.json&&r.activeRequest!=null&&response.status()==200){r.labels=displayLabels(graph,r.activeRequest,tree);r.descriptors=displayDescriptors(graph,r.activeRequest,tree);}
-            if(interactiveDefaults!=null&&!r.json&&response.status()==200&&GraphJson.object(tree.get("data")).get("continuation") instanceof String cursor){
-                var next=new TreeMap<>(GraphJson.object(GraphJson.read(Workspace.utf8(body),GraphJson.Limits.defaults())));
-                var page=new TreeMap<>(GraphJson.object(next.get("page")));page.put("cursor",cursor);next.put("page",page);
-                continuation=new Continuation(r,name,op,graph,store,reports,report,failOn,path,CanonicalJson.write(next).getBytes(StandardCharsets.UTF_8));
-            }
-            return emit(r,name,tree,code);
+
+    private int queryResponse(Root r, String name, String op, KnowledgeGraph graph, InMemoryGraphStore store,
+            PublishedReports reports,
+            PublishedReports.Report report, String failOn, String path, byte[] body, byte[] policyToRemember)
+            throws IOException {
+        var response = new ArchitectureQueryApi(store, reports, ApiLimits.defaults()).handle("POST", path,
+                "application/json", body, () -> Thread.currentThread().isInterrupted());
+        var tree = GraphJson.object(GraphJson.read(Workspace.utf8(response.body()), GraphJson.Limits.defaults()));
+        int code = response.status() == 200 ? status(tree.get("data")) : response.status() < 500 ? 2 : 1;
+        if (!r.json && report != null && op.equals("bundle") && response.status() == 200)
+            r.activeRequest = QueryJson.request(graph.identity(), GraphJson.object(tree.get("data")).get("request"));
+        if (response.status() == 200 && policyToRemember != null)
+            r.storage().policy(policyToRemember);
+        if (response.status() == 200 && Set.of("entities", "gaps", "spring", "configurations").contains(op) && !r.json
+                && r.activeRequest != null) {
+            var items = GraphJson.array(GraphJson.object(tree.get("data")).get("items"));
+            r.storage().references(r.activeRequest,
+                    items.stream().map(v -> GraphJson.string(GraphJson.object(v).get("identity"))).toList());
+        }
+        if (code == 0 && report != null && !failOn.equals("none") && report.evaluation().findings().stream()
+                .anyMatch(f -> severity(f.rule().severity().name()) >= severity(failOn)))
+            code = 4;
+        if (!r.json && r.activeRequest != null && response.status() == 200) {
+            r.labels = displayLabels(graph, r.activeRequest, tree);
+            r.descriptors = displayDescriptors(graph, r.activeRequest, tree);
+        }
+        if (interactiveDefaults != null && !r.json && response.status() == 200
+                && GraphJson.object(tree.get("data")).get("continuation") instanceof String cursor) {
+            var next = new TreeMap<>(
+                    GraphJson.object(GraphJson.read(Workspace.utf8(body), GraphJson.Limits.defaults())));
+            var page = new TreeMap<>(GraphJson.object(next.get("page")));
+            page.put("cursor", cursor);
+            next.put("page", page);
+            continuation = new Continuation(r, name, op, graph, store, reports, report, failOn, path,
+                    CanonicalJson.write(next).getBytes(StandardCharsets.UTF_8));
+        }
+        return emit(r, name, tree, code);
     }
-    @Command(name="next",mixinStandardHelpOptions=true,description="Next page in the palette / Trang tiếp trong palette")
-    private final class Next implements Callable<Integer>{
-        final Root r;Next(Root r){this.r=r;}
-        public Integer call()throws Exception{
-            var next=continuation;continuation=null;
-            if(next==null) return error(r,2,"NEXT_UNAVAILABLE","No next page in this palette. Run a paginated query first.","Chưa có trang tiếp trong palette. Chạy truy vấn phân trang trước.");
-            if(matched(r,"--workspace","--graph","--context","--request","--args","--other","--policy","--scope","--view","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("CONFLICTING_REQUEST");
-            var options=next.options();options.lang=r.lang;options.color=r.color;options.json=r.json;
-            if(matched(r,"--width"))options.width=r.width;if(matched(r,"--details"))options.details=r.details;
-            if(matched(r,"--ascii"))options.ascii=r.ascii;
-            return queryResponse(options,next.name(),next.operation(),next.graph(),next.store(),next.reports(),next.report(),next.failOn(),next.path(),next.body(),null);
+
+    @Command(name = "next", mixinStandardHelpOptions = true, description = "Next page in the palette / Trang tiếp trong palette")
+    private final class Next implements Callable<Integer> {
+        final Root r;
+
+        Next(Root r) {
+            this.r = r;
+        }
+
+        public Integer call() throws Exception {
+            var next = continuation;
+            continuation = null;
+            if (next == null)
+                return error(r, 2, "NEXT_UNAVAILABLE", "No next page in this palette. Run a paginated query first.",
+                        "Chưa có trang tiếp trong palette. Chạy truy vấn phân trang trước.");
+            if (matched(r, "--workspace", "--graph", "--context", "--request", "--args", "--other", "--policy",
+                    "--scope", "--view", "--world", "--assignment", "--incoming", "--kinds", "--limit", "--depth",
+                    "--cursor"))
+                throw new InputFailure("CONFLICTING_REQUEST");
+            var options = next.options();
+            options.lang = r.lang;
+            options.color = r.color;
+            options.json = r.json;
+            if (matched(r, "--width"))
+                options.width = r.width;
+            if (matched(r, "--details"))
+                options.details = r.details;
+            if (matched(r, "--ascii"))
+                options.ascii = r.ascii;
+            return queryResponse(options, next.name(), next.operation(), next.graph(), next.store(), next.reports(),
+                    next.report(), next.failOn(), next.path(), next.body(), null);
         }
     }
-    private static int severity(String value){return switch(value.toUpperCase(Locale.ROOT)){case "INFO"->1;case "WARNING"->2;case "ERROR"->3;default->0;};}
-    private byte[] body(Root r,KnowledgeGraph graph,String context,String op,List<String> operands,boolean isReportOp)throws IOException{
-        if(r.request!=null){if(!operands.isEmpty()||matched(r,"--args","--scope","--view","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("CONFLICTING_REQUEST");byte[] bytes=Workspace.read(resolve(r.request),65_536);
-            if(!isReportOp)r.activeRequest=QueryJson.request(graph.identity(),GraphJson.object(GraphJson.read(Workspace.utf8(bytes),GraphJson.Limits.defaults())).get("request"));return bytes;}
-        Map<String,Object> args=new TreeMap<>();
-        if(r.arguments!=null){if(!operands.isEmpty())throw new InputFailure("CONFLICTING_ARGUMENTS");args.putAll(GraphJson.object(GraphJson.read(r.arguments,new GraphJson.Limits(65_536,32,10_000))));}
-        else {
-            int required=0;
-            switch(op){
-                case "entities"->{if(operands.size()>1)throw new InputFailure("INVALID_ARGUMENTS");args.put("search",operands.isEmpty()?"":operands.getFirst());required=operands.size();}
-                case "entity","dependencies","expand","impact","policy-impact","reachability","explain","finding","bundle","children"->{required=1;if(operands.size()==1)args.put("identity",operands.getFirst());}
-                case "metric-definition"->{required=1;if(operands.size()==1)args.put("metric",operands.getFirst());}
-                case "evidence"->{required=1;if(operands.size()==1)args.put("reference",operands.getFirst());}
-                case "paths","shortest-path"->{required=2;if(operands.size()==2){args.put("source",operands.get(0));args.put("target",operands.get(1));}}
-                case "metric"->{required=operands.size();if(operands.isEmpty()||operands.size()>2)throw new InputFailure("METRIC_REQUIRED");args.put("metric",operands.getFirst());args.put("subject",operands.size()==2?operands.get(1):context);}
-                case "spring"->args.put("kinds",List.of("BEAN_PRODUCER","BEAN_DEFINITION_CANDIDATE","INJECTION_USE","ENDPOINT"));
-                case "visual-graph"->{if(operands.size()>1)throw new InputFailure("INVALID_ARGUMENTS");if(operands.size()==1){args.put("seed",operands.getFirst());args.put("depth",r.depth);}required=operands.size();}
-                default->{}
+
+    private static int severity(String value) {
+        return switch (value.toUpperCase(Locale.ROOT)) {
+            case "INFO" -> 1;
+            case "WARNING" -> 2;
+            case "ERROR" -> 3;
+            default -> 0;
+        };
+    }
+
+    private byte[] body(Root r, KnowledgeGraph graph, String context, String op, List<String> operands,
+            boolean isReportOp) throws IOException {
+        if (r.request != null) {
+            if (!operands.isEmpty() || matched(r, "--args", "--scope", "--view", "--world", "--assignment",
+                    "--incoming", "--kinds", "--limit", "--depth", "--cursor"))
+                throw new InputFailure("CONFLICTING_REQUEST");
+            byte[] bytes = Workspace.read(resolve(r.request), 65_536);
+            if (!isReportOp)
+                r.activeRequest = QueryJson.request(graph.identity(), GraphJson
+                        .object(GraphJson.read(Workspace.utf8(bytes), GraphJson.Limits.defaults())).get("request"));
+            return bytes;
+        }
+        Map<String, Object> args = new TreeMap<>();
+        if (r.arguments != null) {
+            if (!operands.isEmpty())
+                throw new InputFailure("CONFLICTING_ARGUMENTS");
+            args.putAll(GraphJson.object(GraphJson.read(r.arguments, new GraphJson.Limits(65_536, 32, 10_000))));
+        } else {
+            int required = 0;
+            switch (op) {
+                case "entities" -> {
+                    if (operands.size() > 1)
+                        throw new InputFailure("INVALID_ARGUMENTS");
+                    args.put("search", operands.isEmpty() ? "" : operands.getFirst());
+                    required = operands.size();
+                }
+                case "entity", "dependencies", "expand", "impact", "policy-impact", "reachability", "explain",
+                        "finding", "bundle", "children" -> {
+                    required = 1;
+                    if (operands.size() == 1)
+                        args.put("identity", operands.getFirst());
+                }
+                case "metric-definition" -> {
+                    required = 1;
+                    if (operands.size() == 1)
+                        args.put("metric", operands.getFirst());
+                }
+                case "evidence" -> {
+                    required = 1;
+                    if (operands.size() == 1)
+                        args.put("reference", operands.getFirst());
+                }
+                case "paths", "shortest-path" -> {
+                    required = 2;
+                    if (operands.size() == 2) {
+                        args.put("source", operands.get(0));
+                        args.put("target", operands.get(1));
+                    }
+                }
+                case "metric" -> {
+                    required = operands.size();
+                    if (operands.isEmpty() || operands.size() > 2)
+                        throw new InputFailure("METRIC_REQUIRED");
+                    args.put("metric", operands.getFirst());
+                    args.put("subject", operands.size() == 2 ? operands.get(1) : context);
+                }
+                case "spring" -> args.put("kinds",
+                        List.of("BEAN_PRODUCER", "BEAN_DEFINITION_CANDIDATE", "INJECTION_USE", "ENDPOINT"));
+                case "visual-graph" -> {
+                    if (operands.size() > 1)
+                        throw new InputFailure("INVALID_ARGUMENTS");
+                    if (operands.size() == 1) {
+                        args.put("seed", operands.getFirst());
+                        args.put("depth", r.depth);
+                    }
+                    required = operands.size();
+                }
+                default -> {
+                }
             }
-            if(operands.size()!=required)throw new InputFailure("INVALID_ARGUMENTS");
+            if (operands.size() != required)
+                throw new InputFailure("INVALID_ARGUMENTS");
         }
-        var data=new TreeMap<String,Object>();data.put("arguments",args);
-        Scope scope=Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_'));
-        Projection projection=switch(r.projection){case "union"->Projection.BOUNDED_UNION;case "unknown"->Projection.UNKNOWN_OVERLAY;default->Projection.valueOf(r.projection.toUpperCase(Locale.ROOT));};
-        if(r.world!=null&&r.assignment!=null)throw new InputFailure("ONE_REALIZATION_REQUIRED");Optional<Realization> realization=Optional.empty();
-        if(r.world!=null)realization=Optional.of(new Realization(Optional.of(r.world),Map.of()));
-        if(r.assignment!=null){var assignment=new TreeMap<String,Boolean>();GraphJson.object(Workspace.json(resolve(r.assignment),65_536)).forEach((k,v)->{if(!(v instanceof Boolean b))throw new IllegalArgumentException();assignment.put(k,b);});realization=Optional.of(new Realization(Optional.empty(),assignment));}
-        int queryDepth=r.depth;
-        if(op.equals("visual-graph")&&args.containsKey("seed")){
-            if(r.depth==20)throw new InputFailure("VISUAL_DEPTH_REQUIRES_1_TO_19_STEPS");
-            queryDepth=r.depth+1;
+        var data = new TreeMap<String, Object>();
+        data.put("arguments", args);
+        Scope scope = Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-', '_'));
+        Projection projection = switch (r.projection) {
+            case "union" -> Projection.BOUNDED_UNION;
+            case "unknown" -> Projection.UNKNOWN_OVERLAY;
+            default -> Projection.valueOf(r.projection.toUpperCase(Locale.ROOT));
+        };
+        if (r.world != null && r.assignment != null)
+            throw new InputFailure("ONE_REALIZATION_REQUIRED");
+        Optional<Realization> realization = Optional.empty();
+        if (r.world != null)
+            realization = Optional.of(new Realization(Optional.of(r.world), Map.of()));
+        if (r.assignment != null) {
+            var assignment = new TreeMap<String, Boolean>();
+            GraphJson.object(Workspace.json(resolve(r.assignment), 65_536)).forEach((k, v) -> {
+                if (!(v instanceof Boolean b))
+                    throw new IllegalArgumentException();
+                assignment.put(k, b);
+            });
+            realization = Optional.of(new Realization(Optional.empty(), assignment));
         }
-        var defaults=Limits.defaults();r.activeRequest=new Request(graph.identity(),context,scope,projection,op.equals("impact")||op.equals("policy-impact")||r.incoming?Direction.INCOMING:Direction.OUTGOING,r.kinds,Population.all(),false,realization,
-                new Limits(queryDepth,defaults.maxSteps(),r.limit,defaults.maxVertices(),defaults.maxEdges(),defaults.maxSolverSteps(),defaults.maxFormulaNodes(),defaults.maxAuxiliaryStates()));
-        if(!isReportOp)data.put("request",r.activeRequest);
-        if(Set.of("entities","edges","dependencies","relationships","explain","gaps","spring","configurations","artifacts","metric-catalog","rules","findings","children","realizations").contains(op))data.put("page",new Page(r.limit,Optional.ofNullable(r.cursor)));
-        else if(r.cursor!=null)throw new InputFailure("PAGE_NOT_APPLICABLE");
-        if(r.arguments==null&&r.activeRequest!=null){
-            if(Set.of("entity","dependencies","expand","impact","policy-impact","reachability","explain","children").contains(op)&&args.containsKey("identity"))args.put("identity",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("identity"))));
-            if(Set.of("paths","shortest-path").contains(op))for(String key:List.of("source","target"))args.put(key,resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get(key))));
-            if(op.equals("visual-graph")&&args.containsKey("seed"))args.put("seed",resolveEntity(r,graph,r.activeRequest,GraphJson.string(args.get("seed"))));
+        int queryDepth = r.depth;
+        if (op.equals("visual-graph") && args.containsKey("seed")) {
+            if (r.depth == 20)
+                throw new InputFailure("VISUAL_DEPTH_REQUIRES_1_TO_19_STEPS");
+            queryDepth = r.depth + 1;
+        }
+        var defaults = Limits.defaults();
+        r.activeRequest = new Request(graph.identity(), context, scope, projection,
+                op.equals("impact") || op.equals("policy-impact") || r.incoming ? Direction.INCOMING
+                        : Direction.OUTGOING,
+                r.kinds, Population.all(), false, realization,
+                new Limits(queryDepth, defaults.maxSteps(), r.limit, defaults.maxVertices(), defaults.maxEdges(),
+                        defaults.maxSolverSteps(), defaults.maxFormulaNodes(), defaults.maxAuxiliaryStates()));
+        if (!isReportOp)
+            data.put("request", r.activeRequest);
+        if (Set.of("entities", "edges", "dependencies", "relationships", "explain", "gaps", "spring", "configurations",
+                "artifacts", "metric-catalog", "rules", "findings", "children", "realizations").contains(op))
+            data.put("page", new Page(r.limit, Optional.ofNullable(r.cursor)));
+        else if (r.cursor != null)
+            throw new InputFailure("PAGE_NOT_APPLICABLE");
+        if (r.arguments == null && r.activeRequest != null) {
+            if (Set.of("entity", "dependencies", "expand", "impact", "policy-impact", "reachability", "explain",
+                    "children").contains(op) && args.containsKey("identity"))
+                args.put("identity", resolveEntity(r, graph, r.activeRequest, GraphJson.string(args.get("identity"))));
+            if (Set.of("paths", "shortest-path").contains(op))
+                for (String key : List.of("source", "target"))
+                    args.put(key, resolveEntity(r, graph, r.activeRequest, GraphJson.string(args.get(key))));
+            if (op.equals("visual-graph") && args.containsKey("seed"))
+                args.put("seed", resolveEntity(r, graph, r.activeRequest, GraphJson.string(args.get("seed"))));
         }
         return CanonicalJson.write(data).getBytes(StandardCharsets.UTF_8);
     }
-    private String resolveEntity(Root r,KnowledgeGraph graph,Request request,String input)throws IOException{
-        if(input.matches("(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}"))return input;
-        if(input.matches("[1-9][0-9]{0,2}"))return r.storage().reference(request,Integer.parseInt(input)).orElseThrow(()->new InputFailure("REFERENCE_UNAVAILABLE"));
-        boolean prefix=input.matches("[0-9a-f]{8,64}");
-        var matches=new ArchitectureMetricsService(graph).queries().entities(request,prefix?"":input,new Page(50,Optional.empty()));
-        if(matches.exactTotal().isEmpty()||matches.continuation().isPresent()||matches.items().isEmpty())throw new InputFailure("SYMBOL_NOT_UNIQUE");
-        if(prefix){var candidates=matches.items().stream().filter(e->e.identity().substring(e.identity().lastIndexOf(':')+1).startsWith(input)).toList();
-            if(candidates.size()==1)return candidates.getFirst().identity();throw new InputFailure("SYMBOL_NOT_UNIQUE");}
-        var exact=matches.items().stream().filter(e->e.canonicalName().filter(input::equals).isPresent()||e.qualifiedName().filter(input::equals).isPresent()).toList();
-        if(exact.size()==1)return exact.getFirst().identity();
-        if(matches.exactTotal().orElseThrow()==1)return matches.items().getFirst().identity();
+
+    private String resolveEntity(Root r, KnowledgeGraph graph, Request request, String input) throws IOException {
+        if (input.matches("(?:[a-z][a-z0-9.-]*:)?sha256:[0-9a-f]{64}"))
+            return input;
+        if (input.matches("[1-9][0-9]{0,2}"))
+            return r.storage().reference(request, Integer.parseInt(input))
+                    .orElseThrow(() -> new InputFailure("REFERENCE_UNAVAILABLE"));
+        boolean prefix = input.matches("[0-9a-f]{8,64}");
+        var matches = new ArchitectureMetricsService(graph).queries().entities(request, prefix ? "" : input,
+                new Page(50, Optional.empty()));
+        if (matches.exactTotal().isEmpty() || matches.continuation().isPresent() || matches.items().isEmpty())
+            throw new InputFailure("SYMBOL_NOT_UNIQUE");
+        if (prefix) {
+            var candidates = matches.items().stream()
+                    .filter(e -> e.identity().substring(e.identity().lastIndexOf(':') + 1).startsWith(input)).toList();
+            if (candidates.size() == 1)
+                return candidates.getFirst().identity();
+            throw new InputFailure("SYMBOL_NOT_UNIQUE");
+        }
+        var exact = matches.items().stream().filter(e -> e.canonicalName().filter(input::equals).isPresent()
+                || e.qualifiedName().filter(input::equals).isPresent()).toList();
+        if (exact.size() == 1)
+            return exact.getFirst().identity();
+        if (matches.exactTotal().orElseThrow() == 1)
+            return matches.items().getFirst().identity();
         throw new InputFailure("SYMBOL_NOT_UNIQUE");
     }
-    private byte[] policyBytes(Root r,Path policyFile)throws IOException{
+
+    private byte[] policyBytes(Root r, Path policyFile) throws IOException {
         byte[] bytes;
-        try{bytes=policyFile!=null?Workspace.read(resolve(policyFile),262_144):r.storage().policy();}
-        catch(NoSuchFileException missing){throw new InputFailure("POLICY_REQUIRED");}
-        catch(IOException missing){if(policyFile==null&&!Files.exists(r.storage().root.resolve("policy.txt")))throw new InputFailure("POLICY_REQUIRED");throw missing;}
+        try {
+            bytes = policyFile != null ? Workspace.read(resolve(policyFile), 262_144) : r.storage().policy();
+        } catch (NoSuchFileException missing) {
+            throw new InputFailure("POLICY_REQUIRED");
+        } catch (IOException missing) {
+            if (policyFile == null && !Files.exists(r.storage().root.resolve("policy.txt")))
+                throw new InputFailure("POLICY_REQUIRED");
+            throw missing;
+        }
         return bytes;
     }
-    private PublishedReports.Report evaluate(Root r,KnowledgeGraph graph,String context,Path policyFile)throws IOException{return evaluate(r,graph,context,policyBytes(r,policyFile));}
-    private PublishedReports.Report evaluate(Root r,KnowledgeGraph graph,String context,byte[] bytes){
-        var compiled=new PolicyCompiler().compile(bytes,EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());var queries=new ArchitectureMetricsService(graph).queries();
-        var plan=new PolicyGraphMapper().bind(compiled,queries,context,PolicyGraphMapper.Limits.defaults());var evaluation=new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults());
-        var metrics=new PolicyMetricsService().compute(compiled,plan,evaluation,queries,PolicyMetrics.Limits.defaults());
-        var model=ArchitectureScoreModel.candidate(Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_')));
-        var score=new ArchitectureAssessmentService().assess(metrics,evaluation,queries,Optional.of(model),plan.limits().query(),
-                ArchitectureMetric.Limits.defaults(),ArchitectureAssessment.Limits.defaults());
-        return new PublishedReports.Report(evaluation,Optional.of(metrics),Optional.of(score));
+
+    private PublishedReports.Report evaluate(Root r, KnowledgeGraph graph, String context, Path policyFile)
+            throws IOException {
+        return evaluate(r, graph, context, policyBytes(r, policyFile));
     }
-    @Command(name="captured-java",mixinStandardHelpOptions=true,description="Analyze a registered captured Java context without building")
-    private final class CapturedJava implements Callable<Integer>{
-        final Root r;CapturedJava(Root r){this.r=r;}
-        @Parameters(paramLabel="REGISTERED_DIR")Path registration;
-        public Integer call()throws Exception{
-            r.validate();var result=com.evolution.backend.analysis.CapturedJavaExecution.run(resolve(registration),()->Thread.currentThread().isInterrupted());
-            return emit(r,"captured-java",envelope(result),result.semantic().get("state")==com.evolution.backend.analysis.AnalysisJobs.State.SUCCEEDED?0:3);
+
+    private PublishedReports.Report evaluate(Root r, KnowledgeGraph graph, String context, byte[] bytes) {
+        var compiled = new PolicyCompiler().compile(bytes, EvidenceContext.forSnapshot(graph.snapshot()),
+                PolicyCompiler.Limits.defaults());
+        var queries = new ArchitectureMetricsService(graph).queries();
+        var plan = new PolicyGraphMapper().bind(compiled, queries, context, PolicyGraphMapper.Limits.defaults());
+        var evaluation = new PolicyEvaluator().evaluate(compiled, plan, queries, PolicyEvaluation.Limits.defaults());
+        var metrics = new PolicyMetricsService().compute(compiled, plan, evaluation, queries,
+                PolicyMetrics.Limits.defaults());
+        var model = ArchitectureScoreModel.candidate(Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-', '_')));
+        var score = new ArchitectureAssessmentService().assess(metrics, evaluation, queries, Optional.of(model),
+                plan.limits().query(),
+                ArchitectureMetric.Limits.defaults(), ArchitectureAssessment.Limits.defaults());
+        return new PublishedReports.Report(evaluation, Optional.of(metrics), Optional.of(score));
+    }
+
+    @Command(name = "captured-java", mixinStandardHelpOptions = true, description = "Analyze a registered captured Java context without building")
+    private final class CapturedJava implements Callable<Integer> {
+        final Root r;
+
+        CapturedJava(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "REGISTERED_DIR")
+        Path registration;
+
+        public Integer call() throws Exception {
+            r.validate();
+            var result = com.evolution.backend.analysis.CapturedJavaExecution.run(resolve(registration),
+                    () -> Thread.currentThread().isInterrupted());
+            return emit(r, "captured-java", envelope(result),
+                    result.semantic().get("state") == com.evolution.backend.analysis.AnalysisJobs.State.SUCCEEDED ? 0
+                            : 3);
         }
     }
-    @Command(name="acquire",mixinStandardHelpOptions=true,description="Durable full snapshot acquisition / Thu nhận toàn snapshot có phục hồi")
-    private final class Acquire implements Callable<Integer>{
-        final Root r;Acquire(Root r){this.r=r;}
-        @Parameters(paramLabel="DIR|HTTPS_URL|ZIP")String source;
-        @Option(names="--repo")String repository;
-        @Option(names="--resume",description="Continue the exact acquisition revision")String resume;
-        @Option(names="--ref",defaultValue="HEAD")String ref;
-        @Option(names="--exclude")List<String> excludes=new ArrayList<>();
-        public Integer call()throws Exception{
-            r.validate();String revision=resume==null?UUID.randomUUID().toString():resume;
-            if(!revision.matches("[A-Za-z0-9._-]{1,128}"))throw new InputFailure("INVALID_ACQUISITION_REVISION");
-            Path state=r.storage().root.resolve("acquisition");boolean remote=source.contains("://");Path local=remote?null:Workspace.safe(resolve(Path.of(source)));
-            String coordinate=repository!=null?repository:remote?source:local.toUri().toASCIIString();var repo=RepositoryIdentity.fromCanonicalCoordinate(coordinate);
-            var excluded=new TreeSet<>(excludes);if(!remote){excluded.add(".git");if(state.startsWith(local)&&!state.equals(local))excluded.add(local.relativize(state).toString().replace('\\','/'));}
-            var request=new StreamingAcquisitionRequest(repo,Optional.empty(),!remote,List.copyOf(excluded));
-            try(var intake=new RepositoryIntake(state)){
+
+    @Command(name = "acquire", mixinStandardHelpOptions = true, description = "Durable full snapshot acquisition / Thu nhận toàn snapshot có phục hồi")
+    private final class Acquire implements Callable<Integer> {
+        final Root r;
+
+        Acquire(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "DIR|HTTPS_URL|ZIP")
+        String source;
+        @Option(names = "--repo")
+        String repository;
+        @Option(names = "--resume", description = "Continue the exact acquisition revision")
+        String resume;
+        @Option(names = "--ref", defaultValue = "HEAD")
+        String ref;
+        @Option(names = "--exclude")
+        List<String> excludes = new ArrayList<>();
+
+        public Integer call() throws Exception {
+            r.validate();
+            String revision = resume == null ? UUID.randomUUID().toString() : resume;
+            if (!revision.matches("[A-Za-z0-9._-]{1,128}"))
+                throw new InputFailure("INVALID_ACQUISITION_REVISION");
+            Path state = r.storage().root.resolve("acquisition");
+            boolean remote = source.contains("://");
+            Path local = remote ? null : Workspace.safe(resolve(Path.of(source)));
+            String coordinate = repository != null ? repository : remote ? source : local.toUri().toASCIIString();
+            var repo = RepositoryIdentity.fromCanonicalCoordinate(coordinate);
+            var excluded = new TreeSet<>(excludes);
+            if (!remote) {
+                excluded.add(".git");
+                if (state.startsWith(local) && !state.equals(local))
+                    excluded.add(local.relativize(state).toString().replace('\\', '/'));
+            }
+            var request = new StreamingAcquisitionRequest(repo, Optional.empty(), !remote, List.copyOf(excluded));
+            try (var intake = new RepositoryIntake(state)) {
                 StreamingRepositoryAcquirer.Receipt receipt;
-                if(remote)receipt=intake.git(java.net.URI.create(source),ref,revision,request,new GitHostPolicy(),"git",()->Thread.currentThread().isInterrupted());
-                else if(Files.isRegularFile(local,LinkOption.NOFOLLOW_LINKS))receipt=intake.archive(local,revision,request,()->Thread.currentThread().isInterrupted());
-                else receipt=intake.local(local,revision,request,()->Thread.currentThread().isInterrupted());
-                return emit(r,"acquire",envelope(Map.of("acquisition",receipt,"selection",request,"semanticCoverage","NOT_EVALUATED")),receipt.manifest().isPresent()?0:3);
+                if (remote)
+                    receipt = intake.git(java.net.URI.create(source), ref, revision, request, new GitHostPolicy(),
+                            "git", () -> Thread.currentThread().isInterrupted());
+                else if (Files.isRegularFile(local, LinkOption.NOFOLLOW_LINKS))
+                    receipt = intake.archive(local, revision, request, () -> Thread.currentThread().isInterrupted());
+                else
+                    receipt = intake.local(local, revision, request, () -> Thread.currentThread().isInterrupted());
+                return emit(r, "acquire", envelope(
+                        Map.of("acquisition", receipt, "selection", request, "semanticCoverage", "NOT_EVALUATED")),
+                        receipt.manifest().isPresent() ? 0 : 3);
             }
         }
     }
-    @Command(name="inventory",mixinStandardHelpOptions=true,description="Page captured inventory / Xem inventory đã thu nhận")
-    private final class Inventory implements Callable<Integer>{final Root r;Inventory(Root r){this.r=r;}@Parameters(paramLabel="REVISION")String revision;
-        public Integer call()throws Exception{r.validate();try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
-            var job=intake.journal().get(revision).orElseThrow(()->new InputFailure("ACQUISITION_NOT_FOUND"));
-            return emit(r,"inventory",envelope(Map.of("revision",revision,"state",job.state(),"manifest",intake.inventory().manifest(revision),"page",intake.inventory().page(revision,r.limit,Optional.ofNullable(r.cursor)))),0);
-        }}
-    }
-    @Command(name="core-mvp",mixinStandardHelpOptions=true,description="Run the approved offline Hyper-V build pipeline / Build offline Core MVP trong Hyper-V")
-    private final class CoreMvp implements Callable<Integer>{
-        final Root r;CoreMvp(Root r){this.r=r;}
-        @Parameters(paramLabel="REGISTERED_ROOT")Path root;
-        public Integer call()throws Exception{
-            r.validate();com.evolution.analysis.execution.mvp.CoreMvpRegistrations.require(resolve(root));
-            var result=com.evolution.analysis.execution.mvp.HyperVMvpLauncher.run(resolve(root));
-            return emit(r,"core-mvp",Map.of("apiVersion","execution.core-mvp-api:m8.4-v1","data",result,"resultIdentity",ContentDigest.sha256Utf8(CanonicalJson.write(result))),0);
+
+    @Command(name = "inventory", mixinStandardHelpOptions = true, description = "Page captured inventory / Xem inventory đã thu nhận")
+    private final class Inventory implements Callable<Integer> {
+        final Root r;
+
+        Inventory(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "REVISION")
+        String revision;
+
+        public Integer call() throws Exception {
+            r.validate();
+            try (var intake = new RepositoryIntake(r.storage().root.resolve("acquisition"))) {
+                var job = intake.journal().get(revision).orElseThrow(() -> new InputFailure("ACQUISITION_NOT_FOUND"));
+                return emit(r, "inventory",
+                        envelope(Map.of("revision", revision, "state", job.state(), "manifest",
+                                intake.inventory().manifest(revision), "page",
+                                intake.inventory().page(revision, r.limit, Optional.ofNullable(r.cursor)))),
+                        0);
+            }
         }
     }
-    @Command(name="execution",mixinStandardHelpOptions=true,description="Operate a registered isolated execution / Điều khiển execution cô lập đã đăng ký")
-    private final class Execution implements Callable<Integer>{
-        final Root r;Execution(Root r){this.r=r;}
-        @Parameters(index="0",paramLabel="submit|status|cancel|recover")String operation;
-        @Parameters(index="1",paramLabel="REGISTRATION")String registration;
-        public Integer call()throws Exception{
-            r.validate();var op=com.evolution.analysis.execution.RegisteredExecutionPort.Operation.valueOf(operation.toUpperCase(Locale.ROOT));
-            var id=new ContentDigest(registration);
-            if(executions==null)return error(r,3,"EXECUTIONS_UNAVAILABLE","No registered isolated executor is configured.","Chưa cấu hình executor cô lập đã đăng ký.");
+
+    @Command(name = "core-mvp", mixinStandardHelpOptions = true, description = "Run the approved offline Hyper-V build pipeline / Build offline Core MVP trong Hyper-V")
+    private final class CoreMvp implements Callable<Integer> {
+        final Root r;
+
+        CoreMvp(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "REGISTERED_ROOT")
+        Path root;
+
+        public Integer call() throws Exception {
+            r.validate();
+            com.evolution.analysis.execution.mvp.CoreMvpRegistrations.require(resolve(root));
+            var result = com.evolution.analysis.execution.mvp.HyperVMvpLauncher.run(resolve(root));
+            return emit(r, "core-mvp", Map.of("apiVersion", "execution.core-mvp-api:m8.4-v1", "data", result,
+                    "resultIdentity", ContentDigest.sha256Utf8(CanonicalJson.write(result))), 0);
+        }
+    }
+
+    @Command(name = "execution", mixinStandardHelpOptions = true, description = "Operate a registered isolated execution / Điều khiển execution cô lập đã đăng ký")
+    private final class Execution implements Callable<Integer> {
+        final Root r;
+
+        Execution(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(index = "0", paramLabel = "submit|status|cancel|recover")
+        String operation;
+        @Parameters(index = "1", paramLabel = "REGISTRATION")
+        String registration;
+
+        public Integer call() throws Exception {
+            r.validate();
+            var op = com.evolution.analysis.execution.RegisteredExecutionPort.Operation
+                    .valueOf(operation.toUpperCase(Locale.ROOT));
+            var id = new ContentDigest(registration);
+            if (executions == null)
+                return error(r, 3, "EXECUTIONS_UNAVAILABLE", "No registered isolated executor is configured.",
+                        "Chưa cấu hình executor cô lập đã đăng ký.");
             com.evolution.analysis.execution.RegisteredExecutionPort.View view;
-            try{view=executions.execute(op,id);}catch(com.evolution.analysis.execution.RegisteredExecutionPort.Rejected rejected){
-                return error(r,2,"EXECUTION_"+rejected.failure().name(),"Execution registration or durable receipt does not match.","Đăng ký execution hoặc receipt bền vững không khớp.");
-            }catch(IOException unavailable){return error(r,3,"EXECUTIONS_UNAVAILABLE","Execution state is unavailable.","Không truy cập được trạng thái execution.");}
-            if(!id.equals(view.registration()))return error(r,3,"EXECUTION_SCOPE_MISMATCH","Execution receipt scope does not match.","Receipt execution không khớp phạm vi.");
-            var data=CanonicalJson.write(view);
-            if(r.json)out.println(CanonicalJson.write(Map.of("apiVersion",com.evolution.analysis.execution.RegisteredExecutionPort.VERSION,"data",view,"resultIdentity",ContentDigest.sha256Utf8(data))));
-            else out.println(view.attemptPhase()+" / "+view.taskPhase()+" / "+view.availability()+(view.reason().isEmpty()?"":" / "+view.reason()));
-            return switch(view.taskPhase()){case SUCCEEDED,CANCELLED -> 0;case FAILED -> 1;default -> 3;};
-        }
-    }
-    @Command(name="readiness",mixinStandardHelpOptions=true,description="Plan all build roots, contexts and native evidence requirements / Lập kế hoạch readiness")
-    private final class Readiness implements Callable<Integer>{
-        final Root r;Readiness(Root r){this.r=r;}
-        @Parameters(paramLabel="REVISION")String revision;
-        @Option(names="--section",defaultValue="requirements")String section;
-        @Option(names="--source-set")List<String> sourceSets=new ArrayList<>();
-        @Option(names="--variant")List<String> variants=new ArrayList<>();
-        public Integer call()throws Exception{
-            r.validate();var requested=new TreeMap<String,List<String>>();if(!sourceSets.isEmpty())requested.put("sourceSet",sourceSets);if(!variants.isEmpty())requested.put("variant",variants);
-            var policy=new ReadinessPlanner.Policy(requested,true,1_000_000);
-            try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){return emit(r,"readiness",envelope(intake.readinessPage(revision,section,r.limit,Optional.ofNullable(r.cursor),policy)),0);}
-        }
-    }
-    @Command(name="graph-pages",mixinStandardHelpOptions=true,description="Read bounded raw graph partitions without materializing a snapshot")
-    private final class GraphPages implements Callable<Integer>{
-        final Root r;GraphPages(Root r){this.r=r;}
-        @Parameters(index="0",paramLabel="partitions|nodes|adjacency|evidence|build")String operation;
-        @Parameters(index="1",arity="0..1",paramLabel="NODE|EVIDENCE")String node;
-        @Option(names="--partition",paramLabel="CONTEXT")String partition;
-        @Option(names="--graph-id",paramLabel="SHA256")String graphId;
-        public Integer call()throws Exception{
-            r.validate();if(!Set.of("partitions","nodes","adjacency","evidence","build").contains(operation))throw new InputFailure("INVALID_GRAPH_PAGE_OPERATION");
-            if(r.graph!=null)throw new InputFailure("GRAPH_FILE_NOT_APPLICABLE");
-            if(node!=null&&!Set.of("adjacency","evidence").contains(operation)||partition!=null&&Set.of("partitions","build","evidence").contains(operation)||r.incoming&&!operation.equals("adjacency")||operation.equals("build")&&r.cursor!=null||operation.equals("evidence")&&matched(r,"--cursor","--limit"))throw new InputFailure("GRAPH_PAGE_FLAGS_NOT_APPLICABLE");
-            if(matched(r,"--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--kinds","--depth"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
-            var graph=graphId==null?new ContentDigest(GraphJson.string(r.storage().selection().get("graph"))):new ContentDigest(graphId);
-            var pages=r.storage().partitioned();Object data;
-            if(operation.equals("build")){
-                if(graphId!=null&&!graphId.equals(GraphJson.string(r.storage().selection().get("graph"))))throw new InputFailure("GRAPH_PAGE_BUILD_SELECTION_REQUIRED");
-                pages.importSnapshot(r.storage().root.resolve(graph.value().substring(7)+".graph.json"),graph,()->Thread.currentThread().isInterrupted());data=Map.of("graph",graph,"status","INDEXED");
-            }else if(operation.equals("partitions"))data=pages.partitions(graph,r.limit,Optional.ofNullable(r.cursor));
-            else if(operation.equals("evidence")){if(node==null)throw new InputFailure("EVIDENCE_REQUIRED");data=Map.of("evidence",pages.evidence(graph,new ContentDigest(node)).orElseThrow(()->new InputFailure("EVIDENCE_UNAVAILABLE")));}
-            else{
-                if(partition==null)throw new InputFailure("PARTITION_REQUIRED");
-                var selected=pages.partition(graph,partition).orElseThrow(()->new InputFailure("PARTITION_UNAVAILABLE"));
-                if(operation.equals("nodes"))data=pages.nodes(selected,r.limit,Optional.ofNullable(r.cursor));
-                else{if(node==null)throw new InputFailure("NODE_REQUIRED");data=pages.adjacency(selected,node,r.incoming,r.limit,Optional.ofNullable(r.cursor));}
+            try {
+                view = executions.execute(op, id);
+            } catch (com.evolution.analysis.execution.RegisteredExecutionPort.Rejected rejected) {
+                return error(r, 2, "EXECUTION_" + rejected.failure().name(),
+                        "Execution registration or durable receipt does not match.",
+                        "Đăng ký execution hoặc receipt bền vững không khớp.");
+            } catch (IOException unavailable) {
+                return error(r, 3, "EXECUTIONS_UNAVAILABLE", "Execution state is unavailable.",
+                        "Không truy cập được trạng thái execution.");
             }
-            return emit(r,"graph-pages",envelope(Map.of("graph",graph,"scope","RAW_CONTEXT_FACTS","page",data,"semanticAccuracy","NOT_CERTIFIED")),0);
+            if (!id.equals(view.registration()))
+                return error(r, 3, "EXECUTION_SCOPE_MISMATCH", "Execution receipt scope does not match.",
+                        "Receipt execution không khớp phạm vi.");
+            var data = CanonicalJson.write(view);
+            if (r.json)
+                out.println(CanonicalJson
+                        .write(Map.of("apiVersion", com.evolution.analysis.execution.RegisteredExecutionPort.VERSION,
+                                "data", view, "resultIdentity", ContentDigest.sha256Utf8(data))));
+            else
+                out.println(view.attemptPhase() + " / " + view.taskPhase() + " / " + view.availability()
+                        + (view.reason().isEmpty() ? "" : " / " + view.reason()));
+            return switch (view.taskPhase()) {
+                case SUCCEEDED, CANCELLED -> 0;
+                case FAILED -> 1;
+                default -> 3;
+            };
         }
     }
-    private NativeBuildCoordinator nativeCoordinator(String name,Path source)throws IOException{
-        var registration=NativeBuildRegistrations.selected(name,source).orElseThrow(()->new IOException("NATIVE_BUILD_PROFILE_NOT_REGISTERED"));
-        var profile=CanonicalRecordReader.read(registration.document(),NativeBuildProfile.class);
-        if(!CanonicalJson.write(profile).equals(CanonicalJson.write(registration.document())))throw new IOException("NATIVE_BUILD_PROFILE_INVALID");
-        if(source!=null&&Path.of(profile.stateDirectory()).toAbsolutePath().normalize().startsWith(source.toAbsolutePath().normalize()))throw new IOException("NATIVE_STATE_INSIDE_TARGET");
-        return new NativeBuildCoordinator(profile,registration);
-    }
-    private NativeBuildCoordinator.Result buildNative(String name,Path source,ReadinessPlan plan,String revision,RepositoryIntake intake)throws IOException{
-        if(NativeBuildRegistrations.selected(name,source).isEmpty())return NativeBuildCoordinator.unavailable(plan,"NATIVE_BUILD_PROFILE_NOT_REGISTERED");
-        try{return nativeCoordinator(name,source).run(plan,revision,intake.inventory(),intake.content(),source,()->Thread.currentThread().isInterrupted());}
-        catch(IOException unavailable){String code=unavailable.getMessage();if("NATIVE_TERMINATION_UNCONFIRMED".equals(code))throw unavailable;return NativeBuildCoordinator.unavailable(plan,code!=null&&code.matches("(?:NATIVE|REGISTERED|CURRENT_SANDBOX)_[A-Z0-9_]{1,80}")?code:"NATIVE_BUILD_UNAVAILABLE");}
-    }
-    @Command(name="build",mixinStandardHelpOptions=true,description="Build captured Maven/Gradle roots in registered disposable Hyper-V workers")
-    private final class NativeBuild implements Callable<Integer>{
-        final Root r;NativeBuild(Root r){this.r=r;}
-        @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR")Path source;
-        @Option(names="--repo")String repository;
-        @Option(names="--build-profile",defaultValue="default")String profile;
-        @Option(names="--exclude")List<String> excludes=new ArrayList<>();
-        public Integer call()throws Exception{
-            r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");var path=Workspace.safe(resolve(source));var repo=RepositoryIdentity.fromCanonicalCoordinate(repository!=null?repository:"urn:evo:local:"+ContentDigest.sha256Utf8(path.toString()).value().substring(7));
-            var excluded=new TreeSet<>(List.of(".git",".evo"));excluded.addAll(excludes);var state=r.storage().root;if(state.startsWith(path)&&!state.equals(path))excluded.add(path.relativize(state).toString().replace('\\','/'));
-            String revision=UUID.randomUUID().toString();r.stage="acquisition";
-            try(var intake=new RepositoryIntake(state.resolve("acquisition"))){
-                var captured=intake.local(path,revision,new StreamingAcquisitionRequest(repo,Optional.empty(),false,List.copyOf(excluded)),()->Thread.currentThread().isInterrupted());
-                if(captured.manifest().isEmpty())return emit(r,"build",envelope(Map.of("status",captured.state(),"acquisition",captured,"semanticCoverage","NOT_EVALUATED")),3);
-                var plan=intake.readiness(revision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());r.stage="isolated-native-build";
-                var result=buildNative(profile,path,plan,revision,intake);return emit(r,"build",envelope(result),Set.of("BUILT","NOT_APPLICABLE").contains(result.status())?0:result.status().equals("FAILED")?1:3);
+
+    @Command(name = "readiness", mixinStandardHelpOptions = true, description = "Plan all build roots, contexts and native evidence requirements / Lập kế hoạch readiness")
+    private final class Readiness implements Callable<Integer> {
+        final Root r;
+
+        Readiness(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "REVISION")
+        String revision;
+        @Option(names = "--section", defaultValue = "requirements")
+        String section;
+        @Option(names = "--source-set")
+        List<String> sourceSets = new ArrayList<>();
+        @Option(names = "--variant")
+        List<String> variants = new ArrayList<>();
+
+        public Integer call() throws Exception {
+            r.validate();
+            var requested = new TreeMap<String, List<String>>();
+            if (!sourceSets.isEmpty())
+                requested.put("sourceSet", sourceSets);
+            if (!variants.isEmpty())
+                requested.put("variant", variants);
+            var policy = new ReadinessPlanner.Policy(requested, true, 1_000_000);
+            try (var intake = new RepositoryIntake(r.storage().root.resolve("acquisition"))) {
+                return emit(r, "readiness", envelope(
+                        intake.readinessPage(revision, section, r.limit, Optional.ofNullable(r.cursor), policy)), 0);
             }
         }
     }
-    @Command(name="build-register",mixinStandardHelpOptions=true,description="Pin an operator native-build profile; registration grants no qualification")
-    private final class NativeBuildRegister implements Callable<Integer>{
-        final Root r;NativeBuildRegister(Root r){this.r=r;}
-        @Parameters(index="0")String name;@Parameters(index="1",paramLabel="PROFILE.json")Path file;
-        public Integer call()throws Exception{r.validate();var path=Workspace.safe(resolve(file));var document=GraphJson.object(Workspace.json(path,1048576));var profile=CanonicalRecordReader.read(document,NativeBuildProfile.class);if(!CanonicalJson.write(profile).equals(CanonicalJson.write(document)))throw new InputFailure("NATIVE_BUILD_PROFILE_INVALID");NativeBuildRegistrations.register(name,path);return emit(r,"build-register",envelope(Map.of("status","REGISTERED","profile",name,"registered",true,"qualification","NOT_ASSESSED","workerLaunched",false)),0);}
+
+    @Command(name = "graph-pages", mixinStandardHelpOptions = true, description = "Read bounded raw graph partitions without materializing a snapshot")
+    private final class GraphPages implements Callable<Integer> {
+        final Root r;
+
+        GraphPages(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(index = "0", paramLabel = "partitions|nodes|adjacency|evidence|build")
+        String operation;
+        @Parameters(index = "1", arity = "0..1", paramLabel = "NODE|EVIDENCE")
+        String node;
+        @Option(names = "--partition", paramLabel = "CONTEXT")
+        String partition;
+        @Option(names = "--graph-id", paramLabel = "SHA256")
+        String graphId;
+
+        public Integer call() throws Exception {
+            r.validate();
+            if (!Set.of("partitions", "nodes", "adjacency", "evidence", "build").contains(operation))
+                throw new InputFailure("INVALID_GRAPH_PAGE_OPERATION");
+            if (r.graph != null)
+                throw new InputFailure("GRAPH_FILE_NOT_APPLICABLE");
+            if (node != null && !Set.of("adjacency", "evidence").contains(operation)
+                    || partition != null && Set.of("partitions", "build", "evidence").contains(operation)
+                    || r.incoming && !operation.equals("adjacency") || operation.equals("build") && r.cursor != null
+                    || operation.equals("evidence") && matched(r, "--cursor", "--limit"))
+                throw new InputFailure("GRAPH_PAGE_FLAGS_NOT_APPLICABLE");
+            if (matched(r, "--context", "--request", "--args", "--other", "--policy", "--view", "--scope", "--world",
+                    "--assignment", "--kinds", "--depth"))
+                throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
+            var graph = graphId == null ? new ContentDigest(GraphJson.string(r.storage().selection().get("graph")))
+                    : new ContentDigest(graphId);
+            var pages = r.storage().partitioned();
+            Object data;
+            if (operation.equals("build")) {
+                if (graphId != null && !graphId.equals(GraphJson.string(r.storage().selection().get("graph"))))
+                    throw new InputFailure("GRAPH_PAGE_BUILD_SELECTION_REQUIRED");
+                pages.importSnapshot(r.storage().root.resolve(graph.value().substring(7) + ".graph.json"), graph,
+                        () -> Thread.currentThread().isInterrupted());
+                data = Map.of("graph", graph, "status", "INDEXED");
+            } else if (operation.equals("partitions"))
+                data = pages.partitions(graph, r.limit, Optional.ofNullable(r.cursor));
+            else if (operation.equals("evidence")) {
+                if (node == null)
+                    throw new InputFailure("EVIDENCE_REQUIRED");
+                data = Map.of("evidence", pages.evidence(graph, new ContentDigest(node))
+                        .orElseThrow(() -> new InputFailure("EVIDENCE_UNAVAILABLE")));
+            } else {
+                if (partition == null)
+                    throw new InputFailure("PARTITION_REQUIRED");
+                var selected = pages.partition(graph, partition)
+                        .orElseThrow(() -> new InputFailure("PARTITION_UNAVAILABLE"));
+                if (operation.equals("nodes"))
+                    data = pages.nodes(selected, r.limit, Optional.ofNullable(r.cursor));
+                else {
+                    if (node == null)
+                        throw new InputFailure("NODE_REQUIRED");
+                    data = pages.adjacency(selected, node, r.incoming, r.limit, Optional.ofNullable(r.cursor));
+                }
+            }
+            return emit(r, "graph-pages", envelope(Map.of("graph", graph, "scope", "RAW_CONTEXT_FACTS", "page", data,
+                    "semanticAccuracy", "NOT_CERTIFIED")), 0);
+        }
     }
-    @Command(name="build-profile",mixinStandardHelpOptions=true,description="Describe exact Hyper-V qualification inputs without launching a worker")
-    private final class NativeBuildDescribe implements Callable<Integer>{
-        final Root r;NativeBuildDescribe(Root r){this.r=r;}@Parameters(defaultValue="default",arity="0..1")String name;
-        public Integer call()throws Exception{r.validate();return emit(r,"build-profile",envelope(nativeCoordinator(name,null).describe()),0);}
+
+    private NativeBuildCoordinator nativeCoordinator(String name, Path source) throws IOException {
+        var registration = NativeBuildRegistrations.selected(name, source)
+                .orElseThrow(() -> new IOException("NATIVE_BUILD_PROFILE_NOT_REGISTERED"));
+        var profile = CanonicalRecordReader.read(registration.document(), NativeBuildProfile.class);
+        if (!CanonicalJson.write(profile).equals(CanonicalJson.write(registration.document())))
+            throw new IOException("NATIVE_BUILD_PROFILE_INVALID");
+        if (source != null && Path.of(profile.stateDirectory()).toAbsolutePath().normalize()
+                .startsWith(source.toAbsolutePath().normalize()))
+            throw new IOException("NATIVE_STATE_INSIDE_TARGET");
+        return new NativeBuildCoordinator(profile, registration);
     }
-    @Command(name="build-recover",mixinStandardHelpOptions=true,description="Fence a recorded native worker Off; never retry a target lifecycle")
-    private final class NativeBuildRecover implements Callable<Integer>{
-        final Root r;NativeBuildRecover(Root r){this.r=r;}@Parameters String attempt;@Option(names="--build-profile",defaultValue="default")String profile;
-        public Integer call()throws Exception{r.validate();return emit(r,"build-recover",envelope(nativeCoordinator(profile,null).recover(UUID.fromString(attempt))),0);}
+
+    private NativeBuildCoordinator.Result buildNative(String name, Path source, ReadinessPlan plan, String revision,
+            RepositoryIntake intake) throws IOException {
+        if (NativeBuildRegistrations.selected(name, source).isEmpty())
+            return NativeBuildCoordinator.unavailable(plan, "NATIVE_BUILD_PROFILE_NOT_REGISTERED");
+        try {
+            return nativeCoordinator(name, source).run(plan, revision, intake.inventory(), intake.content(), source,
+                    () -> Thread.currentThread().isInterrupted());
+        } catch (IOException unavailable) {
+            String code = unavailable.getMessage();
+            if ("NATIVE_TERMINATION_UNCONFIRMED".equals(code))
+                throw unavailable;
+            return NativeBuildCoordinator.unavailable(plan,
+                    code != null && code.matches("(?:NATIVE|REGISTERED|CURRENT_SANDBOX)_[A-Z0-9_]{1,80}") ? code
+                            : "NATIVE_BUILD_UNAVAILABLE");
+        }
     }
-    @Command(name="scan",mixinStandardHelpOptions=true,description="Source, remote Git/GitHub, or authenticated captured-context repository analysis")
-    private final class Scan implements Callable<Integer>{
-        final Root r;Scan(Root r){this.r=r;}
-        @Parameters(arity="0..1",defaultValue=".",paramLabel="DIR|GIT_URL") String source;
-        @Option(names="--ref",defaultValue="HEAD",paramLabel="REF",description="Git branch, tag, commit SHA, or refs/pull/N/head for remote URLs") String ref;
-        @Option(names="--repo",paramLabel="COORDINATE",description="Stable repository coordinate / Định danh repository") String repository;
-        @Option(names="--jdk",paramLabel="DIR",description="Analyzed JDK; default captured host JDK / JDK phân tích") Path jdk=Path.of(System.getProperty("java.home"));
-        @Option(names="--android-sdk",paramLabel="DIR",description="Android SDK root with platforms/android-N/android.jar / Thư mục Android SDK") Path androidSdk;
-        @Option(names="--release",paramLabel="N",description="Explicit target release; default 21 / Java đích") int release=21;
-        @Option(names="--revision",paramLabel="LABEL",description="Caller-supplied revision label / Nhãn revision do người gọi cung cấp") String revision;
-        @Option(names="--dirty",description="Caller-supplied dirty flag; no VCS inspection / Cờ dirty do người gọi cung cấp") boolean dirty;
-        @Option(names="--exclude",paramLabel="PATH",description="Additional recorded exclusion; repeatable / Loại trừ có ghi nhận") List<String> excludes=new ArrayList<>();
-        @Option(names="--include-tests",description="Include test source trees / Gồm mã nguồn kiểm thử") boolean includeTests;
-        @Option(names="--all-files",description="Capture all files, including assets and outputs / Thu thập mọi tệp") boolean allFiles;
-        @Option(names="--maven-cache",paramLabel="DIR",description="Selected Maven2 artifact cache / Cache artifact Maven2") Path mavenCache=Path.of(System.getProperty("user.home"),".m2","repository");
-        @Option(names="--offline",description="Use captured/local artifacts only; disable metadata and dependency downloads") boolean offline;
-        @Option(names="--prepare-dependencies",description="Populate and verify the selected artifact cache without semantic analysis or target execution; then reuse it with --offline") boolean prepareDependencies;
-        @Option(names="--java-capture",paramLabel="DIR",description="Use an operator-selected authenticated native Java context for this exact snapshot") Path javaCapture;
-        @Option(names="--semantic-store",paramLabel="DIR",description="Attach an existing native polyglot publication for this exact captured inventory") Path semanticStore;
-        @Option(names="--semantic-plan",paramLabel="SHA256",description="Exact native selected-context plan in --semantic-store") String semanticPlan;
-        @Option(names="--semantic-policy",paramLabel="SHA256",description="Current operator policy for the native publication") String semanticPolicy;
-        @Option(names="--semantic-authority",paramLabel="DIR",description="Operator keys/methods/claims for a qualified native publication") Path semanticAuthority;
-        @Option(names="--build",defaultValue="auto",paramLabel="auto|required|off",description="Automatically build Maven/Gradle roots through the registered Hyper-V executor")String buildMode;
-        @Option(names="--build-profile",defaultValue="default",paramLabel="NAME",description="Operator-registered Hyper-V build profile")String buildProfile;
-        @Option(names="--mode",defaultValue="full",paramLabel="full|fast",description="Analysis profile: full deep evidence or fast architecture / Chế độ phân tích")String mode="full";
-        @Option(names="--fast",description="Fast architecture profile (shorthand for --mode fast) / Chế độ kiến trúc nhanh")boolean fastFlag;
-        @Option(names="--spring-sat",description="Enable automatic multi-config Spring SAT evaluation / Bật đánh giá SAT đa cấu hình Spring")boolean springSat;
-        @Option(names="--force",description="Bypass incremental Java/polyglot syntax caches / Bỏ qua cache phân tích tăng dần")boolean force;
-        @Option(names="--no-incremental",description="Disable incremental delta re-analysis and caches (clean full scan) / Tắt phân tích tăng dần")boolean noIncremental;
-        @Option(names="--telemetry",description="Print per-stage millisecond and cache telemetry to stderr / Ghi thời gian và cache từng giai đoạn")boolean telemetry;
-        @Option(names="--artifact-repository",paramLabel="HTTPS_URI",description="Explicit credential-free dependency repository; repeatable") List<java.net.URI> artifactRepositories=new ArrayList<>();
-        public Integer call()throws Exception{
-            long tScanStart=System.nanoTime();
-            r.validate();if(matched(r,"--graph","--context","--request","--args","--other","--policy","--view","--scope","--world","--assignment","--incoming","--kinds","--limit","--depth","--cursor"))throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
+
+    @Command(name = "build", mixinStandardHelpOptions = true, description = "Build captured Maven/Gradle roots in registered disposable Hyper-V workers")
+    private final class NativeBuild implements Callable<Integer> {
+        final Root r;
+
+        NativeBuild(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(arity = "0..1", defaultValue = ".", paramLabel = "DIR")
+        Path source;
+        @Option(names = "--repo")
+        String repository;
+        @Option(names = "--build-profile", defaultValue = "default")
+        String profile;
+        @Option(names = "--exclude")
+        List<String> excludes = new ArrayList<>();
+
+        public Integer call() throws Exception {
+            r.validate();
+            if (matched(r, "--graph", "--context", "--request", "--args", "--other", "--policy", "--view", "--scope",
+                    "--world", "--assignment", "--incoming", "--kinds", "--limit", "--depth", "--cursor"))
+                throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
+            var path = Workspace.safe(resolve(source));
+            var repo = RepositoryIdentity.fromCanonicalCoordinate(repository != null ? repository
+                    : "urn:evo:local:" + ContentDigest.sha256Utf8(path.toString()).value().substring(7));
+            var excluded = new TreeSet<>(List.of(".git", ".evo"));
+            excluded.addAll(excludes);
+            var state = r.storage().root;
+            if (state.startsWith(path) && !state.equals(path))
+                excluded.add(path.relativize(state).toString().replace('\\', '/'));
+            String revision = UUID.randomUUID().toString();
+            r.stage = "acquisition";
+            try (var intake = new RepositoryIntake(state.resolve("acquisition"))) {
+                var captured = intake.local(path, revision,
+                        new StreamingAcquisitionRequest(repo, Optional.empty(), false, List.copyOf(excluded)),
+                        () -> Thread.currentThread().isInterrupted());
+                if (captured.manifest().isEmpty())
+                    return emit(r, "build", envelope(Map.of("status", captured.state(), "acquisition", captured,
+                            "semanticCoverage", "NOT_EVALUATED")), 3);
+                var plan = intake.readiness(revision, ReadinessPlanner.Policy.comprehensive(),
+                        () -> Thread.currentThread().isInterrupted());
+                r.stage = "isolated-native-build";
+                var result = buildNative(profile, path, plan, revision, intake);
+                return emit(r, "build", envelope(result),
+                        Set.of("BUILT", "NOT_APPLICABLE").contains(result.status()) ? 0
+                                : result.status().equals("FAILED") ? 1 : 3);
+            }
+        }
+    }
+
+    @Command(name = "build-register", mixinStandardHelpOptions = true, description = "Pin an operator native-build profile; registration grants no qualification")
+    private final class NativeBuildRegister implements Callable<Integer> {
+        final Root r;
+
+        NativeBuildRegister(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(index = "0")
+        String name;
+        @Parameters(index = "1", paramLabel = "PROFILE.json")
+        Path file;
+
+        public Integer call() throws Exception {
+            r.validate();
+            var path = Workspace.safe(resolve(file));
+            var document = GraphJson.object(Workspace.json(path, 1048576));
+            var profile = CanonicalRecordReader.read(document, NativeBuildProfile.class);
+            if (!CanonicalJson.write(profile).equals(CanonicalJson.write(document)))
+                throw new InputFailure("NATIVE_BUILD_PROFILE_INVALID");
+            NativeBuildRegistrations.register(name, path);
+            return emit(r, "build-register", envelope(Map.of("status", "REGISTERED", "profile", name, "registered",
+                    true, "qualification", "NOT_ASSESSED", "workerLaunched", false)), 0);
+        }
+    }
+
+    @Command(name = "build-profile", mixinStandardHelpOptions = true, description = "Describe exact Hyper-V qualification inputs without launching a worker")
+    private final class NativeBuildDescribe implements Callable<Integer> {
+        final Root r;
+
+        NativeBuildDescribe(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(defaultValue = "default", arity = "0..1")
+        String name;
+
+        public Integer call() throws Exception {
+            r.validate();
+            return emit(r, "build-profile", envelope(nativeCoordinator(name, null).describe()), 0);
+        }
+    }
+
+    @Command(name = "build-recover", mixinStandardHelpOptions = true, description = "Fence a recorded native worker Off; never retry a target lifecycle")
+    private final class NativeBuildRecover implements Callable<Integer> {
+        final Root r;
+
+        NativeBuildRecover(Root r) {
+            this.r = r;
+        }
+
+        @Parameters
+        String attempt;
+        @Option(names = "--build-profile", defaultValue = "default")
+        String profile;
+
+        public Integer call() throws Exception {
+            r.validate();
+            return emit(r, "build-recover",
+                    envelope(nativeCoordinator(profile, null).recover(UUID.fromString(attempt))), 0);
+        }
+    }
+
+    @Command(name = "scan", mixinStandardHelpOptions = true, description = "Source, remote Git/GitHub, or authenticated captured-context repository analysis")
+    private final class Scan implements Callable<Integer> {
+        final Root r;
+
+        Scan(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(arity = "0..1", defaultValue = ".", paramLabel = "DIR|GIT_URL")
+        String source;
+        @Option(names = "--ref", defaultValue = "HEAD", paramLabel = "REF", description = "Git branch, tag, commit SHA, or refs/pull/N/head for remote URLs")
+        String ref;
+        @Option(names = "--repo", paramLabel = "COORDINATE", description = "Stable repository coordinate / Định danh repository")
+        String repository;
+        @Option(names = "--jdk", paramLabel = "DIR", description = "Analyzed JDK; default captured host JDK / JDK phân tích")
+        Path jdk = Path.of(System.getProperty("java.home"));
+        @Option(names = "--android-sdk", paramLabel = "DIR", description = "Android SDK root with platforms/android-N/android.jar / Thư mục Android SDK")
+        Path androidSdk;
+        @Option(names = "--release", paramLabel = "N", description = "Explicit target release; default 21 / Java đích")
+        int release = 21;
+        @Option(names = "--revision", paramLabel = "LABEL", description = "Caller-supplied revision label / Nhãn revision do người gọi cung cấp")
+        String revision;
+        @Option(names = "--dirty", description = "Caller-supplied dirty flag; no VCS inspection / Cờ dirty do người gọi cung cấp")
+        boolean dirty;
+        @Option(names = "--exclude", paramLabel = "PATH", description = "Additional recorded exclusion; repeatable / Loại trừ có ghi nhận")
+        List<String> excludes = new ArrayList<>();
+        @Option(names = "--include-tests", description = "Include test source trees / Gồm mã nguồn kiểm thử")
+        boolean includeTests;
+        @Option(names = "--all-files", description = "Capture all files, including assets and outputs / Thu thập mọi tệp")
+        boolean allFiles;
+        @Option(names = "--maven-cache", paramLabel = "DIR", description = "Selected Maven2 artifact cache / Cache artifact Maven2")
+        Path mavenCache = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        @Option(names = "--offline", description = "Use captured/local artifacts only; disable metadata and dependency downloads")
+        boolean offline;
+        @Option(names = "--prepare-dependencies", description = "Populate and verify the selected artifact cache without semantic analysis or target execution; then reuse it with --offline")
+        boolean prepareDependencies;
+        @Option(names = "--java-capture", paramLabel = "DIR", description = "Use an operator-selected authenticated native Java context for this exact snapshot")
+        Path javaCapture;
+        @Option(names = "--semantic-store", paramLabel = "DIR", description = "Attach an existing native polyglot publication for this exact captured inventory")
+        Path semanticStore;
+        @Option(names = "--semantic-plan", paramLabel = "SHA256", description = "Exact native selected-context plan in --semantic-store")
+        String semanticPlan;
+        @Option(names = "--semantic-policy", paramLabel = "SHA256", description = "Current operator policy for the native publication")
+        String semanticPolicy;
+        @Option(names = "--semantic-authority", paramLabel = "DIR", description = "Operator keys/methods/claims for a qualified native publication")
+        Path semanticAuthority;
+        @Option(names = "--build", defaultValue = "auto", paramLabel = "auto|required|off", description = "Automatically build Maven/Gradle roots through the registered Hyper-V executor")
+        String buildMode;
+        @Option(names = "--build-profile", defaultValue = "default", paramLabel = "NAME", description = "Operator-registered Hyper-V build profile")
+        String buildProfile;
+        @Option(names = "--mode", defaultValue = "full", paramLabel = "full|fast", description = "Analysis profile: full deep evidence or fast architecture / Chế độ phân tích")
+        String mode = "full";
+        @Option(names = "--fast", description = "Fast architecture profile (shorthand for --mode fast) / Chế độ kiến trúc nhanh")
+        boolean fastFlag;
+        @Option(names = "--spring-sat", description = "Enable automatic multi-config Spring SAT evaluation / Bật đánh giá SAT đa cấu hình Spring")
+        boolean springSat;
+        @Option(names = "--projection-profile", defaultValue = "strict", paramLabel = "strict|dfd-export", description = "Service architecture projection profile: strict (default) or dfd-export")
+        String projectionProfile = "strict";
+        @Option(names = "--force", description = "Bypass incremental Java/polyglot syntax caches / Bỏ qua cache phân tích tăng dần")
+        boolean force;
+        @Option(names = "--no-incremental", description = "Disable incremental delta re-analysis and caches (clean full scan) / Tắt phân tích tăng dần")
+        boolean noIncremental;
+        @Option(names = "--telemetry", description = "Print per-stage millisecond and cache telemetry to stderr / Ghi thời gian và cache từng giai đoạn")
+        boolean telemetry;
+        @Option(names = "--artifact-repository", paramLabel = "HTTPS_URI", description = "Explicit credential-free dependency repository; repeatable")
+        List<java.net.URI> artifactRepositories = new ArrayList<>();
+
+        public Integer call() throws Exception {
+            long tScanStart = System.nanoTime();
+            r.validate();
+            if (matched(r, "--graph", "--context", "--request", "--args", "--other", "--policy", "--view", "--scope",
+                    "--world", "--assignment", "--incoming", "--kinds", "--limit", "--depth", "--cursor"))
+                throw new InputFailure("QUERY_FLAGS_NOT_APPLICABLE");
+            com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile resolvedProfile;
+            String normProfile = projectionProfile == null ? "strict"
+                    : projectionProfile.trim().toLowerCase(Locale.ROOT);
+            if (normProfile.equals("strict"))
+                resolvedProfile = com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.STRICT;
+            else if (normProfile.equals("dfd-export"))
+                resolvedProfile = com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT;
+            else
+                throw new InputFailure("INVALID_PROJECTION_PROFILE");
             com.evolution.backend.analysis.AnalysisMode analysisMode;
-            try{analysisMode=com.evolution.backend.analysis.AnalysisMode.parse(mode);}catch(IllegalArgumentException invalid){throw new InputFailure("INVALID_ANALYSIS_MODE");}
-            if(fastFlag&&matched(r,"--mode")&&!analysisMode.isFastArchitecture())throw new InputFailure("ANALYSIS_MODE_CONFLICT");
-            if(fastFlag)analysisMode=com.evolution.backend.analysis.AnalysisMode.FAST_ARCHITECTURE;
-            boolean fast=analysisMode.isFastArchitecture();
-            if(offline&&!artifactRepositories.isEmpty())throw new InputFailure("OFFLINE_REPOSITORY_CONFLICT");
-            if(prepareDependencies&&(javaCapture!=null||semanticStore!=null||buildMode.equals("required")))throw new InputFailure("DEPENDENCY_PREPARATION_MODE_CONFLICT");
-            if(javaCapture!=null&&matched(r,"--jdk","--release","--artifact-repository","--maven-cache"))throw new InputFailure("CAPTURED_CONTEXT_OVERRIDE_CONFLICT");
-            if(!Set.of("auto","required","off").contains(buildMode))throw new InputFailure("INVALID_BUILD_MODE");
-            if(javaCapture!=null&&buildMode.equals("required"))throw new InputFailure("CAPTURED_BUILD_MODE_CONFLICT");
-            if((semanticStore==null)!=(semanticPlan==null)||semanticStore==null&&(semanticPolicy!=null||semanticAuthority!=null)||semanticStore!=null&&semanticPolicy==null&&semanticAuthority==null)throw new InputFailure("SEMANTIC_CAPTURE_OPTIONS_REQUIRED");
-            var repositories=offline?List.<java.net.URI>of():artifactRepositories.isEmpty()?MavenScan.DEFAULT_REPOSITORIES:List.copyOf(artifactRepositories);
-            sessionGraph=null;
-            boolean remoteSource = source != null && (source.contains("://") || source.startsWith("git@") || source.startsWith("github:"));
+            try {
+                analysisMode = com.evolution.backend.analysis.AnalysisMode.parse(mode);
+            } catch (IllegalArgumentException invalid) {
+                throw new InputFailure("INVALID_ANALYSIS_MODE");
+            }
+            if (fastFlag && matched(r, "--mode") && !analysisMode.isFastArchitecture())
+                throw new InputFailure("ANALYSIS_MODE_CONFLICT");
+            if (fastFlag)
+                analysisMode = com.evolution.backend.analysis.AnalysisMode.FAST_ARCHITECTURE;
+            boolean fast = analysisMode.isFastArchitecture();
+            if (offline && !artifactRepositories.isEmpty())
+                throw new InputFailure("OFFLINE_REPOSITORY_CONFLICT");
+            if (prepareDependencies && (javaCapture != null || semanticStore != null || buildMode.equals("required")))
+                throw new InputFailure("DEPENDENCY_PREPARATION_MODE_CONFLICT");
+            if (javaCapture != null && matched(r, "--jdk", "--release", "--artifact-repository", "--maven-cache"))
+                throw new InputFailure("CAPTURED_CONTEXT_OVERRIDE_CONFLICT");
+            if (!Set.of("auto", "required", "off").contains(buildMode))
+                throw new InputFailure("INVALID_BUILD_MODE");
+            if (javaCapture != null && buildMode.equals("required"))
+                throw new InputFailure("CAPTURED_BUILD_MODE_CONFLICT");
+            if ((semanticStore == null) != (semanticPlan == null)
+                    || semanticStore == null && (semanticPolicy != null || semanticAuthority != null)
+                    || semanticStore != null && semanticPolicy == null && semanticAuthority == null)
+                throw new InputFailure("SEMANTIC_CAPTURE_OPTIONS_REQUIRED");
+            var repositories = offline ? List.<java.net.URI>of()
+                    : artifactRepositories.isEmpty() ? MavenScan.DEFAULT_REPOSITORIES
+                            : List.copyOf(artifactRepositories);
+            sessionGraph = null;
+            boolean remoteSource = source != null
+                    && (source.contains("://") || source.startsWith("git@") || source.startsWith("github:"));
             Path sourcePath = null;
             String remoteCloneUrl = null;
             RepositoryIdentity repo;
             if (remoteSource) {
                 var ghOpt = com.evolution.backend.github.GitHubCoordinates.tryParse(source);
-                remoteCloneUrl = ghOpt.map(com.evolution.backend.github.GitHubCoordinates.Coordinates::canonicalCloneUrl).orElse(source);
+                remoteCloneUrl = ghOpt
+                        .map(com.evolution.backend.github.GitHubCoordinates.Coordinates::canonicalCloneUrl)
+                        .orElse(source);
                 repo = RepositoryIdentity.fromCanonicalCoordinate(repository != null ? repository : remoteCloneUrl);
             } else {
                 sourcePath = Workspace.safe(resolve(Path.of(source)));
@@ -878,529 +1858,1211 @@ public final class EvoApp {
                         : "urn:evo:local:" + ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
             }
             final Path localSourcePath = sourcePath;
-            Optional<PolyglotScan.Published> languageEvidence=Optional.empty();
-            if(semanticStore!=null) {
-                var store=Workspace.safe(resolve(semanticStore));var authority=Optional.ofNullable(semanticAuthority).map(EvoApp.this::resolve);
-                if(localSourcePath!=null && (store.startsWith(localSourcePath)||authority.filter(p->p.toAbsolutePath().normalize().startsWith(localSourcePath)).isPresent()))throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
-                var trust=semanticPolicy==null?SemanticAuthorityStore.policy(authority.orElseThrow()):new ContentDigest(semanticPolicy);
-                languageEvidence=Optional.of(PolyglotScan.load(store,new ContentDigest(semanticPlan),trust,authority,()->Thread.currentThread().isInterrupted()));
+            Optional<PolyglotScan.Published> languageEvidence = Optional.empty();
+            if (semanticStore != null) {
+                var store = Workspace.safe(resolve(semanticStore));
+                var authority = Optional.ofNullable(semanticAuthority).map(EvoApp.this::resolve);
+                if (localSourcePath != null && (store.startsWith(localSourcePath) || authority
+                        .filter(p -> p.toAbsolutePath().normalize().startsWith(localSourcePath)).isPresent()))
+                    throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
+                var trust = semanticPolicy == null ? SemanticAuthorityStore.policy(authority.orElseThrow())
+                        : new ContentDigest(semanticPolicy);
+                languageEvidence = Optional.of(PolyglotScan.load(store, new ContentDigest(semanticPlan), trust,
+                        authority, () -> Thread.currentThread().isInterrupted()));
             }
-            var excluded=new TreeSet<>(List.of(".git",".evo"));excluded.addAll(excludes);Path session=r.storage().root;
-            if(sourcePath!=null && session.startsWith(sourcePath)&&!session.equals(sourcePath))excluded.add(sourcePath.relativize(session).toString().replace('\\','/'));
-            var selection=sourcePath!=null
-                    ? ScanSelection.plan(sourcePath,includeTests,allFiles,List.copyOf(excluded))
-                    : new ScanSelection.Plan("repository.selection:m8.4-v2",includeTests,true,List.copyOf(excluded));
+            var excluded = new TreeSet<>(List.of(".git", ".evo"));
+            excluded.addAll(excludes);
+            Path session = r.storage().root;
+            if (sourcePath != null && session.startsWith(sourcePath) && !session.equals(sourcePath))
+                excluded.add(sourcePath.relativize(session).toString().replace('\\', '/'));
+            var selection = sourcePath != null
+                    ? ScanSelection.plan(sourcePath, includeTests, allFiles, List.copyOf(excluded))
+                    : new ScanSelection.Plan("repository.selection:m8.4-v2", includeTests, true, List.copyOf(excluded));
             excluded.addAll(selection.excluded());
-            r.stage="acquisition";
-            progress(r,prepareDependencies?"[1/2] Capturing dependency declarations…":"[1/4] Reading selected source/build/configuration files…",prepareDependencies?"[1/2] Thu nhận khai báo dependency…":"[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
-            boolean incrementalDisabled=force||noIncremental||Boolean.getBoolean("evo.incremental.disabled");
-            var sharedCaches=com.evolution.backend.analysis.LocalAnalysisRunner.sharedCaches(r.storage().root.resolve("acquisition"));
-            var runDeltaCache=incrementalDisabled?null:sharedCaches.buildDelta().forRun();
-            if(!incrementalDisabled){
-                JavaParserFrontend.configureModuleCacheDirectory(r.storage().root.resolve("acquisition").resolve("incremental-cache").resolve("javaparser-modules"));
+            r.stage = "acquisition";
+            progress(r,
+                    prepareDependencies ? "[1/2] Capturing dependency declarations…"
+                            : "[1/4] Reading selected source/build/configuration files…",
+                    prepareDependencies ? "[1/2] Thu nhận khai báo dependency…"
+                            : "[1/4] Đọc mã nguồn, build và cấu hình đã chọn…");
+            boolean incrementalDisabled = force || noIncremental || Boolean.getBoolean("evo.incremental.disabled");
+            var sharedCaches = com.evolution.backend.analysis.LocalAnalysisRunner
+                    .sharedCaches(r.storage().root.resolve("acquisition"));
+            var runDeltaCache = incrementalDisabled ? null : sharedCaches.buildDelta().forRun();
+            if (!incrementalDisabled) {
+                JavaParserFrontend.configureModuleCacheDirectory(r.storage().root.resolve("acquisition")
+                        .resolve("incremental-cache").resolve("javaparser-modules"));
             }
-            String intakeRevision=UUID.randomUUID().toString();StreamingRepositoryAcquirer.Receipt captured;
-            Optional<StreamingRepositoryAcquirer.FileDelta> fileDelta=Optional.empty();
-            Optional<String> baseSnapshotId=Optional.empty();
-            String incFallbackReason=noIncremental?"NO_INCREMENTAL_FLAG":force?"FORCE_FLAG":Boolean.getBoolean("evo.incremental.disabled")?"INCREMENTAL_DISABLED_PROPERTY":"";
-            RepositoryAcquisitionResult acquisition;ReadinessPlan readiness;NativeBuildCoordinator.Result nativeBuild=null;PolyglotScan.Result polyglot;
-            try(var artifactSession=com.evolution.analysis.input.VerifiedArtifactSession.open();
-                var ignoredJpSession=JavaParserFrontend.openVerificationSession();
-                var githubBroker=githubFactory.tokenBroker()){
-            try(var intake=new RepositoryIntake(r.storage().root.resolve("acquisition"))){
-                var acqReq=new StreamingAcquisitionRequest(repo,Optional.ofNullable(revision),!remoteSource&&dirty,List.copyOf(excluded));
-                if(remoteSource){
-                    var gitPolicy=new GitHostPolicy(Set.of(),Map.of(),java.net.InetAddress::getAllByName,githubBroker.readOnlyGitCredentials());
-                    String validRef=com.evolution.backend.github.GitHubCoordinates.validateRef(ref);
-                    if(!incrementalDisabled){
-                        Optional<String> baseRev=intake.latestSealed(repo,acqReq.identity()).map(SqliteInventoryStore.SealedHead::revision);
-                        var incRec=intake.gitIncremental(java.net.URI.create(remoteCloneUrl),validRef,intakeRevision,baseRev,acqReq,gitPolicy,"git",()->Thread.currentThread().isInterrupted());
-                        captured=incRec.receipt();
-                        fileDelta=incRec.delta();
-                        if(incRec.fallbackReason()!=null&&!incRec.fallbackReason().isBlank())incFallbackReason=incRec.fallbackReason();
-                    }else{
-                        captured=intake.git(java.net.URI.create(remoteCloneUrl),validRef,intakeRevision,acqReq,gitPolicy,"git",()->Thread.currentThread().isInterrupted());
+            String intakeRevision = UUID.randomUUID().toString();
+            StreamingRepositoryAcquirer.Receipt captured;
+            Optional<StreamingRepositoryAcquirer.FileDelta> fileDelta = Optional.empty();
+            Optional<String> baseSnapshotId = Optional.empty();
+            String incFallbackReason = noIncremental ? "NO_INCREMENTAL_FLAG"
+                    : force ? "FORCE_FLAG"
+                            : Boolean.getBoolean("evo.incremental.disabled") ? "INCREMENTAL_DISABLED_PROPERTY" : "";
+            RepositoryAcquisitionResult acquisition;
+            ReadinessPlan readiness;
+            NativeBuildCoordinator.Result nativeBuild = null;
+            PolyglotScan.Result polyglot;
+            try (var artifactSession = com.evolution.analysis.input.VerifiedArtifactSession.open();
+                    var ignoredJpSession = JavaParserFrontend.openVerificationSession();
+                    var githubBroker = githubFactory.tokenBroker()) {
+                try (var intake = new RepositoryIntake(r.storage().root.resolve("acquisition"))) {
+                    var acqReq = new StreamingAcquisitionRequest(repo, Optional.ofNullable(revision),
+                            !remoteSource && dirty, List.copyOf(excluded));
+                    if (remoteSource) {
+                        var gitPolicy = new GitHostPolicy(Set.of(), Map.of(), java.net.InetAddress::getAllByName,
+                                githubBroker.readOnlyGitCredentials());
+                        String validRef = com.evolution.backend.github.GitHubCoordinates.validateRef(ref);
+                        if (!incrementalDisabled) {
+                            Optional<String> baseRev = intake.latestSealed(repo, acqReq.identity())
+                                    .map(SqliteInventoryStore.SealedHead::revision);
+                            var incRec = intake.gitIncremental(java.net.URI.create(remoteCloneUrl), validRef,
+                                    intakeRevision, baseRev, acqReq, gitPolicy, "git",
+                                    () -> Thread.currentThread().isInterrupted());
+                            captured = incRec.receipt();
+                            fileDelta = incRec.delta();
+                            if (incRec.fallbackReason() != null && !incRec.fallbackReason().isBlank())
+                                incFallbackReason = incRec.fallbackReason();
+                        } else {
+                            captured = intake.git(java.net.URI.create(remoteCloneUrl), validRef, intakeRevision, acqReq,
+                                    gitPolicy, "git", () -> Thread.currentThread().isInterrupted());
+                        }
+                        var pinned = intake.pinnedCommit(intakeRevision);
+                        if (revision == null && pinned.isPresent())
+                            revision = pinned.orElseThrow();
+                    } else if (!incrementalDisabled) {
+                        boolean verifyAll = !Boolean.getBoolean("evo.incremental.trustStatCache");
+                        var incRec = intake.localCompleteIncremental(sourcePath, intakeRevision, Optional.empty(),
+                                acqReq, verifyAll, () -> Thread.currentThread().isInterrupted());
+                        captured = incRec.receipt();
+                        fileDelta = incRec.delta();
+                        if (incRec.fallbackReason() != null && !incRec.fallbackReason().isBlank())
+                            incFallbackReason = incRec.fallbackReason();
+                        if (fileDelta.isPresent()) {
+                            baseSnapshotId = intake.inventory().manifest(fileDelta.orElseThrow().baseRevision())
+                                    .map(m -> com.evolution.analysis.contract.identity.SnapshotIdentity
+                                            .from(repo, m.inventory()).value());
+                        }
+                    } else {
+                        captured = intake.localComplete(sourcePath, intakeRevision, acqReq,
+                                () -> Thread.currentThread().isInterrupted());
                     }
-                    var pinned=intake.pinnedCommit(intakeRevision);
-                    if(revision==null&&pinned.isPresent())revision=pinned.orElseThrow();
-                }else if(!incrementalDisabled){
-                    boolean verifyAll=!Boolean.getBoolean("evo.incremental.trustStatCache");
-                    var incRec=intake.localCompleteIncremental(sourcePath,intakeRevision,Optional.empty(),acqReq,verifyAll,()->Thread.currentThread().isInterrupted());
-                    captured=incRec.receipt();
-                    fileDelta=incRec.delta();
-                    if(incRec.fallbackReason()!=null&&!incRec.fallbackReason().isBlank())incFallbackReason=incRec.fallbackReason();
-                    if(fileDelta.isPresent()){
-                        baseSnapshotId=intake.inventory().manifest(fileDelta.orElseThrow().baseRevision())
-                                .map(m->com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,m.inventory()).value());
+                    if (captured.manifest().isEmpty()) {
+                        return emit(r, "scan", envelope(Map.of("status", captured.state(), "acquisition", captured,
+                                "graphCreated", false)), 3);
                     }
-                }else{
-                    captured=intake.localComplete(sourcePath,intakeRevision,acqReq,()->Thread.currentThread().isInterrupted());
+                    if (!incrementalDisabled && !remoteSource && sourcePath != null && !prepareDependencies
+                            && javaCapture == null && fileDelta.isPresent()) {
+                        var d = fileDelta.orElseThrow();
+                        if (d.addedFiles() == 0L && d.modifiedFiles() == 0L && d.deletedFiles() == 0L) {
+                            var manifestObj = captured.manifest().orElseThrow();
+                            String currentSnapshotId = com.evolution.analysis.contract.identity.SnapshotIdentity
+                                    .from(repo, manifestObj.inventory()).value();
+                            Path fpJdk = Workspace.safe(resolve(jdk));
+                            Path fpCache = Workspace.safe(resolve(mavenCache));
+                            Optional<Path> fpAndroid = androidSdk != null
+                                    ? Optional.of(Workspace.safe(resolve(androidSdk)))
+                                    : com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
+                            ContentDigest currentFp = scanFastPathFingerprint(repo, sourcePath, currentSnapshotId,
+                                    manifestObj.inventory(), revision, dirty, includeTests, allFiles, excluded,
+                                    analysisMode, fast, springSat, release, offline, buildMode, buildProfile, fpJdk,
+                                    fpCache, fpAndroid, repositories, semanticStore, semanticPlan, semanticPolicy,
+                                    semanticAuthority, resolvedProfile);
+                            Path fpFile = r.storage().root.resolve("last-scan-fastpath.json");
+                            if (Files.isRegularFile(fpFile, LinkOption.NOFOLLOW_LINKS)) {
+                                try {
+                                    var cached = GraphJson.object(Workspace.json(fpFile, 8_388_608));
+                                    ContentDigest priorGraphId = new ContentDigest(
+                                            GraphJson.string(cached.get("graphId")));
+                                    if (currentFp.value().equals(cached.get("optionsFingerprint"))
+                                            && currentSnapshotId.equals(cached.get("snapshotId"))
+                                            && r.storage().partitioned().hasPublishedRoot(priorGraphId)
+                                            && Files.isRegularFile(r.storage().root
+                                                    .resolve(priorGraphId.value().substring(7) + ".graph.json"),
+                                                    LinkOption.NOFOLLOW_LINKS)) {
+                                        boolean usable = Boolean.TRUE.equals(cached.get("usable"));
+                                        Optional<String> selectedCtx = cached.get("selectedContext") instanceof String s
+                                                && !s.isBlank() ? Optional.of(s) : Optional.empty();
+                                        if (usable)
+                                            r.storage().selectExisting(priorGraphId, selectedCtx);
+                                        if (usable && interactiveDefaults != null) {
+                                            interactiveDefaults.graph = null;
+                                            interactiveDefaults.context = null;
+                                            sessionGraph = null;
+                                        }
+                                        int priorModules = ((Number) cached.getOrDefault("moduleCount", 0)).intValue();
+                                        long priorPolyglot = ((Number) cached.getOrDefault("polyglotFiles", 0L))
+                                                .longValue();
+                                        int priorContexts = ((Number) cached.getOrDefault("contextCount", 1))
+                                                .intValue();
+                                        int priorExitCode = ((Number) cached.getOrDefault("exitCode", 0)).intValue();
+                                        String envelopeJson = GraphJson.string(cached.get("envelopeJson"));
+                                        IncrementalSummary fastSummary = new IncrementalSummary(
+                                                IncrementalSummary.MODE_NO_CHANGE, "",
+                                                Optional.of(currentSnapshotId), Optional.of(priorGraphId.value()),
+                                                Optional.empty(),
+                                                0L, 0L, 0L, d.unchangedFiles(), d.unchangedFiles(),
+                                                0, 0, 0, 0, 0, 0,
+                                                priorModules, 0, 0, 0, priorPolyglot, 0L, priorContexts, 0, 0L, false);
+                                        try {
+                                            Files.createDirectories(r.storage().root);
+                                            writeAtomicUtf8(r.storage().root.resolve("last-incremental-summary.json"),
+                                                    CanonicalJson.write(fastSummary.toMap()));
+                                        } catch (IOException ignored) {
+                                        }
+                                        long tFastEnd = System.nanoTime();
+                                        if (telemetry || (terminal && !r.json)) {
+                                            long totalMs = java.util.concurrent.TimeUnit.NANOSECONDS
+                                                    .toMillis(tFastEnd - tScanStart);
+                                            err.println("[evo] Telemetry (" + analysisMode.name()
+                                                    + ", NO_CHANGE fast-path): total=" + totalMs + "ms");
+                                            err.println("[evo] Cache: javaHits=" + priorModules
+                                                    + " javaMisses=0 | polyglotHits=" + priorPolyglot
+                                                    + " polyglotMisses=0");
+                                            err.println("[evo] Incremental (NO_CHANGE): unchanged="
+                                                    + fastSummary.unchangedFiles()
+                                                    + " added=0 modified=0 deleted=0 | reusedModules=" + priorModules
+                                                    + " recomputedModules=0 | baseSnapshot=" + currentSnapshotId
+                                                    + " | baseGraph=" + priorGraphId.value() + " | fastPath=true");
+                                            err.flush();
+                                        }
+                                        r.stage = "receipt";
+                                        return emitRawEnvelope(r, "scan", envelopeJson, priorExitCode);
+                                    }
+                                } catch (RuntimeException | IOException ignored) {
+                                }
+                            }
+                        }
+                    }
+                    readiness = !incrementalDisabled
+                            ? intake.readinessIncremental(intakeRevision, fileDelta,
+                                    ReadinessPlanner.Policy.comprehensive(),
+                                    () -> Thread.currentThread().isInterrupted(), fast)
+                            : intake.readiness(intakeRevision, ReadinessPlanner.Policy.comprehensive(),
+                                    () -> Thread.currentThread().isInterrupted());
+                    if (!prepareDependencies && javaCapture == null && !buildMode.equals("off") && sourcePath != null) {
+                        r.stage = "isolated-native-build";
+                        nativeBuild = buildNative(buildProfile, sourcePath, readiness, intakeRevision, intake);
+                        if (buildMode.equals("required")
+                                && !Set.of("BUILT", "NOT_APPLICABLE").contains(nativeBuild.status()))
+                            return emit(
+                                    r, "scan", envelope(Map.of("status", nativeBuild.status(), "nativeBuild",
+                                            nativeBuild, "graphCreated", false)),
+                                    nativeBuild.status().equals("FAILED") ? 1 : 3);
+                    }
+                    try {
+                        acquisition = intake.compatibility(intakeRevision, repo, Optional.ofNullable(revision), dirty,
+                                includeTests, allFiles, List.copyOf(excluded));
+                    } catch (IOException budget) {
+                        if (!Set.of("COMPATIBILITY_WORKER_REQUIRED", "V1_PATH_UNREPRESENTABLE",
+                                "V1_KIND_UNREPRESENTABLE", "V1_SELECTION_UNREPRESENTABLE")
+                                .contains(String.valueOf(budget.getMessage())))
+                            throw budget;
+                        if (prepareDependencies)
+                            return emit(r, "scan",
+                                    envelope(Map.of("status", "PARTIAL", "reason", budget.getMessage(), "graphCreated",
+                                            false, "semanticCoverage", "NOT_EVALUATED", "execution", Map.of("mode",
+                                                    "PASSIVE_DEPENDENCY_PREPARATION", "isolatedBuildExecuted", false))),
+                                    3);
+                        var snapshot = com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,
+                                captured.manifest().orElseThrow().inventory());
+                        r.stage = "polyglot-static-fallback";
+                        var scanner = new PolyglotScan();
+                        var remaining = scanner.run(intakeRevision, intake, readiness,
+                                EvidenceContext.forSnapshot(snapshot), languageEvidence,
+                                r.storage().root.resolve("semantic-work"),
+                                () -> Thread.currentThread().isInterrupted());
+                        r.stage = "graph";
+                        progress(r, "[4/4] Saving available inventory and syntax evidence…",
+                                "[4/4] Lưu inventory và bằng chứng cú pháp hiện có…");
+                        var graph = r.storage().publish(snapshot, store -> scanner.projectInventoryRoot(remaining,
+                                store, resolvedProfile, () -> Thread.currentThread().isInterrupted()));
+                        var context = autoContext(graph.contexts());
+                        r.storage().select(graph, context);
+                        sessionGraph = null;
+                        if (interactiveDefaults != null) {
+                            interactiveDefaults.graph = null;
+                            interactiveDefaults.context = null;
+                        }
+                        var gaps = new TreeSet<>(remaining.gaps());
+                        gaps.add(scanner.javaWorkerGap(remaining));
+                        var data = new TreeMap<String, Object>();
+                        data.putAll(Map.of("status", "PARTIAL", "acquisition", captured, "graphCreated", true,
+                                "snapshotSelected", true, "graph", graph.graph(), "contexts",
+                                contextRows(graph.contexts()), "selectedContext", context, "polyglot",
+                                remaining.summary(), "javaAnalysis", "COMPATIBILITY_WORKER_REQUIRED"));
+                        data.put("evidenceTier",
+                                SemanticDepth.evidenceTier(UniversalArchitectureReport.Status.PARTIAL, false, false));
+                        data.put("gapSummary", graphGapSummary(graph, gaps.size()));
+                        data.put("semanticDepth",
+                                Map.of("scope", "JAVA_COMPATIBILITY_NOT_ANALYZED", "level", "NO_ANALYSIS",
+                                        "sourceRecoveryContexts", 0, "relationships",
+                                        Map.of("attempted", 0, "resolved", 0), "spring",
+                                        Map.of("status", "NOT_EVALUATED", "selectedBindingFactRows", 0)));
+                        if (nativeBuild != null)
+                            data.put("nativeBuild", nativeBuild);
+                        return emit(r, "scan", envelope(data), 3);
+                    }
+                    if (prepareDependencies)
+                        return prepareDependencies(acquisition, repositories);
+                    if (javaCapture != null || acquisition.snapshot().isEmpty()) {
+                        r.stage = "polyglot-inventory";
+                        var context = com.evolution.analysis.evidence.EvidenceContext
+                                .forSnapshot(acquisition.snapshot().map(s -> s.identity())
+                                        .orElseGet(() -> com.evolution.analysis.contract.identity.SnapshotIdentity
+                                                .from(repo, captured.manifest().orElseThrow().inventory())));
+                        polyglot = new PolyglotScan().run(intakeRevision, intake, readiness, context, languageEvidence,
+                                r.storage().root.resolve("semantic-work"),
+                                () -> Thread.currentThread().isInterrupted());
+                    } else {
+                        polyglot = null;
+                    }
                 }
-                if(captured.manifest().isEmpty())return emit(r,"scan",envelope(Map.of("status",captured.state(),"acquisition",captured,"graphCreated",false)),3);
-                readiness=!incrementalDisabled
-                        ?intake.readinessIncremental(intakeRevision,fileDelta,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted(),fast)
-                        :intake.readiness(intakeRevision,ReadinessPlanner.Policy.comprehensive(),()->Thread.currentThread().isInterrupted());
-                if(!prepareDependencies&&javaCapture==null&&!buildMode.equals("off")&&sourcePath!=null){
-                    r.stage="isolated-native-build";nativeBuild=buildNative(buildProfile,sourcePath,readiness,intakeRevision,intake);
-                    if(buildMode.equals("required")&&!Set.of("BUILT","NOT_APPLICABLE").contains(nativeBuild.status()))return emit(r,"scan",envelope(Map.of("status",nativeBuild.status(),"nativeBuild",nativeBuild,"graphCreated",false)),nativeBuild.status().equals("FAILED")?1:3);
+                long tAfterIntake = System.nanoTime();
+                long acquiredBytesTotal = acquisition.files().stream().mapToLong(AcquiredFile::size).sum();
+                var acquisitionInfo = Map.of("identity", acquisition.identity(), "status", acquisition.completion(),
+                        "files", acquisition.files().size(), "bytes", acquiredBytesTotal, "problems",
+                        acquisition.problems(), "policy", acquisition.request().policy(), "fullInventory",
+                        captured.manifest().orElseThrow(), "view", "BOUNDED_SEMANTIC_COMPATIBILITY");
+                Optional<String> baseGraphId = Optional.empty();
+                if (!incrementalDisabled && fileDelta.isPresent() && baseSnapshotId.isPresent()) {
+                    try {
+                        Path fpFile = r.storage().root.resolve("last-scan-fastpath.json");
+                        if (Files.isRegularFile(fpFile, LinkOption.NOFOLLOW_LINKS)) {
+                            var cached = GraphJson.object(Workspace.json(fpFile, 8_388_608));
+                            if (baseSnapshotId.orElseThrow().equals(cached.get("snapshotId"))
+                                    && cached.get("graphId") instanceof String gid && !gid.isBlank()) {
+                                baseGraphId = Optional.of(gid);
+                            }
+                        }
+                    } catch (RuntimeException | IOException ignored) {
+                    }
                 }
-                try{acquisition=intake.compatibility(intakeRevision,repo,Optional.ofNullable(revision),dirty,includeTests,allFiles,List.copyOf(excluded));}
-                catch(IOException budget){
-                    if(!Set.of("COMPATIBILITY_WORKER_REQUIRED","V1_PATH_UNREPRESENTABLE","V1_KIND_UNREPRESENTABLE","V1_SELECTION_UNREPRESENTABLE").contains(String.valueOf(budget.getMessage())))throw budget;
-                    if(prepareDependencies)return emit(r,"scan",envelope(Map.of("status","PARTIAL","reason",budget.getMessage(),"graphCreated",false,"semanticCoverage","NOT_EVALUATED","execution",Map.of("mode","PASSIVE_DEPENDENCY_PREPARATION","isolatedBuildExecuted",false))),3);
-                    var snapshot=com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,captured.manifest().orElseThrow().inventory());
-                    r.stage="polyglot-static-fallback";
-                    var scanner=new PolyglotScan();var remaining=scanner.run(intakeRevision,intake,readiness,EvidenceContext.forSnapshot(snapshot),languageEvidence,r.storage().root.resolve("semantic-work"),()->Thread.currentThread().isInterrupted());
-                    r.stage="graph";progress(r,"[4/4] Saving available inventory and syntax evidence…","[4/4] Lưu inventory và bằng chứng cú pháp hiện có…");
-                    var graph=r.storage().publish(snapshot,store->scanner.projectInventoryRoot(remaining,store,()->Thread.currentThread().isInterrupted()));
-                    var context=autoContext(graph.contexts());r.storage().select(graph,context);sessionGraph=null;
-                    if(interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;}
-                    var gaps=new TreeSet<>(remaining.gaps());gaps.add(scanner.javaWorkerGap(remaining));
-                    var data=new TreeMap<String,Object>();data.putAll(Map.of("status","PARTIAL","acquisition",captured,"graphCreated",true,"snapshotSelected",true,"graph",graph.graph(),"contexts",contextRows(graph.contexts()),"selectedContext",context,"polyglot",remaining.summary(),"javaAnalysis","COMPATIBILITY_WORKER_REQUIRED"));
-                    data.put("evidenceTier",SemanticDepth.evidenceTier(UniversalArchitectureReport.Status.PARTIAL,false,false));
-                    data.put("gapSummary",graphGapSummary(graph,gaps.size()));
-                    data.put("semanticDepth",Map.of("scope","JAVA_COMPATIBILITY_NOT_ANALYZED","level","NO_ANALYSIS","sourceRecoveryContexts",0,"relationships",Map.of("attempted",0,"resolved",0),"spring",Map.of("status","NOT_EVALUATED","selectedBindingFactRows",0)));
-                    if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);return emit(r,"scan",envelope(data),3);
+                if (acquisition.snapshot().isEmpty())
+                    return emit(r, "scan", envelope(Map.of("status", "TERMINAL_FAILURE", "stage", "acquisition",
+                            "acquisition", acquisitionInfo, "selection", selection, "graphCreated", false)), 1);
+                if (javaCapture != null) {
+                    r.stage = "captured-native-context";
+                    var root = Workspace.safe(resolve(javaCapture));
+                    if (sourcePath != null && root.startsWith(sourcePath))
+                        throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
+                    var expected = new CapturedJavaScan.Expected(repo, acquisition.snapshot().orElseThrow().identity(),
+                            readiness.identity());
+                    CapturedJavaScan.Result nativeResult;
+                    try {
+                        nativeResult = new CapturedJavaScan().run(root, expected,
+                                r.storage().root.resolve("captured-java"),
+                                () -> Thread.currentThread().isInterrupted());
+                    } catch (IOException failure) {
+                        String code = failure.getMessage();
+                        throw new InputFailure(
+                                code != null && code.matches("(?:SCAN_CAPTURE|CAPTURED_JAVA)_[A-Z_]+") ? code
+                                        : "CAPTURED_JAVA_INPUT_UNAVAILABLE");
+                    }
+                    var outcome = nativeResult.outcome();
+                    var data = new TreeMap<String, Object>();
+                    data.put("status", outcome.completion());
+                    data.put("acquisition", acquisitionInfo);
+                    data.put("selection", selection);
+                    data.put("polyglot", polyglot.summary());
+                    if (resolvedProfile != com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.STRICT)
+                        data.put("projectionProfile", "dfd-export");
+                    data.put("execution", Map.of("mode", "CAPTURED_NATIVE_EVIDENCE", "isolatedBuildExecuted", false,
+                            "capture", nativeResult.capture(), "qualification", nativeResult.qualification()));
+                    if (outcome.graph().isEmpty())
+                        return emit(r, "scan", envelope(data), 1);
+                    var original = outcome.graph().orElseThrow();
+                    var finalCapturedPolyglot = polyglot;
+                    var graph = r.storage().publish(original, store -> new PolyglotScan().project(finalCapturedPolyglot,
+                            store, original.snapshot(), resolvedProfile, () -> Thread.currentThread().isInterrupted()));
+                    var selected = autoContext(graph.contexts());
+                    boolean usable = outcome
+                            .completion() != com.evolution.backend.analysis.AnalysisJobs.Completion.FAILED;
+                    if (usable)
+                        r.storage().select(graph, selected);
+                    data.put("semanticDepth", SemanticDepth.summarize(original));
+                    data.put("graph", graph.graph());
+                    data.put("contexts", contextRows(graph.contexts()));
+                    data.put("selectedContext", selected);
+                    data.put("snapshotSelected", usable);
+                    var gaps = new TreeSet<>(outcome.gaps());
+                    gaps.addAll(polyglot.gaps());
+                    if (!gaps.isEmpty()
+                            && outcome.completion() == com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE)
+                        data.put("status", "PARTIAL");
+                    data.put("gapSummary", graphGapSummary(graph, gaps.size()));
+                    if (usable && interactiveDefaults != null) {
+                        interactiveDefaults.graph = null;
+                        interactiveDefaults.context = null;
+                        sessionGraph = null;
+                    }
+                    return emit(r, "scan", envelope(data), !usable ? 1
+                            : outcome.completion() == com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE
+                                    && gaps.isEmpty() ? 0 : 3);
                 }
-                if(prepareDependencies)return prepareDependencies(acquisition,repositories);
-                if(javaCapture!=null||acquisition.snapshot().isEmpty()){
-                    r.stage="polyglot-inventory";
-                    var context=com.evolution.analysis.evidence.EvidenceContext.forSnapshot(acquisition.snapshot().map(s->s.identity()).orElseGet(()->com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,captured.manifest().orElseThrow().inventory())));
-                    polyglot=new PolyglotScan().run(intakeRevision,intake,readiness,context,languageEvidence,r.storage().root.resolve("semantic-work"),()->Thread.currentThread().isInterrupted());
-                } else {
-                    polyglot=null;
+                var verifiedPolyglotBytes = new HashMap<ContentDigest, byte[]>();
+                for (var file : acquisition.files()) {
+                    String p = file.path();
+                    if (!p.endsWith(".java") || p.endsWith("Grpc.java") || p.contains("grpc"))
+                        verifiedPolyglotBytes.putIfAbsent(file.contentDigest(), file.bytes());
                 }
-            }
-            long tAfterIntake=System.nanoTime();
-            long acquiredBytesTotal=acquisition.files().stream().mapToLong(AcquiredFile::size).sum();
-            var acquisitionInfo=Map.of("identity",acquisition.identity(),"status",acquisition.completion(),"files",acquisition.files().size(),"bytes",acquiredBytesTotal,"problems",acquisition.problems(),"policy",acquisition.request().policy(),"fullInventory",captured.manifest().orElseThrow(),"view","BOUNDED_SEMANTIC_COMPATIBILITY");
-            if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","stage","acquisition","acquisition",acquisitionInfo,"selection",selection,"graphCreated",false)),1);
-            if(javaCapture!=null){
-                r.stage="captured-native-context";var root=Workspace.safe(resolve(javaCapture));
-                if(sourcePath!=null && root.startsWith(sourcePath))throw new InputFailure("CAPTURE_REGISTRATION_INSIDE_TARGET");
-                var expected=new CapturedJavaScan.Expected(repo,acquisition.snapshot().orElseThrow().identity(),readiness.identity());
-                CapturedJavaScan.Result nativeResult;
-                try{nativeResult=new CapturedJavaScan().run(root,expected,r.storage().root.resolve("captured-java"),()->Thread.currentThread().isInterrupted());}
-                catch(IOException failure){String code=failure.getMessage();throw new InputFailure(code!=null&&code.matches("(?:SCAN_CAPTURE|CAPTURED_JAVA)_[A-Z_]+")?code:"CAPTURED_JAVA_INPUT_UNAVAILABLE");}
-                var outcome=nativeResult.outcome();var data=new TreeMap<String,Object>();
-                data.put("status",outcome.completion());data.put("acquisition",acquisitionInfo);data.put("selection",selection);
-                data.put("polyglot",polyglot.summary());
-                data.put("execution",Map.of("mode","CAPTURED_NATIVE_EVIDENCE","isolatedBuildExecuted",false,"capture",nativeResult.capture(),"qualification",nativeResult.qualification()));
-                if(outcome.graph().isEmpty())return emit(r,"scan",envelope(data),1);
-                var original=outcome.graph().orElseThrow();var finalCapturedPolyglot=polyglot;var graph=r.storage().publish(original,store->new PolyglotScan().project(finalCapturedPolyglot,store,original.snapshot(),()->Thread.currentThread().isInterrupted()));
-                var selected=autoContext(graph.contexts());boolean usable=outcome.completion()!=com.evolution.backend.analysis.AnalysisJobs.Completion.FAILED;
-                if(usable)r.storage().select(graph,selected);
-                data.put("semanticDepth",SemanticDepth.summarize(original));data.put("graph",graph.graph());data.put("contexts",contextRows(graph.contexts()));data.put("selectedContext",selected);data.put("snapshotSelected",usable);
-                var gaps=new TreeSet<>(outcome.gaps());gaps.addAll(polyglot.gaps());
-                if(!gaps.isEmpty()&&outcome.completion()==com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE)data.put("status","PARTIAL");
-                data.put("gapSummary",graphGapSummary(graph,gaps.size()));
-                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=null;}
-                return emit(r,"scan",envelope(data),!usable?1:outcome.completion()==com.evolution.backend.analysis.AnalysisJobs.Completion.COMPLETE&&gaps.isEmpty()?0:3);
-            }
-            var verifiedPolyglotBytes=new HashMap<ContentDigest,byte[]>();
-            for(var file:acquisition.files()){
-                String p=file.path();
-                if(!p.endsWith(".java")||p.endsWith("Grpc.java")||p.contains("grpc"))verifiedPolyglotBytes.putIfAbsent(file.contentDigest(),file.bytes());
-            }
-            var asyncFailed=new java.util.concurrent.atomic.AtomicBoolean(false);
-            java.util.function.BooleanSupplier polyglotCancel=()->asyncFailed.get()||Thread.currentThread().isInterrupted();
-            var polyglotContext=com.evolution.analysis.evidence.EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity());
-            var finalLanguageEvidence=languageEvidence;
-            var polyglotFuture=java.util.concurrent.CompletableFuture.supplyAsync(()->{
-                try(var attached=artifactSession.attach();
-                    var roIntake=new RepositoryIntake(r.storage().root.resolve("acquisition"),true)){
-                    return new PolyglotScan().run(intakeRevision,roIntake,readiness,polyglotContext,finalLanguageEvidence,r.storage().root.resolve("semantic-work"),polyglotCancel,verifiedPolyglotBytes::get,fast,fast?roIntake.installedNodeDependencies(intakeRevision):path->false,incrementalDisabled?Optional.empty():Optional.of(r.storage().root.resolve("incremental-cache")));
-                }catch(Exception failure){
-                    asyncFailed.set(true);
-                    throw new java.util.concurrent.CompletionException(failure);
+                var asyncFailed = new java.util.concurrent.atomic.AtomicBoolean(false);
+                java.util.function.BooleanSupplier polyglotCancel = () -> asyncFailed.get()
+                        || Thread.currentThread().isInterrupted();
+                var polyglotContext = com.evolution.analysis.evidence.EvidenceContext
+                        .forSnapshot(acquisition.snapshot().orElseThrow().identity());
+                var finalLanguageEvidence = languageEvidence;
+                var polyglotFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    try (var attached = artifactSession.attach();
+                            var roIntake = new RepositoryIntake(r.storage().root.resolve("acquisition"), true)) {
+                        return new PolyglotScan().run(intakeRevision, roIntake, readiness, polyglotContext,
+                                finalLanguageEvidence, r.storage().root.resolve("semantic-work"), polyglotCancel,
+                                verifiedPolyglotBytes::get, fast,
+                                fast ? roIntake.installedNodeDependencies(intakeRevision) : path -> false,
+                                incrementalDisabled ? Optional.empty()
+                                        : Optional.of(r.storage().root.resolve("incremental-cache")));
+                    } catch (Exception failure) {
+                        asyncFailed.set(true);
+                        throw new java.util.concurrent.CompletionException(failure);
+                    }
+                });
+                progress(r, "[2/4] Capturing exact JDK symbols…", "[2/4] Thu nhận symbol JDK…");
+                r.stage = "platform";
+                var safeJdk = Workspace.safe(resolve(jdk));
+                var platform = com.evolution.backend.analysis.LocalAnalysisRunner.acquireCachedPlatform(safeJdk,
+                        release);
+                var defaults = UniversalBuildIngestion.Policy.defaults();
+                var cachePath = Workspace.safe(resolve(mavenCache));
+                var models = MavenScan.models(acquisition, cachePath, repositories, runDeltaCache);
+                var buildPolicy = new UniversalBuildIngestion.Policy(Optional.of(release), Optional.of(release),
+                        Optional.of("UTF-8"), 32_768, defaults.maxCharacters(), defaults.maxTokens(), 128);
+                var decodePolicy = new RepositoryInputDecoder.Policy("UTF-8", 500_000, 100_000_000, fast);
+                var decoded = new RepositoryInputDecoder.Prepared(acquisition, decodePolicy);
+                var gradleModel = com.evolution.backend.analysis.GradleScan.model(decoded, buildPolicy, Map.of());
+                var requiredReleases = new TreeSet<>(MavenScan.platformReleases(models));
+                requiredReleases.addAll(com.evolution.backend.analysis.GradleScan.platformReleases(gradleModel));
+                var platformViews = new TreeMap<Integer, PlatformSymbolResult>();
+                platformViews.put(release, platform);
+                var additionalPlatforms = new ArrayList<PlatformSymbolResult>();
+                for (int target : requiredReleases)
+                    if (!platformViews.containsKey(target)) {
+                        var view = com.evolution.backend.analysis.LocalAnalysisRunner.acquireCachedPlatform(safeJdk,
+                                target);
+                        platformViews.put(target, view);
+                        additionalPlatforms.add(view);
+                    }
+                var availablePlatforms = new TreeMap<Integer, com.evolution.analysis.frontend.PlatformInput>();
+                platformViews.forEach(
+                        (target, view) -> view.platform().ifPresent(value -> availablePlatforms.put(target, value)));
+                var platformLedgers = additionalPlatforms.isEmpty()
+                        ? List.<com.evolution.analysis.evidence.EvidenceAcquisitionLedger>of()
+                        : List.of(com.evolution.analysis.evidence.CapabilityGapNormalizer.normalize(
+                                EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),
+                                com.evolution.analysis.evidence.EvidenceNormalizationInput.builder()
+                                        .platformResults(additionalPlatforms).build()));
+                var depPolicy = new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096, 64_000_000,
+                        MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES, 64, repositories, 5000, 15000, offline ? 0 : 1, 8);
+                var beforeBuildStats = sharedCaches.buildDelta().stats();
+                var mavenBase = MavenScan.inputs(acquisition, models, cachePath, platform.platform(), depPolicy,
+                        availablePlatforms, runDeltaCache);
+                Optional<Path> resolvedAndroidSdk = androidSdk != null
+                        ? Optional.of(Workspace.safe(resolve(androidSdk)))
+                        : com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
+                var mavenInputs = com.evolution.backend.analysis.GradleScan.augment(mavenBase, acquisition, gradleModel,
+                        cachePath, platform.platform(), depPolicy, availablePlatforms, resolvedAndroidSdk,
+                        runDeltaCache);
+                var afterBuildStats = sharedCaches.buildDelta().stats();
+                int reusedBuildRoots = Math.max(0,
+                        (afterBuildStats.reusedBuildRoots() - beforeBuildStats.reusedBuildRoots())
+                                + (afterBuildStats.gradleResolverReused() - beforeBuildStats.gradleResolverReused()));
+                int recomputedBuildRoots = Math.max(0,
+                        (afterBuildStats.recomputedBuildRoots() - beforeBuildStats.recomputedBuildRoots())
+                                + (afterBuildStats.gradleResolverRecomputed()
+                                        - beforeBuildStats.gradleResolverRecomputed()));
+                long tAfterPlatformDeps = System.nanoTime();
+                r.stage = "analysis";
+                // Supply fallback evidence without Builder.defaultPlatform's Maven
+                // user-property overrides.
+                // Declared Maven release/encoding must keep their authority over CLI defaults.
+                var javaCacheStats = new java.util.concurrent.atomic.AtomicLong[] {
+                        new java.util.concurrent.atomic.AtomicLong(), new java.util.concurrent.atomic.AtomicLong() };
+                var policy = new UniversalArchitecturePipeline.Policy(
+                        buildPolicy, decodePolicy, frontend(r, incrementalDisabled, javaCacheStats),
+                        JavaParserFrontend.PROVIDER,
+                        mavenInputs.resolutions(), platform.platform(), Optional.of(new MavenBuildModelProvider()),
+                        mavenInputs.externalPoms(), MavenScan.POLICY,
+                        100_000, 1_000, UniversalArchitecturePipeline.TruthEvaluationMode.AUTO, Map.of(),
+                        Optional.empty(), Optional.empty(),
+                        com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
+                        .withReadiness(readiness.identity())
+                        .withPrecomputedBuild(mavenInputs.externalPoms().isEmpty() ? gradleModel.orElse(null) : null);
+                if (fast)
+                    policy = policy.withAnalysisOptions(Map.of("analysis.profile", "FAST_ARCHITECTURE"));
+                if (springSat)
+                    policy = policy
+                            .withSpringSatMode(UniversalArchitecturePipeline.SpringSatMode.AUTO_MULTI_CONFIG_SAT);
+                progress(r, "[3/4] Analyzing source contexts / Spring and captured native language evidence…",
+                        "[3/4] Phân tích context nguồn / Spring và bằng chứng native đa ngôn ngữ…");
+                boolean useDiskSpill = UniversalArchitecturePipeline.shouldUseDiskSpill(acquiredBytesTotal,
+                        acquisition.files().size(), mavenInputs.resolutions().size());
+                com.evolution.analysis.filesystem.FileAnalysisWorkspace diskWorkspace = useDiskSpill
+                        ? new com.evolution.analysis.filesystem.FileAnalysisWorkspace(
+                                r.storage().root.resolve("analysis-work"))
+                        : null;
+                AnalysisWorkspace analysisWorkspace = diskWorkspace != null ? diskWorkspace : AnalysisWorkspace.MEMORY;
+                int aggWorkers = analysisWorkspace.concurrentTables()
+                        ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers()
+                        : 1;
+                var beforeSpringStats = sharedCaches.springCache().stats();
+                try (var closeableWorkspace = diskWorkspace) {
+                    UniversalArchitecturePipeline.DetailedResult detailed;
+                    try {
+                        detailed = new UniversalArchitecturePipeline(analysisWorkspace, aggWorkers,
+                                incrementalDisabled ? null : sharedCaches.springCache())
+                                .runWithEvidence(decoded, policy);
+                        polyglot = polyglotFuture.join();
+                    } catch (java.util.concurrent.CompletionException ce) {
+                        asyncFailed.set(true);
+                        if (ce.getCause() instanceof Exception ex)
+                            throw ex;
+                        if (ce.getCause() instanceof Error err)
+                            throw err;
+                        throw ce;
+                    } catch (Throwable primary) {
+                        asyncFailed.set(true);
+                        polyglotFuture.cancel(true);
+                        throw primary;
+                    }
+                    var afterSpringStats = sharedCaches.springCache().stats();
+                    int reusedSpringContexts = Math.max(0,
+                            afterSpringStats.reusedContexts() - beforeSpringStats.reusedContexts());
+                    int recomputedSpringContexts = Math.max(0,
+                            afterSpringStats.recomputedContexts() - beforeSpringStats.recomputedContexts());
+                    long tAfterAnalysis = System.nanoTime();
+                    var data = new TreeMap<String, Object>();
+                    data.put("status", detailed.report().status());
+                    data.put("reportIdentity", detailed.report().identity());
+                    data.put("gaps", detailed.report().gaps());
+                    if (fast)
+                        data.put("analysisMode", "FAST_ARCHITECTURE");
+                    if (springSat)
+                        data.put("springSatMode", "AUTO_MULTI_CONFIG_SAT");
+                    if (resolvedProfile != com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.STRICT)
+                        data.put("projectionProfile", "dfd-export");
+                    data.put("acquisition", acquisitionInfo);
+                    data.put("selection", selection);
+                    data.put("metrics", detailed.report().metrics());
+                    data.put("dependencies", mavenInputs.summary());
+                    data.put("polyglot", polyglot.summary());
+                    data.put("execution",
+                            nativeBuild != null && nativeBuild.requested() > 0
+                                    ? Map.of("mode", "ISOLATED_BUILD_ATTEMPT_WITH_SOURCE_ANALYSIS",
+                                            "isolatedBuildExecuted", nativeBuild.executed() > 0, "launchDisposition",
+                                            nativeBuild.executed() == nativeBuild.requested()
+                                                    ? "PROTECTED_GUEST_LAUNCHER_RETURNED"
+                                                    : "UNKNOWN")
+                                    : Map.of("mode", "PASSIVE", "isolatedBuildExecuted", false));
+                    if (nativeBuild != null)
+                        data.put("nativeBuild", nativeBuild);
+                    data.put("readiness",
+                            Map.of("identity", readiness.identity(), "selection", readiness.selection().identity(),
+                                    "roots", readiness.roots().size(), "contexts", readiness.contexts().size(),
+                                    "requirements", readiness.requirements().size(), "ownership",
+                                    readiness.ownership()));
+                    var allPlatformResults = new ArrayList<PlatformSymbolResult>();
+                    allPlatformResults.add(platform);
+                    allPlatformResults.addAll(additionalPlatforms);
+                    var scanGaps = analysisWorkspace.gaps(detailed.report().gaps());
+                    scanGaps.addAll(mavenInputs.gaps());
+                    scanGaps.addAll(com.evolution.backend.analysis.LocalAnalysisRunner.filterSatisfiedReadinessGaps(
+                            readiness, acquisition.snapshot().orElseThrow().identity(), mavenInputs, availablePlatforms,
+                            allPlatformResults, includeTests, detailed, polyglot));
+                    scanGaps.addAll(polyglot.gaps());
+                    var scanGapRows = analysisWorkspace.<com.evolution.analysis.evidence.CapabilityGapRecord>list();
+                    platformLedgers.forEach(ledger -> scanGaps.addAll(ledger.gaps()));
+                    scanGapRows.addAll(scanGaps);
+                    var frozenScanGaps = analysisWorkspace.freeze(scanGapRows);
+                    data.put("gaps", frozenScanGaps);
+                    if (!scanGaps.isEmpty() && Set
+                            .of(UniversalArchitectureReport.Status.COMPLETE,
+                                    UniversalArchitectureReport.Status.EMPTY_OR_NON_JAVA)
+                            .contains(detailed.report().status()))
+                        data.put("status", "PARTIAL");
+                    data.put("issues", detailed.report().issues());
+                    data.put("rootCauses", detailed.report().rootCauses());
+                    data.put("platform",
+                            Map.of("status", platform.status(), "identity", platform.identity(), "problems",
+                                    platform.problems(), "views",
+                                    platformViews.entrySet().stream()
+                                            .map(e -> Map.of("release", e.getKey(), "status", e.getValue().status(),
+                                                    "identity", e.getValue().identity(), "problems",
+                                                    e.getValue().problems()))
+                                            .toList()));
+                    data.put("inputPolicy",
+                            Map.of("release", release, "charsetFallback", "UTF-8", "dependencyAcquisition",
+                                    mavenInputs.summary().get("mode"), "excludedPaths", excluded, "repository", repo,
+                                    "versionControl", "NOT_INSPECTED", "callerRevision", Optional.ofNullable(revision),
+                                    "callerDirty", dirty));
+                    Optional<ContentDigest> publishedGraphId = Optional.empty();
+                    Optional<String> publishedSelectedContext = Optional.empty();
+                    boolean publishedUsable = false;
+                    int publishedContextCount = 0;
+                    int reusedGraphContexts = 0;
+                    int rebuiltGraphContexts = 0;
+                    if (detailed.graphInput().isPresent()) {
+                        r.stage = "graph";
+                        progress(r, "[4/4] Saving a verified snapshot…", "[4/4] Lưu snapshot đã kiểm tra…");
+                        var input = detailed.graphInput().orElseThrow();
+                        var graphLedgers = new ArrayList<>(mavenInputs.ledgers());
+                        graphLedgers.addAll(platformLedgers);
+                        var finalPolyglot = polyglot;
+                        var graphProjector = incrementalDisabled ? null : sharedCaches.graphProjector();
+                        var beforeGraphStats = sharedCaches.graphProjector().stats();
+                        var graph = r.storage().publish(
+                                new CanonicalGraphInput(input.repository(), input.build(), input.ingestion(),
+                                        input.spring(), input.issues(), frozenScanGaps, input.acquisition(),
+                                        input.javaEvidence()),
+                                graphLedgers, store -> new PolyglotScan().project(finalPolyglot, store,
+                                        resolvedProfile, () -> Thread.currentThread().isInterrupted()),
+                                fast, graphProjector);
+                        var afterGraphStats = sharedCaches.graphProjector().stats();
+                        reusedGraphContexts = Math.max(0,
+                                afterGraphStats.reusedContexts() - beforeGraphStats.reusedContexts());
+                        rebuiltGraphContexts = Math.max(0,
+                                afterGraphStats.rebuiltContexts() - beforeGraphStats.rebuiltContexts());
+                        var semanticDepth = SemanticDepth.summarize(detailed, graph.edgeKinds());
+                        data.put("semanticDepth", semanticDepth);
+                        var publishedGapSummary = graphGapSummary(graph, scanGaps.size());
+                        var publishedGapReasons = GraphJson.object(publishedGapSummary.get("byReason"));
+                        // Projection can add obligations after intake (notably cross-language RPC
+                        // routing).
+                        // Completion must account for the same final gap population shown in the
+                        // receipt.
+                        boolean publishedCompletionBlocked = publishedGapReasons
+                                .containsKey("GRPC_ROUTING_EVIDENCE_MISSING")
+                                || publishedGapReasons.containsKey("JAVA_COMPATIBILITY_WORKER_REQUIRED");
+                        boolean exactComplete = detailed.report()
+                                .status() == UniversalArchitectureReport.Status.COMPLETE
+                                && !availablePlatforms.isEmpty() && scanGaps.isEmpty()
+                                && ((Number) publishedGapSummary.get("total")).longValue() == 0;
+                        boolean passiveArchitectureComplete = !exactComplete && !availablePlatforms.isEmpty()
+                                && !publishedCompletionBlocked
+                                && SemanticDepth.meetsPassiveArchitectureThreshold(semanticDepth, polyglot.summary(),
+                                        detailed, frozenScanGaps);
+                        data.put("evidenceTier", SemanticDepth.evidenceTier(detailed.report().status(), exactComplete,
+                                passiveArchitectureComplete));
+                        if (exactComplete || passiveArchitectureComplete)
+                            data.put("status", "COMPLETE");
+                        if (r.debug)
+                            err.println("[DEBUG] graph storage=PARTITIONED_DISK nodes=" + graph.nodes() + " edges="
+                                    + graph.edges() + " evidence=" + graph.evidence());
+                        boolean usable = detailed.report()
+                                .status() != UniversalArchitectureReport.Status.TERMINAL_FAILURE;
+                        Optional<String> selected = usable ? autoContext(graph.contexts()) : Optional.empty();
+                        r.stage = "storage";
+                        if (usable)
+                            r.storage().select(graph, selected);
+                        if (usable && interactiveDefaults != null) {
+                            interactiveDefaults.graph = null;
+                            interactiveDefaults.context = null;
+                            sessionGraph = null;
+                        }
+                        publishedGraphId = Optional.of(graph.graph());
+                        publishedSelectedContext = selected;
+                        publishedUsable = usable;
+                        publishedContextCount = graph.contexts().size();
+                        data.put("graph", graph.graph());
+                        data.put("snapshotSelected", usable);
+                        data.put("contexts", contextRows(graph.contexts()));
+                        data.put("selectedContext", selected);
+                        // The receipt is bounded independently of repository size. Every typed gap
+                        // remains in the verified graph.
+                        data.remove("gaps");
+                        data.put("gapSummary", publishedGapSummary);
+                        data.remove("issues");
+                        data.put("issueSummary", Map.of("total", detailed.report().issues().size(), "byReason",
+                                reasonCounts(detailed.report().issues(), i -> i.reason().name())));
+                        data.remove("rootCauses");
+                        data.put("rootCauseSummary", Map.of("total", detailed.report().rootCauses().size(),
+                                "byCategory", reasonCounts(detailed.report().rootCauses(), c -> c.category().name())));
+                    }
+                    long tScanEnd = System.nanoTime();
+                    int reusedMods = (int) javaCacheStats[0].get();
+                    int recomputedMods = (int) javaCacheStats[1].get();
+                    long polyHits = polyglot.syntax().cacheHits();
+                    long polyMisses = polyglot.syntax().cacheMisses();
+                    IncrementalSummary incrementalSummary;
+                    if (incrementalDisabled) {
+                        incrementalSummary = IncrementalSummary.cold(incFallbackReason);
+                    } else if (fileDelta.isPresent()) {
+                        var d = fileDelta.orElseThrow();
+                        String incMode = (d.addedFiles() == 0L && d.modifiedFiles() == 0L && d.deletedFiles() == 0L)
+                                ? IncrementalSummary.MODE_NO_CHANGE
+                                : IncrementalSummary.MODE_INCREMENTAL;
+                        incrementalSummary = new IncrementalSummary(
+                                incMode, "", baseSnapshotId, baseGraphId, Optional.empty(),
+                                d.addedFiles(), d.modifiedFiles(), d.deletedFiles(), d.unchangedFiles(),
+                                d.unchangedFiles(),
+                                reusedBuildRoots, recomputedBuildRoots, 0, 0, 0, 0,
+                                reusedMods, recomputedMods, reusedSpringContexts, recomputedSpringContexts,
+                                polyHits, polyMisses, reusedGraphContexts,
+                                rebuiltGraphContexts > 0 || reusedGraphContexts > 0 ? rebuiltGraphContexts
+                                        : publishedContextCount,
+                                0L, false);
+                    } else {
+                        incrementalSummary = new IncrementalSummary(
+                                IncrementalSummary.MODE_COLD,
+                                incFallbackReason.isBlank() ? "NO_PREVIOUS_SNAPSHOT" : incFallbackReason,
+                                Optional.empty(), Optional.empty(), Optional.empty(),
+                                0L, 0L, 0L, 0L, 0L, reusedBuildRoots, recomputedBuildRoots, 0, 0, 0, 0,
+                                reusedMods, recomputedMods, reusedSpringContexts, recomputedSpringContexts,
+                                polyHits, polyMisses, reusedGraphContexts,
+                                rebuiltGraphContexts > 0 || reusedGraphContexts > 0 ? rebuiltGraphContexts
+                                        : publishedContextCount,
+                                0L, false);
+                    }
+                    // Persist operational incremental telemetry outside canonical stdout
+                    // receipt/digests so cold & warm receipts remain bit-for-bit deterministic.
+                    try {
+                        Files.createDirectories(r.storage().root);
+                        Files.writeString(r.storage().root.resolve("last-incremental-summary.json"),
+                                CanonicalJson.write(incrementalSummary.toMap()), StandardCharsets.UTF_8);
+                    } catch (IOException ignored) {
+                    }
+                    if (telemetry || (terminal && !r.json)) {
+                        long intakeMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tAfterIntake - tScanStart);
+                        long platMs = java.util.concurrent.TimeUnit.NANOSECONDS
+                                .toMillis(tAfterPlatformDeps - tAfterIntake);
+                        long anaMs = java.util.concurrent.TimeUnit.NANOSECONDS
+                                .toMillis(tAfterAnalysis - tAfterPlatformDeps);
+                        long graphMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd - tAfterAnalysis);
+                        long totalMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd - tScanStart);
+                        err.println("[evo] Telemetry (" + analysisMode.name() + "): total=" + totalMs + "ms | intake="
+                                + intakeMs + "ms | platform+deps=" + platMs + "ms | jvm+polyglot=" + anaMs
+                                + "ms | graph+publish=" + graphMs + "ms");
+                        err.println("[evo] Cache: javaHits=" + reusedMods + " javaMisses=" + recomputedMods
+                                + " | polyglotHits=" + polyHits + " polyglotMisses=" + polyMisses);
+                        err.println("[evo] Incremental (" + incrementalSummary.mode() + "): unchanged="
+                                + incrementalSummary.unchangedFiles() + " added=" + incrementalSummary.addedFiles()
+                                + " modified=" + incrementalSummary.modifiedFiles() + " deleted="
+                                + incrementalSummary.deletedFiles() + " | reusedModules=" + reusedMods
+                                + " recomputedModules=" + recomputedMods
+                                + " | reusedGraphContexts=" + incrementalSummary.reusedGraphContexts()
+                                + " rebuiltGraphContexts=" + incrementalSummary.rebuiltGraphContexts()
+                                + (incrementalSummary.baseSnapshotId().isPresent()
+                                        ? " | baseSnapshot=" + incrementalSummary.baseSnapshotId().orElseThrow()
+                                        : "")
+                                + (incrementalSummary.fallbackReason().isEmpty() ? ""
+                                        : " | reason=" + incrementalSummary.fallbackReason()));
+                        err.flush();
+                    }
+                    r.stage = "receipt";
+                    int exitCode = detailed.graphInput().isEmpty()
+                            || detailed.report().status() == UniversalArchitectureReport.Status.TERMINAL_FAILURE
+                                    ? 1
+                                    : ("COMPLETE".equals(String.valueOf(data.get("status")))
+                                            && !availablePlatforms.isEmpty() ? 0 : 3);
+                    Map<String, Object> finalEnvelope = envelope(data);
+                    String finalEnvelopeJson = new String(BoundedJson.encode(finalEnvelope, 32_000_000),
+                            StandardCharsets.UTF_8);
+                    if (!remoteSource && sourcePath != null && !prepareDependencies && javaCapture == null
+                            && publishedGraphId.isPresent() && (nativeBuild == null || nativeBuild.executed() == 0)
+                            && finalEnvelopeJson.length() <= 6_000_000) {
+                        try {
+                            var fullInventory = captured.manifest().orElseThrow().inventory();
+                            var fullSnapId = com.evolution.analysis.contract.identity.SnapshotIdentity.from(repo,
+                                    fullInventory);
+                            ContentDigest fp = scanFastPathFingerprint(repo, sourcePath, fullSnapId.value(),
+                                    fullInventory, revision, dirty, includeTests, allFiles, excluded, analysisMode,
+                                    fast, springSat, release, offline, buildMode, buildProfile, safeJdk, cachePath,
+                                    resolvedAndroidSdk, repositories, semanticStore, semanticPlan, semanticPolicy,
+                                    semanticAuthority, resolvedProfile);
+                            var cachePayload = new TreeMap<String, Object>();
+                            cachePayload.put("schema", "evo.scan-fastpath:v1");
+                            cachePayload.put("optionsFingerprint", fp.value());
+                            cachePayload.put("snapshotId", fullSnapId.value());
+                            cachePayload.put("graphId", publishedGraphId.orElseThrow().value());
+                            cachePayload.put("selectedContext", publishedSelectedContext.orElse(""));
+                            cachePayload.put("usable", publishedUsable);
+                            cachePayload.put("moduleCount", reusedMods + recomputedMods);
+                            cachePayload.put("polyglotFiles", polyHits + polyMisses);
+                            cachePayload.put("contextCount", publishedContextCount);
+                            cachePayload.put("exitCode", exitCode);
+                            cachePayload.put("envelopeJson", finalEnvelopeJson);
+                            writeAtomicUtf8(r.storage().root.resolve("last-scan-fastpath.json"),
+                                    CanonicalJson.write(cachePayload));
+                        } catch (IOException ignored) {
+                        }
+                    }
+                    return emitRawEnvelope(r, "scan", finalEnvelopeJson, exitCode);
                 }
-            });
-            progress(r,"[2/4] Capturing exact JDK symbols…","[2/4] Thu nhận symbol JDK…");
-            r.stage="platform";
-            var safeJdk=Workspace.safe(resolve(jdk));
-            var platform=com.evolution.backend.analysis.LocalAnalysisRunner.acquireCachedPlatform(safeJdk,release);var defaults=UniversalBuildIngestion.Policy.defaults();
-            var cachePath=Workspace.safe(resolve(mavenCache));
-            var models=MavenScan.models(acquisition,cachePath,repositories,runDeltaCache);
-            var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
-            var decodePolicy=new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000,fast);
-            var decoded=new RepositoryInputDecoder.Prepared(acquisition,decodePolicy);
-            var gradleModel=com.evolution.backend.analysis.GradleScan.model(decoded,buildPolicy,Map.of());
-            var requiredReleases=new TreeSet<>(MavenScan.platformReleases(models));requiredReleases.addAll(com.evolution.backend.analysis.GradleScan.platformReleases(gradleModel));
-            var platformViews=new TreeMap<Integer,PlatformSymbolResult>();platformViews.put(release,platform);
-            var additionalPlatforms=new ArrayList<PlatformSymbolResult>();
-            for(int target:requiredReleases)if(!platformViews.containsKey(target)) {
-                var view=com.evolution.backend.analysis.LocalAnalysisRunner.acquireCachedPlatform(safeJdk,target);
-                platformViews.put(target,view);additionalPlatforms.add(view);
-            }
-            var availablePlatforms=new TreeMap<Integer,com.evolution.analysis.frontend.PlatformInput>();platformViews.forEach((target,view)->view.platform().ifPresent(value->availablePlatforms.put(target,value)));
-            var platformLedgers=additionalPlatforms.isEmpty()?List.<com.evolution.analysis.evidence.EvidenceAcquisitionLedger>of():List.of(com.evolution.analysis.evidence.CapabilityGapNormalizer.normalize(
-                    EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),com.evolution.analysis.evidence.EvidenceNormalizationInput.builder().platformResults(additionalPlatforms).build()));
-            var depPolicy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096,64_000_000,MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES,64,repositories,5000,15000,offline?0:1,8);
-            var mavenBase=MavenScan.inputs(acquisition,models,cachePath,platform.platform(),depPolicy,availablePlatforms,runDeltaCache);
-            Optional<Path> resolvedAndroidSdk=androidSdk!=null?Optional.of(Workspace.safe(resolve(androidSdk))):com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
-            var mavenInputs=com.evolution.backend.analysis.GradleScan.augment(mavenBase,acquisition,gradleModel,cachePath,platform.platform(),depPolicy,availablePlatforms,resolvedAndroidSdk,runDeltaCache);
-            long tAfterPlatformDeps=System.nanoTime();
-            r.stage="analysis";
-            // Supply fallback evidence without Builder.defaultPlatform's Maven user-property overrides.
-            // Declared Maven release/encoding must keep their authority over CLI defaults.
-            var javaCacheStats=new java.util.concurrent.atomic.AtomicLong[]{new java.util.concurrent.atomic.AtomicLong(),new java.util.concurrent.atomic.AtomicLong()};
-            var policy=new UniversalArchitecturePipeline.Policy(
-                    buildPolicy,decodePolicy,frontend(r,incrementalDisabled,javaCacheStats),JavaParserFrontend.PROVIDER,
-                    mavenInputs.resolutions(),platform.platform(),Optional.of(new MavenBuildModelProvider()),mavenInputs.externalPoms(),MavenScan.POLICY,
-                    100_000,1_000,UniversalArchitecturePipeline.TruthEvaluationMode.AUTO,Map.of(),Optional.empty(),Optional.empty(),com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
-                    .withReadiness(readiness.identity())
-                    .withPrecomputedBuild(mavenInputs.externalPoms().isEmpty()?gradleModel.orElse(null):null);
-            if(fast)policy=policy.withAnalysisOptions(Map.of("analysis.profile","FAST_ARCHITECTURE"));
-            if(springSat)policy=policy.withSpringSatMode(UniversalArchitecturePipeline.SpringSatMode.AUTO_MULTI_CONFIG_SAT);
-            progress(r,"[3/4] Analyzing source contexts / Spring and captured native language evidence…","[3/4] Phân tích context nguồn / Spring và bằng chứng native đa ngôn ngữ…");
-            boolean useDiskSpill=UniversalArchitecturePipeline.shouldUseDiskSpill(acquiredBytesTotal,acquisition.files().size(),mavenInputs.resolutions().size());
-            com.evolution.analysis.filesystem.FileAnalysisWorkspace diskWorkspace=useDiskSpill?new com.evolution.analysis.filesystem.FileAnalysisWorkspace(r.storage().root.resolve("analysis-work")):null;
-            AnalysisWorkspace analysisWorkspace=diskWorkspace!=null?diskWorkspace:AnalysisWorkspace.MEMORY;
-            int aggWorkers=analysisWorkspace.concurrentTables()?com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers():1;
-            try(var closeableWorkspace=diskWorkspace){
-            UniversalArchitecturePipeline.DetailedResult detailed;
-            try {
-                detailed=new UniversalArchitecturePipeline(analysisWorkspace,aggWorkers,incrementalDisabled?null:sharedCaches.springCache()).runWithEvidence(decoded,policy);
-                polyglot=polyglotFuture.join();
-            } catch(java.util.concurrent.CompletionException ce) {
-                asyncFailed.set(true);
-                if(ce.getCause() instanceof Exception ex)throw ex;
-                if(ce.getCause() instanceof Error err)throw err;
-                throw ce;
-            } catch(Throwable primary) {
-                asyncFailed.set(true);
-                polyglotFuture.cancel(true);
-                throw primary;
-            }
-            long tAfterAnalysis=System.nanoTime();
-            var data=new TreeMap<String,Object>();data.put("status",detailed.report().status());data.put("reportIdentity",detailed.report().identity());data.put("gaps",detailed.report().gaps());
-            if(fast)data.put("analysisMode","FAST_ARCHITECTURE");
-            if(springSat)data.put("springSatMode","AUTO_MULTI_CONFIG_SAT");
-            data.put("acquisition",acquisitionInfo);data.put("selection",selection);data.put("metrics",detailed.report().metrics());
-            data.put("dependencies",mavenInputs.summary());
-            data.put("polyglot",polyglot.summary());
-            data.put("execution",nativeBuild!=null&&nativeBuild.requested()>0?Map.of("mode","ISOLATED_BUILD_ATTEMPT_WITH_SOURCE_ANALYSIS","isolatedBuildExecuted",nativeBuild.executed()>0,"launchDisposition",nativeBuild.executed()==nativeBuild.requested()?"PROTECTED_GUEST_LAUNCHER_RETURNED":"UNKNOWN"):Map.of("mode","PASSIVE","isolatedBuildExecuted",false));
-            if(nativeBuild!=null)data.put("nativeBuild",nativeBuild);
-            data.put("readiness",Map.of("identity",readiness.identity(),"selection",readiness.selection().identity(),"roots",readiness.roots().size(),"contexts",readiness.contexts().size(),"requirements",readiness.requirements().size(),"ownership",readiness.ownership()));
-            var allPlatformResults=new ArrayList<PlatformSymbolResult>();allPlatformResults.add(platform);allPlatformResults.addAll(additionalPlatforms);
-            var scanGaps=analysisWorkspace.gaps(detailed.report().gaps());scanGaps.addAll(mavenInputs.gaps());scanGaps.addAll(com.evolution.backend.analysis.LocalAnalysisRunner.filterSatisfiedReadinessGaps(readiness,acquisition.snapshot().orElseThrow().identity(),mavenInputs,availablePlatforms,allPlatformResults,includeTests,detailed,polyglot));scanGaps.addAll(polyglot.gaps());
-            var scanGapRows=analysisWorkspace.<com.evolution.analysis.evidence.CapabilityGapRecord>list();
-            platformLedgers.forEach(ledger->scanGaps.addAll(ledger.gaps()));scanGapRows.addAll(scanGaps);var frozenScanGaps=analysisWorkspace.freeze(scanGapRows);data.put("gaps",frozenScanGaps);
-            if(!scanGaps.isEmpty()&&Set.of(UniversalArchitectureReport.Status.COMPLETE,UniversalArchitectureReport.Status.EMPTY_OR_NON_JAVA).contains(detailed.report().status()))data.put("status","PARTIAL");
-            data.put("issues",detailed.report().issues());data.put("rootCauses",detailed.report().rootCauses());
-            data.put("platform",Map.of("status",platform.status(),"identity",platform.identity(),"problems",platform.problems(),"views",platformViews.entrySet().stream().map(e->Map.of("release",e.getKey(),"status",e.getValue().status(),"identity",e.getValue().identity(),"problems",e.getValue().problems())).toList()));
-            data.put("inputPolicy",Map.of("release",release,"charsetFallback","UTF-8","dependencyAcquisition",mavenInputs.summary().get("mode"),"excludedPaths",excluded,"repository",repo,
-                    "versionControl","NOT_INSPECTED","callerRevision",Optional.ofNullable(revision),"callerDirty",dirty));
-            if(detailed.graphInput().isPresent()){
-                r.stage="graph";progress(r,"[4/4] Saving a verified snapshot…","[4/4] Lưu snapshot đã kiểm tra…");var input=detailed.graphInput().orElseThrow();
-                var graphLedgers=new ArrayList<>(mavenInputs.ledgers());graphLedgers.addAll(platformLedgers);
-                var finalPolyglot=polyglot;
-                var graph=r.storage().publish(new CanonicalGraphInput(input.repository(),input.build(),input.ingestion(),input.spring(),input.issues(),frozenScanGaps,input.acquisition(),input.javaEvidence()),graphLedgers,store->new PolyglotScan().project(finalPolyglot,store,()->Thread.currentThread().isInterrupted()));
-                var semanticDepth=SemanticDepth.summarize(detailed,graph.edgeKinds());
-                data.put("semanticDepth",semanticDepth);
-                var publishedGapSummary=graphGapSummary(graph,scanGaps.size());
-                var publishedGapReasons=GraphJson.object(publishedGapSummary.get("byReason"));
-                // Projection can add obligations after intake (notably cross-language RPC routing).
-                // Completion must account for the same final gap population shown in the receipt.
-                boolean publishedCompletionBlocked=publishedGapReasons.containsKey("GRPC_ROUTING_EVIDENCE_MISSING")
-                        ||publishedGapReasons.containsKey("JAVA_COMPATIBILITY_WORKER_REQUIRED");
-                boolean exactComplete=detailed.report().status()==UniversalArchitectureReport.Status.COMPLETE&&!availablePlatforms.isEmpty()&&scanGaps.isEmpty()&&((Number)publishedGapSummary.get("total")).longValue()==0;
-                boolean passiveArchitectureComplete=!exactComplete&&!availablePlatforms.isEmpty()
-                        &&!publishedCompletionBlocked
-                        &&SemanticDepth.meetsPassiveArchitectureThreshold(semanticDepth,polyglot.summary(),detailed,frozenScanGaps);
-                data.put("evidenceTier",SemanticDepth.evidenceTier(detailed.report().status(),exactComplete,passiveArchitectureComplete));
-                if(exactComplete||passiveArchitectureComplete)data.put("status","COMPLETE");
-                if(r.debug)err.println("[DEBUG] graph storage=PARTITIONED_DISK nodes="+graph.nodes()+" edges="+graph.edges()+" evidence="+graph.evidence());
-                boolean usable=detailed.report().status()!=UniversalArchitectureReport.Status.TERMINAL_FAILURE;Optional<String> selected=usable?autoContext(graph.contexts()):Optional.empty();r.stage="storage";
-                if(usable)r.storage().select(graph,selected);
-                if(usable&&interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=null;}
-                data.put("graph",graph.graph());data.put("snapshotSelected",usable);data.put("contexts",contextRows(graph.contexts()));data.put("selectedContext",selected);
-                // The receipt is bounded independently of repository size. Every typed gap remains in the verified graph.
-                data.remove("gaps");data.put("gapSummary",publishedGapSummary);
-                data.remove("issues");data.put("issueSummary",Map.of("total",detailed.report().issues().size(),"byReason",reasonCounts(detailed.report().issues(),i->i.reason().name())));
-                data.remove("rootCauses");data.put("rootCauseSummary",Map.of("total",detailed.report().rootCauses().size(),"byCategory",reasonCounts(detailed.report().rootCauses(),c->c.category().name())));
-            }
-            long tScanEnd=System.nanoTime();
-            int reusedMods=(int)javaCacheStats[0].get();
-            int recomputedMods=(int)javaCacheStats[1].get();
-            long polyHits=polyglot.syntax().cacheHits();
-            long polyMisses=polyglot.syntax().cacheMisses();
-            IncrementalSummary incrementalSummary;
-            if(incrementalDisabled){
-                incrementalSummary=IncrementalSummary.cold(incFallbackReason);
-            }else if(fileDelta.isPresent()){
-                var d=fileDelta.orElseThrow();
-                String incMode=(d.addedFiles()==0L&&d.modifiedFiles()==0L&&d.deletedFiles()==0L)
-                        ?IncrementalSummary.MODE_NO_CHANGE:IncrementalSummary.MODE_INCREMENTAL;
-                incrementalSummary=new IncrementalSummary(
-                        incMode,"",baseSnapshotId,Optional.empty(),Optional.empty(),
-                        d.addedFiles(),d.modifiedFiles(),d.deletedFiles(),d.unchangedFiles(),d.unchangedFiles(),
-                        0,0,0,0,0,0,
-                        reusedMods,recomputedMods,0,0,polyHits,polyMisses,0,0,0L,false);
-            }else{
-                incrementalSummary=new IncrementalSummary(
-                        IncrementalSummary.MODE_COLD,incFallbackReason.isBlank()?"NO_PREVIOUS_SNAPSHOT":incFallbackReason,
-                        Optional.empty(),Optional.empty(),Optional.empty(),
-                        0L,0L,0L,0L,0L,0,0,0,0,0,0,
-                        reusedMods,recomputedMods,0,0,polyHits,polyMisses,0,0,0L,false);
-            }
-            // Persist operational incremental telemetry outside canonical stdout receipt/digests so cold & warm receipts remain bit-for-bit deterministic.
-            try{
-                Files.createDirectories(r.storage().root);
-                Files.writeString(r.storage().root.resolve("last-incremental-summary.json"),
-                        CanonicalJson.write(incrementalSummary.toMap()),StandardCharsets.UTF_8);
-            }catch(IOException ignored){}
-            if(telemetry||(terminal&&!r.json)){
-                long intakeMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tAfterIntake-tScanStart);
-                long platMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tAfterPlatformDeps-tAfterIntake);
-                long anaMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tAfterAnalysis-tAfterPlatformDeps);
-                long graphMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd-tAfterAnalysis);
-                long totalMs=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(tScanEnd-tScanStart);
-                err.println("[evo] Telemetry ("+analysisMode.name()+"): total="+totalMs+"ms | intake="+intakeMs+"ms | platform+deps="+platMs+"ms | jvm+polyglot="+anaMs+"ms | graph+publish="+graphMs+"ms");
-                err.println("[evo] Cache: javaHits="+reusedMods+" javaMisses="+recomputedMods+" | polyglotHits="+polyHits+" polyglotMisses="+polyMisses);
-                err.println("[evo] Incremental ("+incrementalSummary.mode()+"): unchanged="+incrementalSummary.unchangedFiles()+" added="+incrementalSummary.addedFiles()+" modified="+incrementalSummary.modifiedFiles()+" deleted="+incrementalSummary.deletedFiles()+" | reusedModules="+reusedMods+" recomputedModules="+recomputedMods+(incrementalSummary.baseSnapshotId().isPresent()?" | baseSnapshot="+incrementalSummary.baseSnapshotId().orElseThrow():"")+(incrementalSummary.fallbackReason().isEmpty()?"":" | reason="+incrementalSummary.fallbackReason()));
-                err.flush();
-            }
-            r.stage="receipt";
-            int exitCode=detailed.graphInput().isEmpty()||detailed.report().status()==UniversalArchitectureReport.Status.TERMINAL_FAILURE
-                    ?1:("COMPLETE".equals(String.valueOf(data.get("status")))&&!availablePlatforms.isEmpty()?0:3);
-            return emit(r,"scan",envelope(data),exitCode);
-            }
             }
         }
-        private int prepareDependencies(RepositoryAcquisitionResult acquisition,List<java.net.URI> repositories)throws IOException {
-            r.stage="dependency-preparation";
-            progress(r,"[2/2] Acquiring and verifying permitted dependency artifacts…","[2/2] Thu nhận và xác minh artifact dependency được phép…");
-            if(acquisition.snapshot().isEmpty())return emit(r,"scan",envelope(Map.of("status","TERMINAL_FAILURE","graphCreated",false,"semanticCoverage","NOT_EVALUATED")),1);
-            var cache=Workspace.safe(resolve(mavenCache));var defaults=UniversalBuildIngestion.Policy.defaults();
-            var buildPolicy=new UniversalBuildIngestion.Policy(Optional.of(release),Optional.of(release),Optional.of("UTF-8"),32_768,defaults.maxCharacters(),defaults.maxTokens(),128);
-            var model=com.evolution.backend.analysis.GradleScan.model(acquisition,buildPolicy,new RepositoryInputDecoder.Policy("UTF-8",500_000,100_000_000),Map.of());
-            var policy=new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096,64_000_000,MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES,64,repositories,5000,15000,offline?0:1,8);
-            var base=MavenScan.inputs(acquisition,MavenScan.models(acquisition,cache,repositories),cache,Optional.empty(),policy);
-            var inputs=com.evolution.backend.analysis.GradleScan.augment(base,acquisition,model,cache,Optional.empty(),policy,Map.of());
-            var problems=reasonCounts(inputs.gaps(),com.evolution.analysis.evidence.CapabilityGapRecord::reasonCode);
-            boolean prepared=inputs.gaps().stream().allMatch(g->g.reasonCode().equals("GRADLE_EFFECTIVE_CONTEXT_REQUIRED"))&&model.stream().flatMap(m->m.issues().stream()).allMatch(i->i.reason()==com.evolution.analysis.ingestion.IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED);
-            var data=new TreeMap<String,Object>();data.put("status",prepared?"PREPARED":"PARTIAL");data.put("snapshot",acquisition.snapshot().orElseThrow().identity());data.put("acquisition",acquisition.identity());
-            data.put("cache",cache.toString());data.put("dependencies",inputs.summary());data.put("problemsByReason",problems);data.put("gaps",inputs.gaps());data.put("evidenceLedgers",inputs.ledgers());
-            data.put("buildModelIssues",model.map(UniversalBuildModel::issues).orElse(List.of()));data.put("graphCreated",false);data.put("semanticCoverage","NOT_EVALUATED");
-            data.put("execution",Map.of("mode","PASSIVE_DEPENDENCY_PREPARATION","isolatedBuildExecuted",false,"offline",offline));
-            data.put("next","scan with --offline and the same --maven-cache; passive recovery retains effective Gradle context obligations");
-            return emit(r,"scan",envelope(data),prepared?0:3);
+
+        private int prepareDependencies(RepositoryAcquisitionResult acquisition, List<java.net.URI> repositories)
+                throws IOException {
+            r.stage = "dependency-preparation";
+            progress(r, "[2/2] Acquiring and verifying permitted dependency artifacts…",
+                    "[2/2] Thu nhận và xác minh artifact dependency được phép…");
+            if (acquisition.snapshot().isEmpty())
+                return emit(r, "scan", envelope(Map.of("status", "TERMINAL_FAILURE", "graphCreated", false,
+                        "semanticCoverage", "NOT_EVALUATED")), 1);
+            var cache = Workspace.safe(resolve(mavenCache));
+            var defaults = UniversalBuildIngestion.Policy.defaults();
+            var buildPolicy = new UniversalBuildIngestion.Policy(Optional.of(release), Optional.of(release),
+                    Optional.of("UTF-8"), 32_768, defaults.maxCharacters(), defaults.maxTokens(), 128);
+            var model = com.evolution.backend.analysis.GradleScan.model(acquisition, buildPolicy,
+                    new RepositoryInputDecoder.Policy("UTF-8", 500_000, 100_000_000), Map.of());
+            var policy = new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(4096, 64_000_000,
+                    MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES, 64, repositories, 5000, 15000, offline ? 0 : 1, 8);
+            var base = MavenScan.inputs(acquisition, MavenScan.models(acquisition, cache, repositories), cache,
+                    Optional.empty(), policy);
+            var inputs = com.evolution.backend.analysis.GradleScan.augment(base, acquisition, model, cache,
+                    Optional.empty(), policy, Map.of());
+            var problems = reasonCounts(inputs.gaps(), com.evolution.analysis.evidence.CapabilityGapRecord::reasonCode);
+            boolean prepared = inputs.gaps().stream()
+                    .allMatch(g -> g.reasonCode().equals("GRADLE_EFFECTIVE_CONTEXT_REQUIRED"))
+                    && model.stream().flatMap(m -> m.issues().stream()).allMatch(i -> i
+                            .reason() == com.evolution.analysis.ingestion.IngestionEvidence.Reason.CLASSPATH_RESOLUTION_REQUIRED);
+            var data = new TreeMap<String, Object>();
+            data.put("status", prepared ? "PREPARED" : "PARTIAL");
+            data.put("snapshot", acquisition.snapshot().orElseThrow().identity());
+            data.put("acquisition", acquisition.identity());
+            data.put("cache", cache.toString());
+            data.put("dependencies", inputs.summary());
+            data.put("problemsByReason", problems);
+            data.put("gaps", inputs.gaps());
+            data.put("evidenceLedgers", inputs.ledgers());
+            data.put("buildModelIssues", model.map(UniversalBuildModel::issues).orElse(List.of()));
+            data.put("graphCreated", false);
+            data.put("semanticCoverage", "NOT_EVALUATED");
+            data.put("execution", Map.of("mode", "PASSIVE_DEPENDENCY_PREPARATION", "isolatedBuildExecuted", false,
+                    "offline", offline));
+            data.put("next",
+                    "scan with --offline and the same --maven-cache; passive recovery retains effective Gradle context obligations");
+            return emit(r, "scan", envelope(data), prepared ? 0 : 3);
         }
     }
-    @Command(name="open",mixinStandardHelpOptions=true,description="Select verified graph snapshot / Chọn snapshot đã kiểm tra")
-    private final class Open implements Callable<Integer>{final Root r;Open(Root r){this.r=r;}@Parameters(paramLabel="FILE") Path file;
-        public Integer call()throws Exception{r.validate();sessionGraph=null;var graph=Workspace.graph(resolve(file));r.storage().select(graph,autoContext(graph));if(interactiveDefaults!=null){interactiveDefaults.graph=null;interactiveDefaults.context=null;sessionGraph=graph;}return emit(r,"open",discovery(graph),0);}}
-    @Command(name="use",mixinStandardHelpOptions=true,description="Remember exact context / Ghi nhớ ngữ cảnh chính xác")
-    private final class Use implements Callable<Integer>{final Root r;Use(Root r){this.r=r;}@Parameters(paramLabel="ID|N") String selected;
-        public Integer call()throws Exception{r.validate();var graph=load(r);String context=findContext(graph,selected);if(r.graph==null)r.storage().rememberContext(graph,context);else r.storage().select(graph,Optional.of(context));if(interactiveDefaults!=null){interactiveDefaults.context=context;interactiveDefaults.graph=null;sessionGraph=graph;}return emit(r,"use",envelope(Map.of("graph",graph.identity(),"context",context,"selected",selected)),0);}}
-    @Command(mixinStandardHelpOptions=true,description="Architecture Health Score v2 (--v2 / arch-score) or legacy M6 policy confidence assessment / Chấm điểm kiến trúc v2 hoặc đánh giá chính sách")
-    private final class ScoreCommand implements Callable<Integer>{
-        final Root r;final boolean defaultV2;
-        @Option(names="--v2",description="Evaluate Architecture Health Score v2 (7 dimensions + independent Analysis Confidence)") boolean v2;
-        @Option(names="--v1",description="Force legacy M6 policy exposure assessment") boolean v1;
-        @Option(names="--store",paramLabel="DIR",description="Graph store directory for digest-addressed --graph sha256:... lookups") Path storeDir;
-        @Option(names="--whole-repo",description="Evaluate Whole Repository (snapshot:...) Architecture Health v2") boolean wholeRepo;
-        @Option(names="--fail-on",paramLabel="none|info|warning|error",description="CI policy threshold (legacy v1) / Ngưỡng chính sách CI") String failOn="none";
-        @Option(names="--gap-view",paramLabel="CURRENT|HISTORY|ALL",description="Not applicable on score") String gapView;
-        ScoreCommand(Root r,boolean defaultV2){this.r=r;this.defaultV2=defaultV2;}
-        @Override public Integer call() throws Exception {
+
+    @Command(name = "open", mixinStandardHelpOptions = true, description = "Select verified graph snapshot / Chọn snapshot đã kiểm tra")
+    private final class Open implements Callable<Integer> {
+        final Root r;
+
+        Open(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "FILE")
+        Path file;
+
+        public Integer call() throws Exception {
             r.validate();
-            if(v1&&(defaultV2||v2||storeDir!=null||wholeRepo))throw new InputFailure("CONFLICTING_REQUEST");
-            boolean useV2=!v1&&(defaultV2||v2||storeDir!=null||wholeRepo||(r.graph!=null&&r.graph.startsWith("sha256:")));
-            if(!useV2){
-                var legacy=new Query(r,"score","assessment");
-                legacy.failOn=failOn;legacy.gapView=gapView;
+            sessionGraph = null;
+            var graph = Workspace.graph(resolve(file));
+            r.storage().select(graph, autoContext(graph));
+            if (interactiveDefaults != null) {
+                interactiveDefaults.graph = null;
+                interactiveDefaults.context = null;
+                sessionGraph = graph;
+            }
+            return emit(r, "open", discovery(graph), 0);
+        }
+    }
+
+    @Command(name = "use", mixinStandardHelpOptions = true, description = "Remember exact context / Ghi nhớ ngữ cảnh chính xác")
+    private final class Use implements Callable<Integer> {
+        final Root r;
+
+        Use(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "ID|N")
+        String selected;
+
+        public Integer call() throws Exception {
+            r.validate();
+            var graph = load(r);
+            String context = findContext(graph, selected);
+            if (r.graph == null)
+                r.storage().rememberContext(graph, context);
+            else
+                r.storage().select(graph, Optional.of(context));
+            if (interactiveDefaults != null) {
+                interactiveDefaults.context = context;
+                interactiveDefaults.graph = null;
+                sessionGraph = graph;
+            }
+            return emit(r, "use", envelope(Map.of("graph", graph.identity(), "context", context, "selected", selected)),
+                    0);
+        }
+    }
+
+    @Command(mixinStandardHelpOptions = true, description = "Architecture Health Score v2 (--v2 / arch-score) or legacy M6 policy confidence assessment / Chấm điểm kiến trúc v2 hoặc đánh giá chính sách")
+    private final class ScoreCommand implements Callable<Integer> {
+        final Root r;
+        final boolean defaultV2;
+        @Option(names = "--v2", description = "Evaluate Architecture Health Score v2 (7 dimensions + independent Analysis Confidence)")
+        boolean v2;
+        @Option(names = "--v1", description = "Force legacy M6 policy exposure assessment")
+        boolean v1;
+        @Option(names = "--store", paramLabel = "DIR", description = "Graph store directory for digest-addressed --graph sha256:... lookups")
+        Path storeDir;
+        @Option(names = "--whole-repo", description = "Evaluate Whole Repository (snapshot:...) Architecture Health v2")
+        boolean wholeRepo;
+        @Option(names = "--fail-on", paramLabel = "none|info|warning|error", description = "CI policy threshold (legacy v1) / Ngưỡng chính sách CI")
+        String failOn = "none";
+        @Option(names = "--gap-view", paramLabel = "CURRENT|HISTORY|ALL", description = "Not applicable on score")
+        String gapView;
+
+        ScoreCommand(Root r, boolean defaultV2) {
+            this.r = r;
+            this.defaultV2 = defaultV2;
+        }
+
+        @Override
+        public Integer call() throws Exception {
+            r.validate();
+            if (v1 && (defaultV2 || v2 || storeDir != null || wholeRepo))
+                throw new InputFailure("CONFLICTING_REQUEST");
+            boolean useV2 = !v1 && (defaultV2 || v2 || storeDir != null || wholeRepo
+                    || (r.graph != null && r.graph.startsWith("sha256:")));
+            if (!useV2) {
+                var legacy = new Query(r, "score", "assessment");
+                legacy.failOn = failOn;
+                legacy.gapView = gapView;
                 return legacy.call();
             }
-            if(gapView!=null)throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
-            if(!"none".equals(failOn))throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
-            var graph=loadForScore(r,storeDir);
-            String targetContext=wholeRepo?graph.snapshot().value()
-                    :(r.context!=null?findContext(graph,r.context):graph.snapshot().value());
-            var queries=new ArchitectureMetricsService(graph).queries();
-            var service=new ArchitectureAssessmentV2Service();
-            var model=ArchitectureScoreModelV2.standard();
+            if (gapView != null)
+                throw new InputFailure("GAP_VIEW_NOT_APPLICABLE");
+            if (!"none".equals(failOn))
+                throw new InputFailure("THRESHOLD_NOT_APPLICABLE");
+            var graph = loadForScore(r, storeDir);
+            String targetContext = wholeRepo ? graph.snapshot().value()
+                    : (r.context != null ? findContext(graph, r.context) : graph.snapshot().value());
+            var queries = new ArchitectureMetricsService(graph).queries();
+            var service = new ArchitectureAssessmentV2Service();
+            var model = ArchitectureScoreModelV2.standard();
             ArchitectureAssessmentV2.Result result;
-            if(targetContext.equals(graph.snapshot().value())){
-                var customByCtx=new LinkedHashMap<String,PolicyEvaluation.Result>();
-                if(r.policy!=null){
-                    byte[] policyBytes=Workspace.read(resolve(r.policy),262_144);
-                    var compiled=new PolicyCompiler().compile(policyBytes,EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
-                    if(compiled.policy().isEmpty())throw new InputFailure("INVALID_POLICY");
-                    for(var ctx:graph.contexts()){
-                        if(ctx.identity().equals(graph.snapshot().value()))continue;
-                        var sc=graph.evidence(ctx.evidence()).filter(e->"spring.context".equals(e.family())).map(e->Scope.SPRING_COMPONENT).orElse(Scope.TYPE);
-                        if(!queries.supportsArchitectureScope(ctx,sc))continue;
-                        var plan=new PolicyGraphMapper().bind(compiled,queries,ctx.identity(),PolicyGraphMapper.Limits.defaults());
-                        customByCtx.put(ctx.identity(),new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults()));
+            if (targetContext.equals(graph.snapshot().value())) {
+                var customByCtx = new LinkedHashMap<String, PolicyEvaluation.Result>();
+                if (r.policy != null) {
+                    byte[] policyBytes = Workspace.read(resolve(r.policy), 262_144);
+                    var compiled = new PolicyCompiler().compile(policyBytes,
+                            EvidenceContext.forSnapshot(graph.snapshot()), PolicyCompiler.Limits.defaults());
+                    if (compiled.policy().isEmpty())
+                        throw new InputFailure("INVALID_POLICY");
+                    for (var ctx : graph.contexts()) {
+                        if (ctx.identity().equals(graph.snapshot().value()))
+                            continue;
+                        var sc = graph.evidence(ctx.evidence()).filter(e -> "spring.context".equals(e.family()))
+                                .map(e -> Scope.SPRING_COMPONENT).orElse(Scope.TYPE);
+                        if (!queries.supportsArchitectureScope(ctx, sc))
+                            continue;
+                        var plan = new PolicyGraphMapper().bind(compiled, queries, ctx.identity(),
+                                PolicyGraphMapper.Limits.defaults());
+                        customByCtx.put(ctx.identity(), new PolicyEvaluator().evaluate(compiled, plan, queries,
+                                PolicyEvaluation.Limits.defaults()));
                     }
                 }
-                result=service.assessRepository(queries,customByCtx,Optional.empty(),model);
-            }else{
-                Optional<PolicyEvaluation.Result> customEval=Optional.empty();
-                if(r.policy!=null){
-                    byte[] policyBytes=Workspace.read(resolve(r.policy),262_144);
-                    var compiled=new PolicyCompiler().compile(policyBytes,EvidenceContext.forSnapshot(graph.snapshot()),PolicyCompiler.Limits.defaults());
-                    if(compiled.policy().isEmpty())throw new InputFailure("INVALID_POLICY");
-                    var plan=new PolicyGraphMapper().bind(compiled,queries,targetContext,PolicyGraphMapper.Limits.defaults());
-                    customEval=Optional.of(new PolicyEvaluator().evaluate(compiled,plan,queries,PolicyEvaluation.Limits.defaults()));
+                result = service.assessRepository(queries, customByCtx, Optional.empty(), model);
+            } else {
+                Optional<PolicyEvaluation.Result> customEval = Optional.empty();
+                if (r.policy != null) {
+                    byte[] policyBytes = Workspace.read(resolve(r.policy), 262_144);
+                    var compiled = new PolicyCompiler().compile(policyBytes,
+                            EvidenceContext.forSnapshot(graph.snapshot()), PolicyCompiler.Limits.defaults());
+                    if (compiled.policy().isEmpty())
+                        throw new InputFailure("INVALID_POLICY");
+                    var plan = new PolicyGraphMapper().bind(compiled, queries, targetContext,
+                            PolicyGraphMapper.Limits.defaults());
+                    customEval = Optional.of(new PolicyEvaluator().evaluate(compiled, plan, queries,
+                            PolicyEvaluation.Limits.defaults()));
                 }
-                result=service.assess(queries,targetContext,customEval,Optional.empty(),model);
+                result = service.assess(queries, targetContext, customEval, Optional.empty(), model);
             }
-            int code=result.status()==AssessmentStatus.COMPLETE?0:3;
-            if(r.json)return emit(r,"score",envelope(result),code);
+            int code = result.status() == AssessmentStatus.COMPLETE ? 0 : 3;
+            if (r.json)
+                return emit(r, "score", envelope(result), code);
             renderScoreV2Report(result);
             return code;
         }
     }
 
-    private KnowledgeGraph loadForScore(Root r,Path storeDir)throws IOException{
-        if(storeDir!=null){
-            var fgs=new FileGraphStore(Workspace.safe(resolve(storeDir)));
-            if(r.graph!=null&&r.graph.startsWith("sha256:")){
-                return fgs.load(new ContentDigest(r.graph)).orElseThrow(()->new InputFailure("NO_SNAPSHOT"));
+    private KnowledgeGraph loadForScore(Root r, Path storeDir) throws IOException {
+        if (storeDir != null) {
+            var fgs = new FileGraphStore(Workspace.safe(resolve(storeDir)));
+            if (r.graph != null && r.graph.startsWith("sha256:")) {
+                return fgs.load(new ContentDigest(r.graph)).orElseThrow(() -> new InputFailure("NO_SNAPSHOT"));
             }
-            if(r.graph!=null){
+            if (r.graph != null) {
                 return Workspace.graph(resolve(Path.of(r.graph)));
             }
-            var ws=new Workspace(Workspace.safe(resolve(storeDir)));
-            if(Files.exists(ws.root.resolve("selection.json"),LinkOption.NOFOLLOW_LINKS))return ws.selectedGraph();
+            var ws = new Workspace(Workspace.safe(resolve(storeDir)));
+            if (Files.exists(ws.root.resolve("selection.json"), LinkOption.NOFOLLOW_LINKS))
+                return ws.selectedGraph();
             throw new InputFailure("NO_SNAPSHOT");
         }
         return load(r);
     }
 
-    private void renderScoreV2Report(ArchitectureAssessmentV2.Result res){
-        out.println("Architecture Health Score v2 ("+res.formula().id()+":"+res.formula().version()+") · "+res.scopeMode());
-        if(res.score().isPresent()){
-            String sc=res.score().orElseThrow().setScale(2,RoundingMode.HALF_EVEN).toPlainString();
-            String interval="";
-            if(res.conservativeLowerBound().isPresent()&&res.uncertaintyDelta().signum()>0){
-                String lb=res.conservativeLowerBound().orElseThrow().setScale(2,RoundingMode.HALF_EVEN).toPlainString();
-                String delta=res.uncertaintyDelta().setScale(2,RoundingMode.HALF_EVEN).toPlainString();
-                interval=" | Conservative bound: ["+lb+" .. "+sc+"] (delta -"+delta+")";
+    private void renderScoreV2Report(ArchitectureAssessmentV2.Result res) {
+        out.println("Architecture Health Score v2 (" + res.formula().id() + ":" + res.formula().version() + ") · "
+                + res.scopeMode());
+        if (res.score().isPresent()) {
+            String sc = res.score().orElseThrow().setScale(2, RoundingMode.HALF_EVEN).toPlainString();
+            String interval = "";
+            if (res.conservativeLowerBound().isPresent() && res.uncertaintyDelta().signum() > 0) {
+                String lb = res.conservativeLowerBound().orElseThrow().setScale(2, RoundingMode.HALF_EVEN)
+                        .toPlainString();
+                String delta = res.uncertaintyDelta().setScale(2, RoundingMode.HALF_EVEN).toPlainString();
+                interval = " | Conservative bound: [" + lb + " .. " + sc + "] (delta -" + delta + ")";
             }
-            out.println("  Architecture Health: "+sc+"/100 ("+res.healthBand()+") ["+res.status()+"]"+interval);
-        }else{
-            out.println("  Architecture Health: "+res.status()+" ("+res.healthBand()+")");
+            out.println("  Architecture Health: " + sc + "/100 (" + res.healthBand() + ") [" + res.status() + "]"
+                    + interval);
+        } else {
+            out.println("  Architecture Health: " + res.status() + " (" + res.healthBand() + ")");
         }
-        var c=res.confidence();
-        out.println("  Analysis Confidence (Independent): "+c.confidenceScore().setScale(2,RoundingMode.HALF_EVEN)+"/100 ("+c.tier()+")"
-                +" · Evidence: "+c.evidenceTier()
-                +" · Parse: "+pct(c.parseCompleteness())
-                +" · Internal Edges: "+pct(c.internalEdgeCompleteness())
-                +" · Build: "+pct(c.buildCompleteness())
-                +" · Open Gaps: "+c.openGapCount());
-        if(c.springSpaceDefiniteness().isPresent()){
-            out.println("  Spring Space Definiteness: "+pct(c.springSpaceDefiniteness().orElseThrow()));
+        var c = res.confidence();
+        out.println("  Analysis Confidence (Independent): " + c.confidenceScore().setScale(2, RoundingMode.HALF_EVEN)
+                + "/100 (" + c.tier() + ")"
+                + " · Evidence: " + c.evidenceTier()
+                + " · Parse: " + pct(c.parseCompleteness())
+                + " · Internal Edges: " + pct(c.internalEdgeCompleteness())
+                + " · Build: " + pct(c.buildCompleteness())
+                + " · Open Gaps: " + c.openGapCount());
+        if (c.springSpaceDefiniteness().isPresent()) {
+            out.println("  Spring Space Definiteness: " + pct(c.springSpaceDefiniteness().orElseThrow()));
         }
-        for(String lim:c.limitations()){
-            out.println("    ! "+lim);
+        for (String lim : c.limitations()) {
+            out.println("    ! " + lim);
         }
-        res.inferredLayers().ifPresent(lm->{
-            String summary=lm.layers().stream().map(ls->ls.layer()+"("+ls.packageCount()+"p/"+ls.typeCount()+"t)")
+        res.inferredLayers().ifPresent(lm -> {
+            String summary = lm.layers().stream()
+                    .map(ls -> ls.layer() + "(" + ls.packageCount() + "p/" + ls.typeCount() + "t)")
                     .collect(java.util.stream.Collectors.joining(", "));
-            out.println("  Inferred Style: "+lm.detectedStyle()+(summary.isEmpty()?"":" — "+summary));
+            out.println("  Inferred Style: " + lm.detectedStyle() + (summary.isEmpty() ? "" : " — " + summary));
         });
-        if(!res.dimensions().isEmpty()){
+        if (!res.dimensions().isEmpty()) {
             out.println("  Dimensions:");
-            for(var d:res.dimensions()){
-                String dScore=d.score().map(v->v.setScale(1,RoundingMode.HALF_EVEN)+"/100").orElse(d.status().name());
-                String bound=(d.score().isPresent()&&d.conservativeLowerBound().isPresent()&&d.uncertaintyDelta().signum()>0)
-                        ?" [>="+d.conservativeLowerBound().orElseThrow().setScale(1,RoundingMode.HALF_EVEN)+"]":"";
-                out.println("    - "+d.displayName()+" ("+d.weight().setScale(0,RoundingMode.HALF_EVEN)+"%): "+dScore+bound+" ["+d.status()+"]");
+            for (var d : res.dimensions()) {
+                String dScore = d.score().map(v -> v.setScale(1, RoundingMode.HALF_EVEN) + "/100")
+                        .orElse(d.status().name());
+                String bound = (d.score().isPresent() && d.conservativeLowerBound().isPresent()
+                        && d.uncertaintyDelta().signum() > 0)
+                                ? " [>=" + d.conservativeLowerBound().orElseThrow().setScale(1, RoundingMode.HALF_EVEN)
+                                        + "]"
+                                : "";
+                out.println("    - " + d.displayName() + " (" + d.weight().setScale(0, RoundingMode.HALF_EVEN) + "%): "
+                        + dScore + bound + " [" + d.status() + "]");
             }
-            var offenders=res.dimensions().stream()
-                    .flatMap(d->d.subMetrics().stream().filter(sm->sm.score().isPresent()&&sm.score().orElseThrow().compareTo(new BigDecimal("85"))<0)
-                            .map(sm->Map.entry(d.displayName(),sm)))
-                    .sorted(Comparator.comparing(e->e.getValue().score().orElseThrow()))
+            var offenders = res.dimensions().stream()
+                    .flatMap(d -> d.subMetrics().stream()
+                            .filter(sm -> sm.score().isPresent()
+                                    && sm.score().orElseThrow().compareTo(new BigDecimal("85")) < 0)
+                            .map(sm -> Map.entry(d.displayName(), sm)))
+                    .sorted(Comparator.comparing(e -> e.getValue().score().orElseThrow()))
                     .limit(6).toList();
-            if(!offenders.isEmpty()){
+            if (!offenders.isEmpty()) {
                 out.println("  Top Architectural Offenders:");
-                for(var entry:offenders){
-                    var sm=entry.getValue();
-                    out.println("    * ["+entry.getKey()+"] "+sm.displayName()+": "
-                            +sm.score().orElseThrow().setScale(1,RoundingMode.HALF_EVEN)+"/100"
-                            +sm.rawValue().map(v->" (raw="+v.setScale(4,RoundingMode.HALF_EVEN)+")").orElse("")
-                            +" — "+sm.explanation());
-                    if(!sm.remediationHint().isBlank())out.println("      Fix: "+sm.remediationHint());
-                    for(var w:sm.witnesses().stream().limit(2).toList()){
-                        out.println("      Witness: ["+w.kind()+"] "+w.label()+" — "+w.detail());
+                for (var entry : offenders) {
+                    var sm = entry.getValue();
+                    out.println("    * [" + entry.getKey() + "] " + sm.displayName() + ": "
+                            + sm.score().orElseThrow().setScale(1, RoundingMode.HALF_EVEN) + "/100"
+                            + sm.rawValue().map(v -> " (raw=" + v.setScale(4, RoundingMode.HALF_EVEN) + ")").orElse("")
+                            + " — " + sm.explanation());
+                    if (!sm.remediationHint().isBlank())
+                        out.println("      Fix: " + sm.remediationHint());
+                    for (var w : sm.witnesses().stream().limit(2).toList()) {
+                        out.println("      Witness: [" + w.kind() + "] " + w.label() + " — " + w.detail());
                     }
                 }
             }
         }
-        if(!res.contextBreakdown().isEmpty()){
-            out.println("  Context Breakdown ("+res.contextBreakdown().size()+"):");
-            for(var cb:res.contextBreakdown()){
-                String cbScore=cb.score().map(v->v.setScale(1,RoundingMode.HALF_EVEN)+"/100").orElse(cb.status().name());
-                out.println("    - "+cb.label()+" ["+cb.kind()+", "+cb.entityCount()+" entities]: "+cbScore+" ("+cb.confidenceTier()+" confidence)");
+        if (!res.contextBreakdown().isEmpty()) {
+            out.println("  Context Breakdown (" + res.contextBreakdown().size() + "):");
+            for (var cb : res.contextBreakdown()) {
+                String cbScore = cb.score().map(v -> v.setScale(1, RoundingMode.HALF_EVEN) + "/100")
+                        .orElse(cb.status().name());
+                out.println("    - " + cb.label() + " [" + cb.kind() + ", " + cb.entityCount() + " entities]: "
+                        + cbScore + " (" + cb.confidenceTier() + " confidence)");
             }
         }
         out.flush();
     }
 
-    private static String pct(BigDecimal ratio){
-        return ratio.multiply(new BigDecimal("100")).setScale(1,RoundingMode.HALF_EVEN)+"%";
+    private static String pct(BigDecimal ratio) {
+        return ratio.multiply(new BigDecimal("100")).setScale(1, RoundingMode.HALF_EVEN) + "%";
     }
 
-    @Command(name="insights",mixinStandardHelpOptions=true,description="Tarjan SCC tangles, minimal cycle-breakers, hotspots, DSM & executive Markdown report / Cố vấn kiến trúc & tái cấu trúc")
-    private final class Insights implements Callable<Integer>{
-        final Root r;Insights(Root r){this.r=r;}
-        @Option(names="--top",defaultValue="15",paramLabel="1..50",description="Top tangles and hotspots to return / Số lượng kết quả hàng đầu") int top=15;
-        @Option(names="--report-md",paramLabel="FILE",description="Write executive Markdown report to file / Ghi báo cáo Markdown") Path reportMd;
-        public Integer call()throws Exception{
-            r.validate();if(top<1||top>50)throw new InputFailure("INVALID_INPUT");
-            var graph=load(r);String context=context(r,graph,true);
-            var insights=computeInsights(r,graph,context,top);
-            if(reportMd!=null)Files.writeString(resolve(reportMd),insights.markdownReport(),StandardCharsets.UTF_8);
-            int code=insights.status()==com.evolution.analysis.contract.assessment.AssessmentStatus.COMPLETE?0:3;
-            if(r.json)return emit(r,"insights",envelope(insights),code);
-            out.print(insights.markdownReport());out.flush();
+    @Command(name = "insights", mixinStandardHelpOptions = true, description = "Tarjan SCC tangles, minimal cycle-breakers, hotspots, DSM & executive Markdown report / Cố vấn kiến trúc & tái cấu trúc")
+    private final class Insights implements Callable<Integer> {
+        final Root r;
+
+        Insights(Root r) {
+            this.r = r;
+        }
+
+        @Option(names = "--top", defaultValue = "15", paramLabel = "1..50", description = "Top tangles and hotspots to return / Số lượng kết quả hàng đầu")
+        int top = 15;
+        @Option(names = "--report-md", paramLabel = "FILE", description = "Write executive Markdown report to file / Ghi báo cáo Markdown")
+        Path reportMd;
+
+        public Integer call() throws Exception {
+            r.validate();
+            if (top < 1 || top > 50)
+                throw new InputFailure("INVALID_INPUT");
+            var graph = load(r);
+            String context = context(r, graph, true);
+            var insights = computeInsights(r, graph, context, top);
+            if (reportMd != null)
+                Files.writeString(resolve(reportMd), insights.markdownReport(), StandardCharsets.UTF_8);
+            int code = insights.status() == com.evolution.analysis.contract.assessment.AssessmentStatus.COMPLETE ? 0
+                    : 3;
+            if (r.json)
+                return emit(r, "insights", envelope(insights), code);
+            out.print(insights.markdownReport());
+            out.flush();
             return code;
         }
     }
-    private ArchitectureInsightsAdvisor.InsightsReport computeInsights(Root r,KnowledgeGraph graph,String context,int top)throws IOException{
-        Scope scope=Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-','_'));
-        Projection projection=switch(r.projection){case "union"->Projection.BOUNDED_UNION;case "unknown"->Projection.UNKNOWN_OVERLAY;default->Projection.valueOf(r.projection.toUpperCase(Locale.ROOT));};
-        if(r.world!=null&&r.assignment!=null)throw new InputFailure("ONE_REALIZATION_REQUIRED");Optional<Realization> realization=Optional.empty();
-        if(r.world!=null)realization=Optional.of(new Realization(Optional.of(r.world),Map.of()));
-        if(r.assignment!=null){var assignment=new TreeMap<String,Boolean>();GraphJson.object(Workspace.json(resolve(r.assignment),65_536)).forEach((k,v)->{if(!(v instanceof Boolean b))throw new IllegalArgumentException();assignment.put(k,b);});realization=Optional.of(new Realization(Optional.empty(),assignment));}
-        var req=new Request(graph.identity(),context,scope,projection,Direction.OUTGOING,r.kinds,Population.all(),false,realization,Limits.defaults());
-        Optional<PublishedReports.Report> report=Optional.empty();
-        if(r.policy!=null||Files.exists(r.storage().root.resolve("policy.txt"),LinkOption.NOFOLLOW_LINKS)){
-            try{report=Optional.of(evaluate(r,graph,context,r.policy));}catch(RuntimeException|IOException ignored){}
+
+    private ArchitectureInsightsAdvisor.InsightsReport computeInsights(Root r, KnowledgeGraph graph, String context,
+            int top) throws IOException {
+        Scope scope = Scope.valueOf(r.scope.toUpperCase(Locale.ROOT).replace('-', '_'));
+        Projection projection = switch (r.projection) {
+            case "union" -> Projection.BOUNDED_UNION;
+            case "unknown" -> Projection.UNKNOWN_OVERLAY;
+            default -> Projection.valueOf(r.projection.toUpperCase(Locale.ROOT));
+        };
+        if (r.world != null && r.assignment != null)
+            throw new InputFailure("ONE_REALIZATION_REQUIRED");
+        Optional<Realization> realization = Optional.empty();
+        if (r.world != null)
+            realization = Optional.of(new Realization(Optional.of(r.world), Map.of()));
+        if (r.assignment != null) {
+            var assignment = new TreeMap<String, Boolean>();
+            GraphJson.object(Workspace.json(resolve(r.assignment), 65_536)).forEach((k, v) -> {
+                if (!(v instanceof Boolean b))
+                    throw new IllegalArgumentException();
+                assignment.put(k, b);
+            });
+            realization = Optional.of(new Realization(Optional.empty(), assignment));
         }
-        var queries=new ArchitectureMetricsService(graph).queries();
-        return ArchitectureInsightsAdvisor.analyze(queries,req,report,top);
+        var req = new Request(graph.identity(), context, scope, projection, Direction.OUTGOING, r.kinds,
+                Population.all(), false, realization, Limits.defaults());
+        Optional<PublishedReports.Report> report = Optional.empty();
+        if (r.policy != null || Files.exists(r.storage().root.resolve("policy.txt"), LinkOption.NOFOLLOW_LINKS)) {
+            try {
+                report = Optional.of(evaluate(r, graph, context, r.policy));
+            } catch (RuntimeException | IOException ignored) {
+            }
+        }
+        var queries = new ArchitectureMetricsService(graph).queries();
+        return ArchitectureInsightsAdvisor.analyze(queries, req, report, top);
     }
-    @Command(name="export",mixinStandardHelpOptions=true,description="JSON, SARIF, GraphML, Cytoscape or Markdown / Xuất báo cáo")
-    private final class Export implements Callable<Integer>{final Root r;Export(Root r){this.r=r;}
-        @Parameters(paramLabel="json|sarif|graphml|cytoscape|markdown") String format;
-        @Option(names={"-o","--out"},paramLabel="FILE",description="Create new file; otherwise stdout / Tạo tệp mới hoặc stdout") Path target;
-        @Option(names="--operation",paramLabel="NAME",description="JSON query operation / Thao tác JSON") String operation="summary";
-        public Integer call()throws Exception{
-            r.validate();if(!Set.of("json","sarif","graphml","cytoscape","markdown").contains(format))throw new InputFailure("INVALID_FORMAT");var graph=load(r);String context=context(r,graph,true);byte[] bytes;int code;
-            if(format.equals("markdown")){var insights=computeInsights(r,graph,context,15);bytes=insights.markdownReport().getBytes(StandardCharsets.UTF_8);code=insights.status()==com.evolution.analysis.contract.assessment.AssessmentStatus.COMPLETE?0:3;}
-            else if(format.equals("sarif")){var report=evaluate(r,graph,context,r.policy);bytes=Exports.sarif(report);code=status(report.evaluation());}
-            else{String op=format.equals("graphml")?"edges":format.equals("cytoscape")?"visual-graph":operation;var store=new InMemoryGraphStore();store.save(graph);if(r.other!=null)store.save(Workspace.graph(resolve(r.other)));var reports=new PublishedReports();String path="/api/v1/graphs/"+graph.identity().value();
-                boolean isReportOp=ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)&&(!op.equals("visual-graph")||r.policy!=null);
-                if(isReportOp){var report=evaluate(r,graph,context,r.policy);reports.publish(report);path+="/reports/"+report.identity().value()+"/"+op;}else path+="/queries/"+op;
-                var response=new ArchitectureQueryApi(store,reports,ApiLimits.defaults()).handle("POST",path,"application/json",body(r,graph,context,op,List.of(),isReportOp),()->false);var tree=GraphJson.object(GraphJson.read(Workspace.utf8(response.body()),GraphJson.Limits.defaults()));code=response.status()==200?status(tree.get("data")):2;
-                if(response.status()!=200)return emit(r,"export",tree,code);bytes=format.equals("graphml")?Exports.graphml(tree):format.equals("cytoscape")?Exports.cytoscape(tree):response.body();}
-            if(bytes.length>32_000_000)throw new InputFailure("OUTPUT_LIMIT");
-            if(target==null){out.print(Workspace.utf8(bytes));out.println();}else{Workspace.writeNew(resolve(target),bytes);return emit(r,"export",envelope(Map.of("format",format,"output",target.toString(),"content",ContentDigest.sha256(bytes),"bytes",bytes.length,"status",code==0?"COMPLETE":"PARTIAL")),code);}return code;
+
+    @Command(name = "export", mixinStandardHelpOptions = true, description = "JSON, SARIF, GraphML, Cytoscape or Markdown / Xuất báo cáo")
+    private final class Export implements Callable<Integer> {
+        final Root r;
+
+        Export(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(paramLabel = "json|sarif|graphml|cytoscape|markdown")
+        String format;
+        @Option(names = { "-o",
+                "--out" }, paramLabel = "FILE", description = "Create new file; otherwise stdout / Tạo tệp mới hoặc stdout")
+        Path target;
+        @Option(names = "--operation", paramLabel = "NAME", description = "JSON query operation / Thao tác JSON")
+        String operation = "summary";
+
+        public Integer call() throws Exception {
+            r.validate();
+            if (!Set.of("json", "sarif", "graphml", "cytoscape", "markdown").contains(format))
+                throw new InputFailure("INVALID_FORMAT");
+            var graph = load(r);
+            String context = context(r, graph, true);
+            byte[] bytes;
+            int code;
+            if (format.equals("markdown")) {
+                var insights = computeInsights(r, graph, context, 15);
+                bytes = insights.markdownReport().getBytes(StandardCharsets.UTF_8);
+                code = insights.status() == com.evolution.analysis.contract.assessment.AssessmentStatus.COMPLETE ? 0
+                        : 3;
+            } else if (format.equals("sarif")) {
+                var report = evaluate(r, graph, context, r.policy);
+                bytes = Exports.sarif(report);
+                code = status(report.evaluation());
+            } else {
+                String op = format.equals("graphml") ? "edges"
+                        : format.equals("cytoscape") ? "visual-graph" : operation;
+                var store = new InMemoryGraphStore();
+                store.save(graph);
+                if (r.other != null)
+                    store.save(Workspace.graph(resolve(r.other)));
+                var reports = new PublishedReports();
+                String path = "/api/v1/graphs/" + graph.identity().value();
+                boolean isReportOp = ArchitectureQueryApi.REPORT_OPERATIONS.contains(op)
+                        && (!op.equals("visual-graph") || r.policy != null);
+                if (isReportOp) {
+                    var report = evaluate(r, graph, context, r.policy);
+                    reports.publish(report);
+                    path += "/reports/" + report.identity().value() + "/" + op;
+                } else
+                    path += "/queries/" + op;
+                var response = new ArchitectureQueryApi(store, reports, ApiLimits.defaults()).handle("POST", path,
+                        "application/json", body(r, graph, context, op, List.of(), isReportOp), () -> false);
+                var tree = GraphJson
+                        .object(GraphJson.read(Workspace.utf8(response.body()), GraphJson.Limits.defaults()));
+                code = response.status() == 200 ? status(tree.get("data")) : 2;
+                if (response.status() != 200)
+                    return emit(r, "export", tree, code);
+                bytes = format.equals("graphml") ? Exports.graphml(tree)
+                        : format.equals("cytoscape") ? Exports.cytoscape(tree) : response.body();
+            }
+            if (bytes.length > 32_000_000)
+                throw new InputFailure("OUTPUT_LIMIT");
+            if (target == null) {
+                out.print(Workspace.utf8(bytes));
+                out.println();
+            } else {
+                Workspace.writeNew(resolve(target), bytes);
+                return emit(r, "export",
+                        envelope(Map.of("format", format, "output", target.toString(), "content",
+                                ContentDigest.sha256(bytes), "bytes", bytes.length, "status",
+                                code == 0 ? "COMPLETE" : "PARTIAL")),
+                        code);
+            }
+            return code;
         }
     }
-    private void progress(Root r,String en,String vi){if(terminal&&!r.json){err.println("[evo] "+(r.lang.equals("vi")?vi:en));err.flush();}}
-    private com.evolution.analysis.frontend.SemanticFrontend frontend(Root r,boolean bypassCache,java.util.concurrent.atomic.AtomicLong[] cacheStats){
+
+    private void progress(Root r, String en, String vi) {
+        if (terminal && !r.json) {
+            err.println("[evo] " + (r.lang.equals("vi") ? vi : en));
+            err.flush();
+        }
+    }
+
+    private com.evolution.analysis.frontend.SemanticFrontend frontend(Root r, boolean bypassCache,
+            java.util.concurrent.atomic.AtomicLong[] cacheStats) {
         var base = new JavaParserFrontend();
-        var javaCache = new com.evolution.analysis.filesystem.IncrementalJavaFrontendCache(r.storage().root.resolve("incremental-cache"));
-        return new com.evolution.analysis.frontend.ConcurrentSemanticFrontend(){
-            public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request){return base.estimatedWorkingBytes(request);}
-            public void releaseCompletedContexts(){base.releaseCompletedContexts();}
-            public com.evolution.analysis.frontend.FrontendResult analyze(com.evolution.analysis.frontend.FrontendRequest request){
+        var javaCache = new com.evolution.analysis.filesystem.IncrementalJavaFrontendCache(
+                r.storage().root.resolve("incremental-cache"));
+        return new com.evolution.analysis.frontend.ConcurrentSemanticFrontend() {
+            public long estimatedWorkingBytes(com.evolution.analysis.frontend.FrontendRequest request) {
+                return base.estimatedWorkingBytes(request);
+            }
+
+            public void releaseCompletedContexts() {
+                base.releaseCompletedContexts();
+            }
+
+            public com.evolution.analysis.frontend.FrontendResult analyze(
+                    com.evolution.analysis.frontend.FrontendRequest request) {
                 if (!bypassCache) {
                     var cached = javaCache.get(request, JavaParserFrontend.PROVIDER);
                     if (cached.isPresent()) {
@@ -1409,129 +3071,835 @@ public final class EvoApp {
                     }
                 }
                 cacheStats[1].incrementAndGet();
-                try{
+                try {
                     var result = base.analyze(request);
-                    if (!bypassCache) javaCache.put(request, result);
+                    if (!bypassCache)
+                        javaCache.put(request, result);
                     return result;
-                }catch(RuntimeException failure){
+                } catch (RuntimeException failure) {
                     if (r.debug) {
-                        err.println("[DEBUG] frontend="+failure.getClass().getName());
-                        for(var frame:failure.getStackTrace())if(frame.getClassName().startsWith("com.evolution."))err.println("  "+frame.getClassName()+"."+frame.getMethodName()+":"+frame.getLineNumber());
+                        err.println("[DEBUG] frontend=" + failure.getClass().getName());
+                        for (var frame : failure.getStackTrace())
+                            if (frame.getClassName().startsWith("com.evolution."))
+                                err.println("  " + frame.getClassName() + "." + frame.getMethodName() + ":"
+                                        + frame.getLineNumber());
                     }
                     throw failure;
                 }
             }
         };
     }
-    private static Map<String,Object> graphGapSummary(PartitionedGraphStore.Publication graph,long inputTotal){return Map.of("total",graph.gaps(),"byReason",graph.gapReasons(),"byObligation",com.evolution.backend.analysis.GapObligations.classify(graph.gapReasons()),"contextReferences",graph.gapNodes(),"inputTotal",inputTotal,"population","ALL_GRAPH_CAPABILITY_GAP_IDENTITIES","records","raw canonical graph","context",graph.snapshot(),"inspect","evo gaps --context <partition-context> --json");}
-    private static <T> Map<String,Long> reasonCounts(Collection<T> rows,java.util.function.Function<T,String> reason){var counts=new TreeMap<String,Long>();for(T row:rows)counts.merge(reason.apply(row),1L,Long::sum);return counts;}
-    private Path resolve(Path path){return path.isAbsolute()?path:directory.resolve(path);}
-    private KnowledgeGraph load(Root r)throws IOException{
-        if(r.graph!=null){
-            if(r.graph.startsWith("sha256:")){
+
+    private static Map<String, Object> graphGapSummary(PartitionedGraphStore.Publication graph, long inputTotal) {
+        return Map.of("total", graph.gaps(), "byReason", graph.gapReasons(), "byObligation",
+                com.evolution.backend.analysis.GapObligations.classify(graph.gapReasons()), "contextReferences",
+                graph.gapNodes(), "inputTotal", inputTotal, "population", "ALL_GRAPH_CAPABILITY_GAP_IDENTITIES",
+                "records", "raw canonical graph", "context", graph.snapshot(), "inspect",
+                "evo gaps --context <partition-context> --json");
+    }
+
+    private static <T> Map<String, Long> reasonCounts(Collection<T> rows,
+            java.util.function.Function<T, String> reason) {
+        var counts = new TreeMap<String, Long>();
+        for (T row : rows)
+            counts.merge(reason.apply(row), 1L, Long::sum);
+        return counts;
+    }
+
+    private Path resolve(Path path) {
+        return path.isAbsolute() ? path : directory.resolve(path);
+    }
+
+    private KnowledgeGraph load(Root r) throws IOException {
+        if (r.graph != null) {
+            if (r.graph.startsWith("sha256:")) {
                 return new FileGraphStore(r.storage().root).load(new ContentDigest(r.graph))
-                        .orElseThrow(()->new InputFailure("NO_SNAPSHOT"));
+                        .orElseThrow(() -> new InputFailure("NO_SNAPSHOT"));
             }
             return Workspace.graph(resolve(Path.of(r.graph)));
         }
-        if(!Files.exists(r.storage().root.resolve("selection.json"),LinkOption.NOFOLLOW_LINKS))throw new InputFailure("NO_SNAPSHOT");
-        var selected=new ContentDigest(GraphJson.string(r.storage().selection().get("graph")));
-        if(interactiveDefaults!=null&&sessionGraph!=null&&sessionGraph.identity().equals(selected))return sessionGraph;
-        var graph=r.storage().selectedGraph();if(interactiveDefaults!=null)sessionGraph=graph;return graph;
+        if (!Files.exists(r.storage().root.resolve("selection.json"), LinkOption.NOFOLLOW_LINKS))
+            throw new InputFailure("NO_SNAPSHOT");
+        var selected = new ContentDigest(GraphJson.string(r.storage().selection().get("graph")));
+        if (interactiveDefaults != null && sessionGraph != null && sessionGraph.identity().equals(selected))
+            return sessionGraph;
+        var graph = r.storage().selectedGraph();
+        if (interactiveDefaults != null)
+            sessionGraph = graph;
+        return graph;
     }
-    private Optional<String> autoContext(KnowledgeGraph graph){return autoContext(graph.contexts());}
-    private Optional<String> autoContext(List<KnowledgeGraph.Context> contexts){var candidates=contexts.stream().filter(c->c.analysis().isPresent()).toList();if(candidates.size()==1)return Optional.of(candidates.getFirst().identity());return contexts.size()==1?Optional.of(contexts.getFirst().identity()):Optional.empty();}
-    private List<Object> contextRows(List<KnowledgeGraph.Context> contexts){
-        var rows=new ArrayList<Object>();int index=0;
-        for(var context:contexts.stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity)).toList())rows.add(Map.of("index",++index,"identity",context.identity(),"analysis",context.analysis(),"snapshot",context.snapshot(),"label",context.analysis().isPresent()?"Analysis "+index:"Build / acquisition"));
+
+    private Optional<String> autoContext(KnowledgeGraph graph) {
+        return autoContext(graph.contexts());
+    }
+
+    private Optional<String> autoContext(List<KnowledgeGraph.Context> contexts) {
+        var candidates = contexts.stream().filter(c -> c.analysis().isPresent()).toList();
+        if (candidates.size() == 1)
+            return Optional.of(candidates.getFirst().identity());
+        return contexts.size() == 1 ? Optional.of(contexts.getFirst().identity()) : Optional.empty();
+    }
+
+    private List<Object> contextRows(List<KnowledgeGraph.Context> contexts) {
+        var rows = new ArrayList<Object>();
+        int index = 0;
+        for (var context : contexts.stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity)).toList())
+            rows.add(Map.of("index", ++index, "identity", context.identity(), "analysis", context.analysis(),
+                    "snapshot", context.snapshot(), "label",
+                    context.analysis().isPresent() ? "Analysis " + index : "Build / acquisition"));
         return rows;
     }
-    private String context(Root r,KnowledgeGraph graph,boolean required)throws IOException{
-        if(r.request!=null){var body=GraphJson.object(Workspace.json(resolve(r.request),65_536));
-            if(body.get("request") instanceof Map<?,?> request){String selected=findContext(graph,GraphJson.string(request.get("context")));
-                if(r.context!=null&&!findContext(graph,r.context).equals(selected))throw new InputFailure("CONFLICTING_REQUEST");return selected;}}
-        if(r.context!=null)return findContext(graph,r.context);if(r.graph==null){Object selected=r.storage().selection().get("context");if(selected instanceof String value)return findContext(graph,value);}
-        String selected=autoContext(graph).orElse(null);if(selected==null&&required)throw new InputFailure("CONTEXT_REQUIRED");return selected;
-    }
-    private boolean matched(Root r,String... options){for(var parse=r.spec.commandLine().getParseResult();parse!=null;parse=parse.subcommand())for(String option:options)if(parse.hasMatchedOption(option))return true;return false;}
-    private String findContext(KnowledgeGraph graph,String selected){var contexts=graph.contexts().stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity)).toList();if(selected.matches("[1-9][0-9]{0,5}")){int i=Integer.parseInt(selected)-1;if(i>=0&&i<contexts.size())return contexts.get(i).identity();}return contexts.stream().map(KnowledgeGraph.Context::identity).filter(selected::equals).findFirst().orElseThrow(()->new InputFailure("CONTEXT_UNAVAILABLE"));}
-    private List<Object> contextRows(KnowledgeGraph graph){var rows=new ArrayList<Object>();int n=0;var queries=new ArchitectureMetricsService(graph).queries();
-        for(var c:graph.contexts().stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity)).toList()){
-            var request=Request.dependencies(graph.identity(),c.identity());var row=new TreeMap<String,Object>();row.put("index",++n);row.put("identity",c.identity());row.put("analysis",c.analysis());row.put("snapshot",c.snapshot());
-            var provenance=queries.provenance(request);String label=c.analysis().isPresent()?"Analysis "+n: "Build / acquisition";
-            if(!provenance.items().isEmpty()){
-                var metadata=provenance.items().getFirst().metadata();var build=metadata.get("build") instanceof Map<?,?>?GraphJson.object(metadata.get("build")):Map.<String,Object>of();
-                var partition=build.get("moduleSourceSet") instanceof Map<?,?>?GraphJson.object(build.get("moduleSourceSet")):metadata;
-                if(metadata.get("modulePath") instanceof String path)label=path+" / "+metadata.getOrDefault("sourceSet","?");
-                else if(partition.get("module") instanceof String module){var entities=queries.entity(request,module).items();if(!entities.isEmpty())label=entities.getFirst().qualifiedName().orElse(module.substring(Math.max(0,module.length()-12)))+" / "+partition.getOrDefault("sourceSet","?");}
+
+    private String context(Root r, KnowledgeGraph graph, boolean required) throws IOException {
+        if (r.request != null) {
+            var body = GraphJson.object(Workspace.json(resolve(r.request), 65_536));
+            if (body.get("request") instanceof Map<?, ?> request) {
+                String selected = findContext(graph, GraphJson.string(request.get("context")));
+                if (r.context != null && !findContext(graph, r.context).equals(selected))
+                    throw new InputFailure("CONFLICTING_REQUEST");
+                return selected;
             }
-            row.put("label",label);rows.add(row);
-        }return rows;}
-    private Map<String,Object> discovery(KnowledgeGraph graph){return envelope(Map.of("graph",graph.identity(),"snapshot",graph.snapshot(),"contexts",contextRows(graph),"next","evo use <index>"));}
-    static Map<String,Object> envelope(Object data){return Map.of("apiVersion",ArchitectureQueryApi.VERSION,"queryVersion",ArchitectureQuery.VERSION,"resultIdentity",ContentDigest.sha256Utf8(CanonicalJson.write(data)),"data",data);}
-    private int emit(Root r,String command,Map<String,Object> envelope,int code){byte[] encoded=BoundedJson.encode(envelope,32_000_000);String json=new String(encoded,StandardCharsets.UTF_8);
-        if(r.json)out.println(json);else r.view().response(command,GraphJson.object(GraphJson.read(json,new GraphJson.Limits(32_000_000,128,2_000_000))),r.activeRequest==null?Map.of():Map.of("context",r.activeRequest.context(),"scope",r.activeRequest.scope(),"projection",r.activeRequest.projection().name(),"palette",interactiveDefaults!=null),r.details,r.labels,r.descriptors);return code;}
-    private Map<String,List<Map<String,Object>>> displayDescriptors(KnowledgeGraph graph,Request request,Map<String,Object> response){
-        var data=GraphJson.object(response.get("data"));if(!(data.get("items") instanceof List<?> items))return Map.of();
-        var result=new HashMap<String,List<Map<String,Object>>>();var queries=new ArchitectureMetricsService(graph).queries();
-        for(Object item:items){if(!(item instanceof Map<?,?>))continue;var row=GraphJson.object(item);if(!(row.get("kind") instanceof String kind)||Set.of("TYPE","METHOD","FIELD","PACKAGE","MODULE").contains(kind)||!row.containsKey("identity"))continue;
-            String id=GraphJson.string(row.get("identity"));var descriptors=queries.explain(request,id,new Page(4,Optional.empty()));
-            result.put(id,descriptors.items().stream().map(d->Map.<String,Object>of("family",d.family(),"metadata",d.metadata(),"redacted",d.redacted())).toList());
-        }return result;
+        }
+        if (r.context != null)
+            return findContext(graph, r.context);
+        if (r.graph == null) {
+            Object selected = r.storage().selection().get("context");
+            if (selected instanceof String value)
+                return findContext(graph, value);
+        }
+        String selected = autoContext(graph).orElse(null);
+        if (selected == null && required)
+            throw new InputFailure("CONTEXT_REQUIRED");
+        return selected;
     }
-    private Map<String,String> displayLabels(KnowledgeGraph graph,Request request,Map<String,Object> response){
-        var ids=new LinkedHashSet<String>();collectDisplayIds(response.get("data"),ids,0);var labels=new HashMap<String,String>();var queries=new ArchitectureMetricsService(graph).queries();
-        for(String id:ids.stream().limit(100).toList()){
-            var result=queries.entity(request,id);if(!result.items().isEmpty()){var entity=result.items().getFirst();entity.qualifiedName().or(()->entity.spelling()).ifPresent(name->labels.put(id,name));}
-        }return labels;
+
+    private boolean matched(Root r, String... options) {
+        for (var parse = r.spec.commandLine().getParseResult(); parse != null; parse = parse.subcommand())
+            for (String option : options)
+                if (parse.hasMatchedOption(option))
+                    return true;
+        return false;
     }
-    private static void collectDisplayIds(Object value,Set<String> ids,int depth){
-        if(depth>12||ids.size()>=100)return;
-        if(value instanceof Map<?,?> map)for(var e:map.entrySet()){
-            String key=String.valueOf(e.getKey());if(Set.of("source","target","module","document").contains(key)&&e.getValue() instanceof String id)ids.add(id);
-            else if(Set.of("vertices","path").contains(key)&&e.getValue() instanceof List<?> list){for(Object id:list)if(id instanceof String text)ids.add(text);}
-            else if(Set.of("items","edges","entities","result","relationships","sources","span").contains(key))collectDisplayIds(e.getValue(),ids,depth+1);
-        }else if(value instanceof List<?> list)for(Object item:list)collectDisplayIds(item,ids,depth+1);
+
+    private String findContext(KnowledgeGraph graph, String selected) {
+        var contexts = graph.contexts().stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity))
+                .toList();
+        if (selected.matches("[1-9][0-9]{0,5}")) {
+            int i = Integer.parseInt(selected) - 1;
+            if (i >= 0 && i < contexts.size())
+                return contexts.get(i).identity();
+        }
+        return contexts.stream().map(KnowledgeGraph.Context::identity).filter(selected::equals).findFirst()
+                .orElseThrow(() -> new InputFailure("CONTEXT_UNAVAILABLE"));
     }
-    static int status(Object value){Object normalized=GraphJson.read(CanonicalJson.write(value),GraphJson.Limits.defaults());if(!(normalized instanceof Map<?,?> map))return 0;
-        if("CANCELLED".equals(map.get("operation"))||"CANCELLED".equals(map.get("status")))return 130;
-        if(Set.of("PARTIAL","WITHHELD","UNKNOWN","TERMINAL_FAILURE").contains(String.valueOf(map.get("status"))))return 3;
-        if(map.get("bounds") instanceof Map<?,?> bounds&&(Boolean.TRUE.equals(bounds.get("truncated"))||Boolean.TRUE.equals(bounds.get("workBudgetExceeded"))||Boolean.TRUE.equals(bounds.get("outputBudgetExceeded"))))return 3;
-        if(map.get("evaluationStatus")!=null&&!map.get("evaluationStatus").equals("COMPLETE"))return 3;return 0;}
-    private int error(Root r,int code,String name,String en,String vi){if(r.json)err.println(CanonicalJson.write(Map.of("cliVersion","architecture.cli:m7.2-v1","error",Map.of("code",name,"message",en))));else err.println("["+name+"] "+(r.lang.equals("vi")?vi:en));return code;}
-    private int error(Root r,int code,String name,String en,String vi,Map<String,Object> diagnostics){
-        if(r.json)err.println(CanonicalJson.write(Map.of("cliVersion","architecture.cli:m7.2-v1","error",Map.of("code",name,"message",en,"diagnostics",diagnostics))));
-        else {err.println("["+name+"] "+(r.lang.equals("vi")?vi:en));err.println("  stage="+diagnostics.get("stage")+" causes="+((List<?>)diagnostics.get("chain")).stream().map(raw->((Map<?,?>)raw).get("type")).toList()+" (--debug)");}
+
+    private List<Object> contextRows(KnowledgeGraph graph) {
+        var rows = new ArrayList<Object>();
+        int n = 0;
+        var queries = new ArchitectureMetricsService(graph).queries();
+        for (var c : graph.contexts().stream().sorted(Comparator.comparing(KnowledgeGraph.Context::identity))
+                .toList()) {
+            var request = Request.dependencies(graph.identity(), c.identity());
+            var row = new TreeMap<String, Object>();
+            row.put("index", ++n);
+            row.put("identity", c.identity());
+            row.put("analysis", c.analysis());
+            row.put("snapshot", c.snapshot());
+            var provenance = queries.provenance(request);
+            String label = c.analysis().isPresent() ? "Analysis " + n : "Build / acquisition";
+            if (!provenance.items().isEmpty()) {
+                var metadata = provenance.items().getFirst().metadata();
+                var build = metadata.get("build") instanceof Map<?, ?> ? GraphJson.object(metadata.get("build"))
+                        : Map.<String, Object>of();
+                var partition = build.get("moduleSourceSet") instanceof Map<?, ?>
+                        ? GraphJson.object(build.get("moduleSourceSet"))
+                        : metadata;
+                if (metadata.get("modulePath") instanceof String path)
+                    label = path + " / " + metadata.getOrDefault("sourceSet", "?");
+                else if (partition.get("module") instanceof String module) {
+                    var entities = queries.entity(request, module).items();
+                    if (!entities.isEmpty())
+                        label = entities.getFirst().qualifiedName()
+                                .orElse(module.substring(Math.max(0, module.length() - 12))) + " / "
+                                + partition.getOrDefault("sourceSet", "?");
+                }
+            }
+            row.put("label", label);
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private Map<String, Object> discovery(KnowledgeGraph graph) {
+        return envelope(Map.of("graph", graph.identity(), "snapshot", graph.snapshot(), "contexts", contextRows(graph),
+                "next", "evo use <index>"));
+    }
+
+    static Map<String, Object> envelope(Object data) {
+        return Map.of("apiVersion", ArchitectureQueryApi.VERSION, "queryVersion", ArchitectureQuery.VERSION,
+                "resultIdentity", ContentDigest.sha256Utf8(CanonicalJson.write(data)), "data", data);
+    }
+
+    private int emit(Root r, String command, Map<String, Object> envelope, int code) {
+        byte[] encoded = BoundedJson.encode(envelope, 32_000_000);
+        String json = new String(encoded, StandardCharsets.UTF_8);
+        return emitRawEnvelope(r, command, json, code);
+    }
+
+    private int emitRawEnvelope(Root r, String command, String json, int code) {
+        if (r.json)
+            out.println(json);
+        else
+            r.view().response(command,
+                    GraphJson.object(GraphJson.read(json, new GraphJson.Limits(32_000_000, 128, 2_000_000))),
+                    r.activeRequest == null ? Map.of()
+                            : Map.of("context", r.activeRequest.context(), "scope", r.activeRequest.scope(),
+                                    "projection", r.activeRequest.projection().name(), "palette",
+                                    interactiveDefaults != null),
+                    r.details, r.labels, r.descriptors);
         return code;
     }
-    private int inputError(Root r,String code){return switch(code){
-        case "NO_SNAPSHOT"->error(r,2,code,"No selected snapshot. Run evo scan . or evo open <snapshot.json>.","Chưa chọn snapshot. Chạy evo scan . hoặc evo open <snapshot.json>.");
-        case "CONTEXT_REQUIRED","CONTEXT_UNAVAILABLE"->error(r,2,code,"Choose one exact context: evo show, then evo use <index> or --context <id>.","Chọn ngữ cảnh chính xác: evo show, rồi evo use <số> hoặc --context <id>.");
-        case "POLICY_REQUIRED"->error(r,2,code,"Supply a policy with evo check <policy.yaml> or --policy <file>.","Cung cấp chính sách bằng evo check <policy.yaml> hoặc --policy <file>.");
-        case "SYMBOL_NOT_UNIQUE"->error(r,2,code,"Symbol is missing, ambiguous or search is incomplete. Use evo find <text>, then copy its exact ID.","Symbol chưa có, mơ hồ hoặc tìm kiếm chưa đầy đủ. Dùng evo find <từ khóa>, rồi sao chép ID chính xác.");
-        case "REFERENCE_UNAVAILABLE"->error(r,2,code,"Number is unavailable for this graph, context or scope. Run evo find <text> again, then evo deps <number>.","Số chọn không thuộc đồ thị, ngữ cảnh hoặc phạm vi này. Chạy lại evo find <từ khóa>, rồi evo deps <số>.");
-        case "CONFLICTING_REQUEST"->error(r,2,code,"Use the exact request file or query flags; remove conflicting overrides.","Dùng tệp yêu cầu chính xác hoặc các cờ truy vấn; bỏ tùy chọn xung đột.");
-        default->error(r,2,code,"Check command operands. Run evo <command> --help.","Kiểm tra tham số lệnh. Chạy evo <lệnh> --help.");};}
-    private void help(CommandLine command,Root r){if(r.json)out.println(CanonicalJson.write(envelope(Map.of("version",VERSION,"commands",command.getSubcommands().keySet()))));else r.view().guide(false);out.flush();}
-    private int defaultWidth(){if(terminalProfile.columns()>0)return Math.max(32,Math.min(160,terminalProfile.columns()));try{return Math.max(32,Math.min(160,Integer.parseInt(environment.getOrDefault("COLUMNS","96"))));}catch(NumberFormatException ignored){return 96;}}
-    private boolean colors(String mode){if(!terminalProfile.ansiSafe()||mode.equals("never"))return false;if(mode.equals("always"))return true;return terminal&&!environment.containsKey("NO_COLOR")&&!environment.getOrDefault("TERM","").equals("dumb");}
-    private int interact(Root r)throws IOException{sessionLang=r.lang;sessionColor=r.color;sessionAscii=r.ascii;interactiveDefaults=r;r.view().palette();
-        while(true){out.print("evo > ");out.flush();String line;
-            try{line=readLine();}catch(InputFailure limit){error(r,2,"INPUT_LIMIT","Command too long.","Lệnh quá dài.");continue;}
-            if(line==null)return 0;line=line.strip();if(line.isEmpty())continue;
-            List<String> words;try{words=new ArrayList<>(ShellWords.parse(line));}catch(IllegalArgumentException invalid){error(r,2,"INVALID_USAGE","Unclosed quote.","Dấu nháy chưa đóng.");continue;}
-            if(!words.isEmpty()&&Set.of("evo","evo.cmd",".\\evo.cmd","./evo").contains(words.getFirst()))words.removeFirst();
-            if(words.isEmpty()){r.view().palette();continue;}
-            if(words.size()==1&&Set.of("quit","exit","q").contains(words.getFirst()))return 0;
-            if(words.size()==1&&Set.of("help","?").contains(words.getFirst())){r.view().palette();continue;}
-            if(words.size()==2&&words.getFirst().equals("lang")&&Set.of("en","vi").contains(words.get(1))){sessionLang=words.get(1);r.lang=sessionLang;r.view().palette();continue;}
-            if(!words.getFirst().equals("next"))continuation=null;
-            String[] shortcuts={"scan .","show","find","deps","impact","check","score","export json"};if(words.size()==1&&words.getFirst().matches("[1-8]")){line=shortcuts[Integer.parseInt(words.getFirst())-1];if(Set.of("find","deps","impact","check").contains(line)){out.print(line+" > ");out.flush();String value;try{value=readLine();}catch(InputFailure limit){error(r,2,"INPUT_LIMIT","Input too long.","Đầu vào quá dài.");continue;}if(value==null)return 0;execute(line,value);continue;}words=ShellWords.parse(line);}
-            execute(words.toArray(String[]::new));}
+
+    private ContentDigest scanFastPathFingerprint(RepositoryIdentity repo, Path sourcePath, String snapshotId,
+            ContentDigest inventoryDigest,
+            String revision, boolean dirty, boolean includeTests, boolean allFiles, Set<String> excluded,
+            com.evolution.backend.analysis.AnalysisMode analysisMode, boolean fast, boolean springSat, int release,
+            boolean offline,
+            String buildMode, String buildProfile, Path jdkPath, Path mavenCachePath, Optional<Path> androidSdkPath,
+            List<java.net.URI> repositories, Path semanticStore, String semanticPlan, String semanticPolicy,
+            Path semanticAuthority,
+            com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile projectionProfile)
+            throws IOException {
+        var fp = new TreeMap<String, Object>();
+        fp.put("schema", "evo.scan-fastpath:v1");
+        fp.put("cliVersion", VERSION);
+        fp.put("repo", repo.value());
+        fp.put("sourcePath", sourcePath.toString());
+        fp.put("snapshotId", snapshotId);
+        fp.put("inventoryDigest", inventoryDigest.value());
+        fp.put("revision", revision == null ? "" : revision);
+        fp.put("dirty", dirty);
+        fp.put("includeTests", includeTests);
+        fp.put("allFiles", allFiles);
+        fp.put("excluded", List.copyOf(excluded));
+        fp.put("analysisMode", analysisMode.name());
+        fp.put("fast", fast);
+        fp.put("springSat", springSat);
+        fp.put("projectionProfile", projectionProfile.name());
+        fp.put("release", release);
+        fp.put("offline", offline);
+        fp.put("buildMode", buildMode);
+        fp.put("buildProfile", buildProfile);
+        fp.put("jdk", jdkPath.toString());
+        fp.put("mavenCache", mavenCachePath.toString());
+        fp.put("mavenCacheFingerprint", cacheDirFingerprint(mavenCachePath));
+        fp.put("androidSdk", androidSdkPath.map(Path::toString).orElse(""));
+        fp.put("repositories", repositories.stream().map(Object::toString).toList());
+        fp.put("semanticStore", semanticStore != null ? Workspace.safe(resolve(semanticStore)).toString() : "");
+        fp.put("semanticPlan", semanticPlan == null ? "" : semanticPlan);
+        fp.put("semanticPolicy", semanticPolicy == null ? "" : semanticPolicy);
+        fp.put("semanticAuthority",
+                semanticAuthority != null ? Workspace.safe(resolve(semanticAuthority)).toString() : "");
+        fp.put("providers",
+                List.of(JavaParserFrontend.PROVIDER.toString(),
+                        com.evolution.analysis.treesitter.TreeSitterSourceFrontend.PROVIDER,
+                        com.evolution.analysis.javaparser.JavaServiceSyntaxExtractor.PROVIDER,
+                        com.evolution.analysis.polyglot.DeclarativeTopologyProjection.PROVIDER.toString()));
+        return CanonicalJson.sha256(fp);
     }
-    private String readLine()throws IOException{var line=new StringBuilder();boolean exceeded=false;int c;
-        while((c=input.read())!=-1&&c!='\n'){if(c=='\r'){input.mark(1);int next=input.read();if(next!='\n'&&next!=-1)input.reset();break;}if(line.length()<8192)line.append((char)c);else exceeded=true;}
-        if(exceeded)throw new InputFailure("INPUT_LIMIT");return c==-1&&line.isEmpty()?null:line.toString();
+
+    private static String cacheDirFingerprint(Path dir) {
+        try {
+            if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS))
+                return "ABSENT";
+            if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS))
+                return "NOT_DIR";
+            var entries = new ArrayList<String>();
+            entries.add("root:" + Files.getLastModifiedTime(dir, LinkOption.NOFOLLOW_LINKS).toMillis());
+            try (var walk = Files.walk(dir, 2)) {
+                walk.limit(256).sorted().forEach(p -> {
+                    try {
+                        if (p.equals(dir))
+                            return;
+                        String rel = dir.relativize(p).toString().replace('\\', '/');
+                        long mtime = Files.getLastModifiedTime(p, LinkOption.NOFOLLOW_LINKS).toMillis();
+                        long sz = Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS) ? Files.size(p) : -1L;
+                        entries.add(rel + "@" + sz + ":" + mtime);
+                    } catch (IOException ignored) {
+                    }
+                });
+            }
+            return ContentDigest.sha256Utf8(String.join("|", entries)).value();
+        } catch (IOException unavailable) {
+            return "UNAVAILABLE:" + unavailable.getClass().getSimpleName();
+        }
     }
-    private static final class InputFailure extends IllegalArgumentException{InputFailure(String code){super(code);}}
+
+    private static void writeAtomicUtf8(Path target, String content) throws IOException {
+        Path parent = target.getParent();
+        if (parent != null)
+            Files.createDirectories(parent);
+        Path tmp = Files.createTempFile(parent, "fp-", ".tmp");
+        try {
+            Files.writeString(tmp, content, StandardCharsets.UTF_8);
+            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    private Map<String, List<Map<String, Object>>> displayDescriptors(KnowledgeGraph graph, Request request,
+            Map<String, Object> response) {
+        var data = GraphJson.object(response.get("data"));
+        if (!(data.get("items") instanceof List<?> items))
+            return Map.of();
+        var result = new HashMap<String, List<Map<String, Object>>>();
+        var queries = new ArchitectureMetricsService(graph).queries();
+        for (Object item : items) {
+            if (!(item instanceof Map<?, ?>))
+                continue;
+            var row = GraphJson.object(item);
+            if (!(row.get("kind") instanceof String kind)
+                    || Set.of("TYPE", "METHOD", "FIELD", "PACKAGE", "MODULE").contains(kind)
+                    || !row.containsKey("identity"))
+                continue;
+            String id = GraphJson.string(row.get("identity"));
+            var descriptors = queries.explain(request, id, new Page(4, Optional.empty()));
+            result.put(id, descriptors.items().stream().map(d -> Map.<String, Object>of("family", d.family(),
+                    "metadata", d.metadata(), "redacted", d.redacted())).toList());
+        }
+        return result;
+    }
+
+    private Map<String, String> displayLabels(KnowledgeGraph graph, Request request, Map<String, Object> response) {
+        var ids = new LinkedHashSet<String>();
+        collectDisplayIds(response.get("data"), ids, 0);
+        var labels = new HashMap<String, String>();
+        var queries = new ArchitectureMetricsService(graph).queries();
+        for (String id : ids.stream().limit(100).toList()) {
+            var result = queries.entity(request, id);
+            if (!result.items().isEmpty()) {
+                var entity = result.items().getFirst();
+                entity.qualifiedName().or(() -> entity.spelling()).ifPresent(name -> labels.put(id, name));
+            }
+        }
+        return labels;
+    }
+
+    private static void collectDisplayIds(Object value, Set<String> ids, int depth) {
+        if (depth > 12 || ids.size() >= 100)
+            return;
+        if (value instanceof Map<?, ?> map)
+            for (var e : map.entrySet()) {
+                String key = String.valueOf(e.getKey());
+                if (Set.of("source", "target", "module", "document").contains(key) && e.getValue() instanceof String id)
+                    ids.add(id);
+                else if (Set.of("vertices", "path").contains(key) && e.getValue() instanceof List<?> list) {
+                    for (Object id : list)
+                        if (id instanceof String text)
+                            ids.add(text);
+                } else if (Set.of("items", "edges", "entities", "result", "relationships", "sources", "span")
+                        .contains(key))
+                    collectDisplayIds(e.getValue(), ids, depth + 1);
+            }
+        else if (value instanceof List<?> list)
+            for (Object item : list)
+                collectDisplayIds(item, ids, depth + 1);
+    }
+
+    static int status(Object value) {
+        Object normalized = GraphJson.read(CanonicalJson.write(value), GraphJson.Limits.defaults());
+        if (!(normalized instanceof Map<?, ?> map))
+            return 0;
+        if ("CANCELLED".equals(map.get("operation")) || "CANCELLED".equals(map.get("status")))
+            return 130;
+        if (Set.of("PARTIAL", "WITHHELD", "UNKNOWN", "TERMINAL_FAILURE").contains(String.valueOf(map.get("status"))))
+            return 3;
+        if (map.get("bounds") instanceof Map<?, ?> bounds && (Boolean.TRUE.equals(bounds.get("truncated"))
+                || Boolean.TRUE.equals(bounds.get("workBudgetExceeded"))
+                || Boolean.TRUE.equals(bounds.get("outputBudgetExceeded"))))
+            return 3;
+        if (map.get("evaluationStatus") != null && !map.get("evaluationStatus").equals("COMPLETE"))
+            return 3;
+        return 0;
+    }
+
+    private int error(Root r, int code, String name, String en, String vi) {
+        if (r.json)
+            err.println(CanonicalJson.write(
+                    Map.of("cliVersion", "architecture.cli:m7.2-v1", "error", Map.of("code", name, "message", en))));
+        else
+            err.println("[" + name + "] " + (r.lang.equals("vi") ? vi : en));
+        return code;
+    }
+
+    private int error(Root r, int code, String name, String en, String vi, Map<String, Object> diagnostics) {
+        if (r.json)
+            err.println(CanonicalJson.write(Map.of("cliVersion", "architecture.cli:m7.2-v1", "error",
+                    Map.of("code", name, "message", en, "diagnostics", diagnostics))));
+        else {
+            err.println("[" + name + "] " + (r.lang.equals("vi") ? vi : en));
+            err.println("  stage=" + diagnostics.get("stage") + " causes="
+                    + ((List<?>) diagnostics.get("chain")).stream().map(raw -> ((Map<?, ?>) raw).get("type")).toList()
+                    + " (--debug)");
+        }
+        return code;
+    }
+
+    private int inputError(Root r, String code) {
+        return switch (code) {
+            case "NO_SNAPSHOT" -> error(r, 2, code, "No selected snapshot. Run evo scan . or evo open <snapshot.json>.",
+                    "Chưa chọn snapshot. Chạy evo scan . hoặc evo open <snapshot.json>.");
+            case "CONTEXT_REQUIRED", "CONTEXT_UNAVAILABLE" ->
+                error(r, 2, code, "Choose one exact context: evo show, then evo use <index> or --context <id>.",
+                        "Chọn ngữ cảnh chính xác: evo show, rồi evo use <số> hoặc --context <id>.");
+            case "POLICY_REQUIRED" ->
+                error(r, 2, code, "Supply a policy with evo check <policy.yaml> or --policy <file>.",
+                        "Cung cấp chính sách bằng evo check <policy.yaml> hoặc --policy <file>.");
+            case "SYMBOL_NOT_UNIQUE" -> error(r, 2, code,
+                    "Symbol is missing, ambiguous or search is incomplete. Use evo find <text>, then copy its exact ID.",
+                    "Symbol chưa có, mơ hồ hoặc tìm kiếm chưa đầy đủ. Dùng evo find <từ khóa>, rồi sao chép ID chính xác.");
+            case "REFERENCE_UNAVAILABLE" -> error(r, 2, code,
+                    "Number is unavailable for this graph, context or scope. Run evo find <text> again, then evo deps <number>.",
+                    "Số chọn không thuộc đồ thị, ngữ cảnh hoặc phạm vi này. Chạy lại evo find <từ khóa>, rồi evo deps <số>.");
+            case "CONFLICTING_REQUEST" ->
+                error(r, 2, code, "Use the exact request file or query flags; remove conflicting overrides.",
+                        "Dùng tệp yêu cầu chính xác hoặc các cờ truy vấn; bỏ tùy chọn xung đột.");
+            default -> error(r, 2, code, "Check command operands. Run evo <command> --help.",
+                    "Kiểm tra tham số lệnh. Chạy evo <lệnh> --help.");
+        };
+    }
+
+    private void help(CommandLine command, Root r) {
+        if (r.json)
+            out.println(CanonicalJson
+                    .write(envelope(Map.of("version", VERSION, "commands", command.getSubcommands().keySet()))));
+        else
+            r.view().guide(false);
+        out.flush();
+    }
+
+    private int defaultWidth() {
+        if (terminalProfile.columns() > 0)
+            return Math.max(32, Math.min(160, terminalProfile.columns()));
+        try {
+            return Math.max(32, Math.min(160, Integer.parseInt(environment.getOrDefault("COLUMNS", "96"))));
+        } catch (NumberFormatException ignored) {
+            return 96;
+        }
+    }
+
+    private boolean colors(String mode) {
+        if (!terminalProfile.ansiSafe() || mode.equals("never"))
+            return false;
+        if (mode.equals("always"))
+            return true;
+        return terminal && !environment.containsKey("NO_COLOR") && !environment.getOrDefault("TERM", "").equals("dumb");
+    }
+
+    private int interact(Root r) throws IOException {
+        sessionLang = r.lang;
+        sessionColor = r.color;
+        sessionAscii = r.ascii;
+        interactiveDefaults = r;
+        r.view().palette();
+        while (true) {
+            out.print("evo > ");
+            out.flush();
+            String line;
+            try {
+                line = readLine();
+            } catch (InputFailure limit) {
+                error(r, 2, "INPUT_LIMIT", "Command too long.", "Lệnh quá dài.");
+                continue;
+            }
+            if (line == null)
+                return 0;
+            line = line.strip();
+            if (line.isEmpty())
+                continue;
+            List<String> words;
+            try {
+                words = new ArrayList<>(ShellWords.parse(line));
+            } catch (IllegalArgumentException invalid) {
+                error(r, 2, "INVALID_USAGE", "Unclosed quote.", "Dấu nháy chưa đóng.");
+                continue;
+            }
+            if (!words.isEmpty() && Set.of("evo", "evo.cmd", ".\\evo.cmd", "./evo").contains(words.getFirst()))
+                words.removeFirst();
+            if (words.isEmpty()) {
+                r.view().palette();
+                continue;
+            }
+            if (words.size() == 1 && Set.of("quit", "exit", "q").contains(words.getFirst()))
+                return 0;
+            if (words.size() == 1 && Set.of("help", "?").contains(words.getFirst())) {
+                r.view().palette();
+                continue;
+            }
+            if (words.size() == 2 && words.getFirst().equals("lang") && Set.of("en", "vi").contains(words.get(1))) {
+                sessionLang = words.get(1);
+                r.lang = sessionLang;
+                r.view().palette();
+                continue;
+            }
+            if (!words.getFirst().equals("next"))
+                continuation = null;
+            String[] shortcuts = { "scan .", "show", "find", "deps", "impact", "check", "score", "export json" };
+            if (words.size() == 1 && words.getFirst().matches("[1-8]")) {
+                line = shortcuts[Integer.parseInt(words.getFirst()) - 1];
+                if (Set.of("find", "deps", "impact", "check").contains(line)) {
+                    out.print(line + " > ");
+                    out.flush();
+                    String value;
+                    try {
+                        value = readLine();
+                    } catch (InputFailure limit) {
+                        error(r, 2, "INPUT_LIMIT", "Input too long.", "Đầu vào quá dài.");
+                        continue;
+                    }
+                    if (value == null)
+                        return 0;
+                    execute(line, value);
+                    continue;
+                }
+                words = ShellWords.parse(line);
+            }
+            execute(words.toArray(String[]::new));
+        }
+    }
+
+    private String readLine() throws IOException {
+        var line = new StringBuilder();
+        boolean exceeded = false;
+        int c;
+        while ((c = input.read()) != -1 && c != '\n') {
+            if (c == '\r') {
+                input.mark(1);
+                int next = input.read();
+                if (next != '\n' && next != -1)
+                    input.reset();
+                break;
+            }
+            if (line.length() < 8192)
+                line.append((char) c);
+            else
+                exceeded = true;
+        }
+        if (exceeded)
+            throw new InputFailure("INPUT_LIMIT");
+        return c == -1 && line.isEmpty() ? null : line.toString();
+    }
+
+    @Command(name = "spring-spike", mixinStandardHelpOptions = true,
+            description = "Passive ASM Spring starter bytecode extractor and Go/No-Go COI spike")
+    private final class SpringSpike implements Callable<Integer> {
+        final Root r;
+
+        SpringSpike(Root r) {
+            this.r = r;
+        }
+
+        @Parameters(arity = "0..1", defaultValue = ".", paramLabel = "DIR")
+        String source;
+        @Option(names = "--maven-cache", paramLabel = "DIR", description = "Selected Maven2 artifact cache")
+        Path mavenCache = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        @Option(names = "--jdk", paramLabel = "DIR", description = "Captured host JDK directory")
+        Path jdk = Path.of(System.getProperty("java.home"));
+        @Option(names = "--release", defaultValue = "21", paramLabel = "N", description = "Target Java release")
+        int release = 21;
+        @Option(names = "--offline", description = "Use captured/local artifacts only; disable downloads")
+        boolean offline;
+        @Option(names = "--metadata-policy", defaultValue = "BOTH", paramLabel = "BOTH|IMPORTS|FACTORIES|NONE",
+                description = "Starter auto-configuration metadata policy")
+        String metadataPolicy = "BOTH";
+        @Option(names = "--extra-jar", paramLabel = "JAR", description = "Additional starter/dependency JAR; repeatable")
+        List<Path> extraJars = new ArrayList<>();
+
+        @Override
+        public Integer call() throws Exception {
+            r.validate();
+            com.evolution.analysis.spring.universal.FrameworkGeneration.MetadataPolicy policy;
+            try {
+                policy = com.evolution.analysis.spring.universal.FrameworkGeneration.MetadataPolicy
+                        .valueOf(metadataPolicy.trim().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException invalid) {
+                throw new InputFailure("INVALID_METADATA_POLICY");
+            }
+            Path sourcePath = Workspace.safe(resolve(Path.of(source)));
+            RepositoryIdentity repo = RepositoryIdentity.fromCanonicalCoordinate(
+                    "urn:evo:local:" + ContentDigest.sha256Utf8(sourcePath.toString()).value().substring(7));
+            var excluded = new TreeSet<>(List.of(".git", ".evo"));
+            Path session = r.storage().root;
+            if (session.startsWith(sourcePath) && !session.equals(sourcePath)) {
+                excluded.add(sourcePath.relativize(session).toString().replace('\\', '/'));
+            }
+            String intakeRevision = UUID.randomUUID().toString();
+            RepositoryAcquisitionResult acquisition;
+            try (var intake = new RepositoryIntake(r.storage().root.resolve("acquisition"))) {
+                var acqReq = new StreamingAcquisitionRequest(repo, Optional.empty(), true, List.copyOf(excluded));
+                var captured = intake.localComplete(
+                        sourcePath, intakeRevision, acqReq, () -> Thread.currentThread().isInterrupted());
+                if (captured.manifest().isEmpty()) {
+                    return emit(r, "spring-spike",
+                            envelope(Map.of("status", "TERMINAL_FAILURE", "reason", "MANIFEST_EMPTY")), 1);
+                }
+                acquisition = intake.compatibility(
+                        intakeRevision, repo, Optional.empty(), true, false, false, List.copyOf(excluded));
+            }
+            if (acquisition.snapshot().isEmpty()) {
+                return emit(r, "spring-spike",
+                        envelope(Map.of("status", "TERMINAL_FAILURE", "reason", "SNAPSHOT_EMPTY")), 1);
+            }
+
+            var safeJdk = Workspace.safe(resolve(jdk));
+            var platform = com.evolution.backend.analysis.LocalAnalysisRunner.acquireCachedPlatform(safeJdk, release);
+            var cachePath = Workspace.safe(resolve(mavenCache));
+            var repositories = offline ? List.<java.net.URI>of() : MavenScan.DEFAULT_REPOSITORIES;
+            var models = MavenScan.models(acquisition, cachePath, repositories);
+            var defaults = UniversalBuildIngestion.Policy.defaults();
+            var buildPolicy = new UniversalBuildIngestion.Policy(
+                    Optional.of(release), Optional.of(release), Optional.of("UTF-8"),
+                    32_768, defaults.maxCharacters(), defaults.maxTokens(), 128);
+            var decodePolicy = new RepositoryInputDecoder.Policy("UTF-8", 500_000, 100_000_000, true);
+            var decoded = new RepositoryInputDecoder.Prepared(acquisition, decodePolicy);
+            var gradleModel = com.evolution.backend.analysis.GradleScan.model(decoded, buildPolicy, Map.of());
+            var depPolicy = new com.evolution.analysis.dependency.DependencyAcquisitionPolicy(
+                    4096, 64_000_000, MavenScan.DEFAULT_DEPENDENCY_TOTAL_BYTES, 64,
+                    repositories, 5000, 15000, offline ? 0 : 1, 8);
+            var mavenBase = MavenScan.inputs(acquisition, models, cachePath, platform.platform(), depPolicy);
+            var mavenInputs = com.evolution.backend.analysis.GradleScan.augment(
+                    mavenBase, acquisition, gradleModel, cachePath, platform.platform(),
+                    depPolicy, Map.of(), Optional.empty(), null);
+
+            var binaries = new ArrayList<com.evolution.analysis.frontend.BinaryInput>();
+            mavenInputs.resolutions().values().forEach(res -> binaries.addAll(res.binaries()));
+            for (Path extra : extraJars) {
+                Path safeJar = Workspace.safe(resolve(extra));
+                if (!Files.isRegularFile(safeJar, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new InputFailure("EXTRA_JAR_NOT_FOUND");
+                }
+                ContentDigest jarDigest = ContentDigest.sha256(Files.readAllBytes(safeJar));
+                var entry = new com.evolution.analysis.contract.analysis.ClasspathEntry(
+                        com.evolution.analysis.contract.analysis.ClasspathEntryKind.DEPENDENCY,
+                        "extra:" + safeJar.getFileName(), jarDigest);
+                binaries.add(new com.evolution.analysis.frontend.BinaryInput(entry, safeJar));
+            }
+
+            var scanResult = com.evolution.analysis.spring.universal.BytecodeAutoConfigScanner.scan(
+                    binaries,
+                    policy,
+                    com.evolution.analysis.spring.universal.BytecodeAutoConfigScanner.Limits.defaults());
+            var userSummary = extractPassiveUserSpringSummary(acquisition);
+            var analysis = com.evolution.analysis.spring.universal.BytecodeAutoConfigScanner
+                    .analyzeInteractions(scanResult, userSummary);
+
+            if (!r.json) {
+                out.printf("Spring ASM Spike [%s]%n", analysis.goNoGoRecommendation());
+                out.printf("  JARs: %d | Configs: %d | @Beans: %d | Conds: %d | Orders: %d%n",
+                        analysis.scannedJars(), analysis.totalConfigurations(), analysis.totalBeans(),
+                        analysis.totalConditionMarkers(), analysis.totalOrderingAnnotations());
+                out.printf("  G1 User<->Starter Interactions: %d | G2 Findings: %d%n",
+                        analysis.g1UserStarterInteractions(), analysis.g2ConditionalFindings());
+                out.printf("  G3 COI: components=%d, maxVars=%d, totalVars=%d, resolvedClass=%d (%dms)%n",
+                        analysis.g3CoiMetrics().componentCount(),
+                        analysis.g3CoiMetrics().maxComponentVars(),
+                        analysis.g3CoiMetrics().totalStarterVars(),
+                        analysis.g3CoiMetrics().resolvedClassConditions(),
+                        analysis.g3CoiMetrics().elapsedMs());
+                out.flush();
+                return 0;
+            }
+            return emit(r, "spring-spike", envelope(analysis.toMap()), 0);
+        }
+    }
+
+    private static com.evolution.analysis.spring.universal.BytecodeAutoConfigScanner.UserSpringSummary
+            extractPassiveUserSpringSummary(RepositoryAcquisitionResult acquisition) {
+        var userBeanTypes = new TreeSet<String>();
+        var userBeanNames = new TreeSet<String>();
+        var userInjectedTypes = new TreeSet<String>();
+        var props = new TreeMap<String, String>();
+        var profiles = new TreeSet<String>();
+
+        var yamlOptions = new org.yaml.snakeyaml.LoaderOptions();
+        var yaml = new org.yaml.snakeyaml.Yaml(new org.yaml.snakeyaml.constructor.SafeConstructor(yamlOptions));
+        var parserConfig = new com.github.javaparser.ParserConfiguration()
+                .setLanguageLevel(com.github.javaparser.ParserConfiguration.LanguageLevel.JAVA_21)
+                .setAttributeComments(false);
+        var javaParser = new com.github.javaparser.JavaParser(parserConfig);
+
+        for (var file : acquisition.files()) {
+            String path = file.path();
+            String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+            if ((name.startsWith("application") || name.startsWith("bootstrap"))
+                    && (name.endsWith(".properties") || name.endsWith(".yml") || name.endsWith(".yaml"))) {
+                if (name.endsWith(".properties")) {
+                    try {
+                        var p = new Properties();
+                        p.load(new ByteArrayInputStream(file.bytes()));
+                        p.forEach((k, v) -> props.put(String.valueOf(k), String.valueOf(v)));
+                    } catch (IOException | IllegalArgumentException ignored) {
+                    }
+                } else {
+                    try {
+                        String text = new String(file.bytes(), StandardCharsets.UTF_8);
+                        for (Object doc : yaml.loadAll(text)) {
+                            flattenYamlNode("", doc, props);
+                        }
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+            } else if (path.endsWith(".java")) {
+                try {
+                    String text = new String(file.bytes(), StandardCharsets.UTF_8);
+                    if (!text.contains("springframework")) {
+                        continue;
+                    }
+                    var parsed = javaParser.parse(text).getResult().orElse(null);
+                    if (parsed == null) {
+                        continue;
+                    }
+                    String pkg = parsed.getPackageDeclaration()
+                            .map(pd -> pd.getNameAsString()).orElse("");
+                    var imports = new HashMap<String, String>();
+                    for (var imp : parsed.getImports()) {
+                        if (!imp.isAsterisk() && !imp.isStatic()) {
+                            String fqn = imp.getNameAsString();
+                            String simple = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
+                            imports.put(simple, fqn);
+                        }
+                    }
+                    for (var typeDecl : parsed.findAll(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)) {
+                        boolean springBeanType = hasAnyAnnotation(typeDecl, Set.of(
+                                "Configuration", "SpringBootApplication", "Service", "Component",
+                                "Repository", "Controller", "RestController", "ControllerAdvice",
+                                "RestControllerAdvice"));
+                        String resolvedType = pkg.isEmpty() ? typeDecl.getNameAsString()
+                                : pkg + "." + typeDecl.getNameAsString();
+                        if (springBeanType) {
+                            userBeanTypes.add(resolvedType);
+                            for (var ext : typeDecl.getExtendedTypes()) {
+                                userBeanTypes.add(resolveSyntaxType(ext.getNameAsString(), pkg, imports));
+                            }
+                            for (var impl : typeDecl.getImplementedTypes()) {
+                                userBeanTypes.add(resolveSyntaxType(impl.getNameAsString(), pkg, imports));
+                            }
+                        }
+                        for (var method : typeDecl.getMethods()) {
+                            if (hasAnyAnnotation(method, Set.of("Bean"))) {
+                                String ret = resolveSyntaxType(method.getType().asString(), pkg, imports);
+                                userBeanTypes.add(ret);
+                                userBeanNames.add(method.getNameAsString());
+                            }
+                            if (hasAnyAnnotation(method, Set.of("Autowired", "Inject"))) {
+                                for (var param : method.getParameters()) {
+                                    userInjectedTypes.add(resolveSyntaxType(param.getType().asString(), pkg, imports));
+                                }
+                            }
+                        }
+                        for (var field : typeDecl.getFields()) {
+                            boolean autowired = hasAnyAnnotation(field, Set.of("Autowired", "Inject"));
+                            boolean constructorInjected = springBeanType && field.isPrivate() && field.isFinal();
+                            if (autowired || constructorInjected) {
+                                String ftype = resolveSyntaxType(field.getCommonType().asString(), pkg, imports);
+                                userInjectedTypes.add(ftype);
+                            }
+                        }
+                        if (springBeanType) {
+                            for (var ctor : typeDecl.getConstructors()) {
+                                if (typeDecl.getConstructors().size() == 1
+                                        || hasAnyAnnotation(ctor, Set.of("Autowired", "Inject"))) {
+                                    for (var param : ctor.getParameters()) {
+                                        userInjectedTypes.add(
+                                                resolveSyntaxType(param.getType().asString(), pkg, imports));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
+        String activeProp = props.getOrDefault("spring.profiles.active", "");
+        for (String p : activeProp.split(",")) {
+            String trimmed = p.trim();
+            if (!trimmed.isEmpty()) {
+                profiles.add(trimmed);
+            }
+        }
+        return new com.evolution.analysis.spring.universal.BytecodeAutoConfigScanner.UserSpringSummary(
+                userBeanTypes, userBeanNames, userInjectedTypes, props, profiles, Set.of());
+    }
+
+    private static boolean hasAnyAnnotation(
+            com.github.javaparser.ast.nodeTypes.NodeWithAnnotations<?> node, Set<String> names) {
+        for (var ann : node.getAnnotations()) {
+            String raw = ann.getNameAsString();
+            String simple = raw.contains(".") ? raw.substring(raw.lastIndexOf('.') + 1) : raw;
+            if (names.contains(simple)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String resolveSyntaxType(String rawType, String pkg, Map<String, String> imports) {
+        if (rawType == null || rawType.isBlank()) {
+            return "";
+        }
+        String clean = rawType.trim();
+        int lt = clean.indexOf('<');
+        if (lt >= 0) {
+            clean = clean.substring(0, lt).trim();
+        }
+        while (clean.endsWith("[]")) {
+            clean = clean.substring(0, clean.length() - 2).trim();
+        }
+        if (clean.contains(".")) {
+            return clean;
+        }
+        String imported = imports.get(clean);
+        if (imported != null) {
+            return imported;
+        }
+        return pkg.isEmpty() ? clean : pkg + "." + clean;
+    }
+
+    private static void flattenYamlNode(String prefix, Object node, Map<String, String> out) {
+        if (node == null) {
+            return;
+        }
+        if (node instanceof Map<?, ?> map) {
+            for (var entry : map.entrySet()) {
+                String k = String.valueOf(entry.getKey());
+                String next = prefix.isEmpty() ? k : prefix + "." + k;
+                flattenYamlNode(next, entry.getValue(), out);
+            }
+        } else if (node instanceof Collection<?> col) {
+            var joined = new ArrayList<String>();
+            int idx = 0;
+            for (Object item : col) {
+                if (item instanceof Map<?, ?> || item instanceof Collection<?>) {
+                    flattenYamlNode(prefix + "[" + idx + "]", item, out);
+                } else if (item != null) {
+                    joined.add(String.valueOf(item));
+                }
+                idx++;
+            }
+            if (!joined.isEmpty() && !prefix.isEmpty()) {
+                out.put(prefix, String.join(",", joined));
+            }
+        } else if (!prefix.isEmpty()) {
+            out.put(prefix, String.valueOf(node));
+        }
+    }
+
+    private static final class InputFailure extends IllegalArgumentException {
+        InputFailure(String code) {
+            super(code);
+        }
+    }
 }

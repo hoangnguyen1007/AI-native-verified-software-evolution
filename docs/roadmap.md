@@ -2,9 +2,12 @@
 
 ## Status and Intent
 
-The [full-pipeline demo](#full-pipeline-demo) is complete in its pinned scope. **CONFIRMED human direction (2026-11-16):** extend the repair backend for use on real repositories beyond that fixture. Build on Track A analysis and Track B snapshot evolution. SE121, SE122 and KLTN no longer determine delivery order. [Current state](current-state.md) records what is implemented and what comes next.
+The [full-pipeline demo](#full-pipeline-demo) is complete in its pinned scope and preserved as a reproducible compatibility check. Evo operates on an explicit **Dual-Track Direction (2026-11-28)** built on the protected Track A analysis and Track B snapshot-evolution foundations:
 
-The [repository repair API](architecture/captured-repository-repair.md) starts with deterministic recipes and an optional model adapter over authenticated source evidence. A compiler syntax check gates patch creation. Support for additional languages and isolated build, test and finding verification must be established separately for their actual toolchains and contexts. Preserve explicit gaps rather than expanding the claims of the pinned run.
+- **Product Track (Online Web App + CLI + MCP):** **CONFIRMED human direction (2026-11-16 & 2026-11-27):** prioritize the **Online Web App Workbench** (`backend/target/evo-workbench.jar`, Docker `evo-workbench-online:latest`, Vanilla HTML/CSS/JS + Cytoscape + Lucian UI in `backend/src/main/resources/web/`, Streamable HTTP MCP `2025-11-25`) and extend [captured-repository repair](architecture/captured-repository-repair.md) with usable recipes, optional model-authored edits, compiler syntax checks, and isolated sandbox verification. Keep `cli` preserved for compatibility and `E0` benchmark artifact parity without adding new CLI features unless explicitly requested.
+- **Scientific Research Track (CORE A*/Q1):** Governed by [SuperPlan v2](evo-sota-superplan-v2.md) (`Phase 0` `WP0.1–WP0.6` -> `Phases 1–4` `WP1.1–WP4.4`), backed by the curated 19-paper [SOTA Paper Library](paper/README.md) ([catalog.json](paper/catalog.json)), [19-Paper SOTA Deep Synthesis](research/sota-19-paper-deep-synthesis.md), and [Comparative Evaluation Report v7](evo-comparative-evaluation-report.md).
+
+[Current state](current-state.md) records live verified metrics, active blockers (`B1–B6`), and the exact next task. Support for additional languages and isolated build, test, and finding verification must be established separately for their actual toolchains and contexts; preserve explicit capability gaps rather than inflating demonstrated claims.
 
 ## Full-Pipeline Demo
 
@@ -63,7 +66,7 @@ See [ADR-003: Progressive Evidence Acquisition and Capability Boundaries](decisi
 - Detailed inventory, semantic-quality, structural, policy, Spring, and operational metrics
 - Explainable architecture health score with separate analysis confidence
 - Bounded impact analysis
-- CLI-first workflow, API, and a complete evidence-oriented architecture workbench
+- Online Web App architecture workbench (`backend/src/main/resources/web/`), HTTP/MCP APIs, and preserved CLI/export workflow
 - Dashboard, structure explorer, focused graph, metrics/score, violations, Spring, impact, and provenance views
 - Multi-repository correctness, robustness, determinism, and performance evaluation
 
@@ -359,8 +362,8 @@ M-1 Human approval [COMPLETE: 86c4ca2]
 | G1 — PASSED | Parser-neutral semantic/identity/metric/assessment contracts are stable and deterministic |
 | G2 — RECORDED PASSED | Historical frontend/build acceptance is recorded in current state and the 2026-09-10 adjudication record; R0 does not re-certify it |
 | M4-R0 — PASSED | Historical matrix, identities/catalog/fragment, bounded oracle results and protocol approved by human supervisor on 2026-09-11 |
-| G3 | Bounded phase/order-aware Spring inference meets truth-region, witness, version and closed-taxonomy evidence criteria |
-| G4 | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection |
+| G3 — PASSED | Bounded phase/order-aware Spring inference meets truth-region, witness, version and closed-taxonomy evidence criteria (`37/37` obligations, `0` false certainty; certified 2026-10-14 in [Gate G3 Adjudication Record](reproducibility/g3-spring-adjudication-record-2026-10-14.md)) |
+| G4 — PASSED | Canonical conditional graph/metric/query invariants pass, including infeasible-path rejection (`165` tests / `22` suites; certified 2026-10-15 in [Gate G4 Adjudication Record](reproducibility/g4-adjudication-record-2026-10-15.md)) |
 | G5 — PASSED | Conditional policy/evidence/score correctness passes region mutations, negatives, witness replay and sensitivity checks |
 | G6 — PASSED | Track A release preparation complete: Query HTTP API, evo CLI, visual workbench projections, policy-qualified impact, multi-format exports, and offline local acceptance pass without network/database |
 | G7 — CLOSED BY HUMAN DECISION / NOT CERTIFIED PASSED | See [M11.6](tasks/m11/06-execution.md) for scoped results and open assertions |
@@ -368,12 +371,16 @@ M-1 Human approval [COMPLETE: 86c4ca2]
 
 ## Verification and scope tradeoffs
 
-Use [lean verification](testing.md#lean-verification-for-the-demo). Preserve evidence, typed gaps, isolated execution, canonical semantics and honest verdicts. Keep all demo stages; reduce fixture size, provider count, UI polish and optional infrastructure before dropping a stage or weakening an invariant. Track C, deployment federation and enterprise-scale claims do not block the demo.
+Use [lean verification & 5-Tier `T0–T4` protocol](testing.md#lean-verification-for-the-demo). Preserve evidence, typed gaps, isolated execution, canonical semantics, `I5` anti-overfitting, and honest verdicts. Keep routine Product SWE inner loops in `T0–T3` (`0.5–90 s`) and reserve `T4` for explicit publication/scale/oracle gates.
 
-## Publication and Defense
+## Scientific Research & Publication Track (CORE A* / Q1)
 
-Paper readiness, venue selection, extensive artifact badging, and elaborate defense scripting are future/optional. Preserve strong raw evidence and methodology now so those paths remain available without steering current engineering priorities.
+Scientific publication is an active, disciplined parallel track alongside the Online Web App product, governed by [SuperPlan v2](evo-sota-superplan-v2.md) and the 19-paper [SOTA Paper Library](paper/README.md):
+
+- **Phase 0 (`WP0.1–WP0.6`, Gate-0):** Close all six live execution blockers (`B1–B6` — CDCL/COI acceptance, `PetClinic` incremental `spring-context` determinism, `Shopizer` 64 MB chunking, `"redis-cart"` `I5` removal & service dedup, Cold regression profiling, harness/DOI fixes, clean Git baseline + Linux `n >= 5` `E0` freeze).
+- **Phases 1–4 (`WP1.1–WP4.4`):** Integrate formal SOTA contributions across Pillar 1 (blind `Micans` AMQP/RPC + passive Fail-Close resilience), Pillar 2 (Spring AOP/XML/MeCheck + COI-sliced PB-d-DNNF `#SAT` + real multi-repo `ApplicationContextRunner` oracle), Pillar 3 (fast structural SKG + quarantined `TacitMemoryStore`), and Pillar 4 (dual-sliced, AST-purity & QMOOD-guarded sandboxed evolution).
+- **Target Venues:** FSE Tool Demo (launchpad after Gate-0), followed by CORE A* Research (ICSE / OOPSLA / ASE) and Q1 Journal tracks (IEEE TSE / ACM TOSEM / EMSE), enforcing strict zero-overlap claims, blind holdouts, and 1-command Zenodo artifact reproducibility.
 
 ## Immediate Sequence
 
-The [current state](current-state.md#exact-next-task) owns the active task sequence and the closure status for the pinned demo. The [Step 5 run](architecture/demo-finding-transition.md#closure-run) records the completed local journey.
+The [current state](current-state.md#exact-next-task) owns the active task sequence (`Phase 0` `WP0.1–WP0.6` in [SuperPlan v2](evo-sota-superplan-v2.md)). The [Step 5 run](architecture/demo-finding-transition.md#closure-run) preserves the completed local demo compatibility journey.

@@ -26,7 +26,7 @@ import java.util.function.Supplier;
  * ({@link FileRole}) for transparent disclosure.
  */
 public final class RepairContextPlanner {
-    public static final int MAX_EXPANDED_FILES = 6;
+    public static final int MAX_EXPANDED_FILES = 20;
 
     public enum FileRole { CITED, CONTEXT_EXPANDED, SIBLING_TEST, LINKED_DOC }
 
@@ -173,9 +173,9 @@ public final class RepairContextPlanner {
         if (targetEntityId != null && !targetEntityId.isBlank() && expanded < MAX_EXPANDED_FILES) {
             int callerAdded = 0;
             for (String ctx : contexts) {
-                if (callerAdded >= 3 || expanded >= MAX_EXPANDED_FILES) break;
+                if (callerAdded >= 10 || expanded >= MAX_EXPANDED_FILES) break;
                 for (var edge : graph.edges(ctx)) {
-                    if (callerAdded >= 3 || expanded >= MAX_EXPANDED_FILES) break;
+                    if (callerAdded >= 10 || expanded >= MAX_EXPANDED_FILES) break;
                     if ("graph.contains".equals(edge.kind()) || "graph.declares".equals(edge.kind())
                             || "graph.owns-source".equals(edge.kind())) continue;
                     if (edge.target().identities().contains(targetEntityId) && !edge.source().equals(targetEntityId)) {
@@ -210,8 +210,8 @@ public final class RepairContextPlanner {
                 rrfSeeds.add(p);
             }
             if (!rrfSeeds.isEmpty()) {
-                int rrfCap = planned.isEmpty() ? Math.min(3, MAX_EXPANDED_FILES - expanded)
-                        : Math.min(2, MAX_EXPANDED_FILES - expanded);
+                int rrfCap = planned.isEmpty() ? Math.min(6, MAX_EXPANDED_FILES - expanded)
+                        : Math.min(4, MAX_EXPANDED_FILES - expanded);
                 var seeded = seedFocusFiles(graph, primaryContext, List.copyOf(rrfSeeds), searchIndex, rrfCap + planned.size(), stop);
                 int rrfAdded = 0;
                 for (String p : seeded) {
@@ -246,12 +246,12 @@ public final class RepairContextPlanner {
             }
         }
 
-        // 4. Add sibling test files (up to 2 within budget) so repair models preserve existing test contracts
+        // 4. Add sibling test files (up to 6 within budget) so repair models preserve existing test contracts
         var stemCandidates = collectStems(planned.keySet());
         int testsAdded = 0;
         if (!stemCandidates.isEmpty() && expanded < MAX_EXPANDED_FILES) {
             for (var entry : fileIndex.entries()) {
-                if (testsAdded >= 2 || expanded >= MAX_EXPANDED_FILES) break;
+                if (testsAdded >= 6 || expanded >= MAX_EXPANDED_FILES) break;
                 if (!entry.readable() || planned.containsKey(entry.path())) continue;
                 String p = entry.path();
                 if (isMatchingSiblingTest(p, stemCandidates)) {
@@ -292,7 +292,7 @@ public final class RepairContextPlanner {
         return stems;
     }
 
-    private static boolean isMatchingSiblingTest(String path, Set<String> stems) {
+    static boolean isMatchingSiblingTest(String path, Set<String> stems) {
         String low = path.toLowerCase(Locale.ROOT);
         boolean inTestDir = low.contains("/test/") || low.startsWith("test/") || low.contains("/tests/")
                 || low.contains("/__tests__/") || low.endsWith("test.java") || low.endsWith("tests.java")
@@ -628,7 +628,7 @@ public final class RepairContextPlanner {
         }
     }
 
-    private static Map<String, String> indexDocumentPaths(KnowledgeGraph graph) {
+    static Map<String, String> indexDocumentPaths(KnowledgeGraph graph) {
         var map = new HashMap<String, String>();
         for (var node : graph.nodes(graph.snapshot().value())) {
             if (!"SOURCE_DOCUMENT".equals(node.kind())) continue;
@@ -650,7 +650,7 @@ public final class RepairContextPlanner {
         return map;
     }
 
-    private static void inspectDeclaration(KnowledgeGraph graph, KnowledgeGraph.Node node,
+    static void inspectDeclaration(KnowledgeGraph graph, KnowledgeGraph.Node node,
                                            Map<String, String> docPaths,
                                            Map<String, String> nodePath,
                                            Map<String, String> nodeLabel) {

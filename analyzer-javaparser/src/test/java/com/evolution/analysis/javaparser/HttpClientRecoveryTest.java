@@ -34,19 +34,39 @@ class HttpClientRecoveryTest {
             class C {
               static final String HOST="http://customers-service/";
               final String owners=HOST+"owners";
+              private String privateConst="pets";
               String mutable="/wrong";
               void run(org.springframework.web.client.RestTemplate client,String owners) {
                 final String suffix="/{id}";
+                String effectivelyFinal="/summary";
                 client.getForObject(this.owners+suffix,String.class,1);
                 client.getForObject(owners,String.class);
                 client.getForObject(mutable,String.class);
                 client.getForObject("/literal",String.class);
+                client.getForObject(String.format("http://visits-service/%s/%d%s",privateConst,7,effectivelyFinal),String.class);
               }
             }
             """);
-        assertEquals(4,result.httpClientCalls().size());
-        assertEquals(Set.of("http://customers-service/owners/{id}","/literal",""),result.httpClientCalls().stream().map(HttpClientCallRecord::uri).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(5,result.httpClientCalls().size());
+        assertEquals(Set.of("http://customers-service/owners/{id}","/literal","http://visits-service/pets/7/summary",""),result.httpClientCalls().stream().map(HttpClientCallRecord::uri).collect(java.util.stream.Collectors.toSet()));
         assertEquals(2,result.httpClientCalls().stream().filter(c->c.uri().isEmpty()).count());
+    }
+    @Test void springCloudDiscoveryClientLoadBalancerClientAndRestClientEmitHostAndUriCandidates()throws Exception {
+        var result=analyze("""
+            class C {
+              void run(org.springframework.web.client.RestClient restClient,
+                       org.springframework.cloud.client.discovery.DiscoveryClient discovery,
+                       org.springframework.cloud.client.loadbalancer.LoadBalancerClient lb) {
+                restClient.get().uri("http://owners-service/owners");
+                discovery.getInstances("vets-service");
+                lb.choose("visits-service");
+              }
+            }
+            """);
+        assertEquals(3,result.httpClientCalls().size());
+        assertEquals(Set.of("http://owners-service/owners","lb://vets-service/","lb://visits-service/"),
+                result.httpClientCalls().stream().map(HttpClientCallRecord::uri).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(result.httpClientCalls().stream().anyMatch(c->c.uri().equals("http://owners-service/owners")&&c.methods().equals(List.of("GET"))));
     }
     @Test void webClientUriCallsKeepTheirResolvedGetAndPostMethods()throws Exception {
         var result=analyze("""

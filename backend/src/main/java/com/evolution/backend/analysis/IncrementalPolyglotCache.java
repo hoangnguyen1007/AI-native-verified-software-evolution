@@ -35,10 +35,16 @@ final class IncrementalPolyglotCache {
 
     enum ProbeStatus {
         NOT_CANDIDATE,
-        NOT_OPENAPI
+        NOT_OPENAPI,
+        UNRENDERED_HELM_TEMPLATE
     }
 
     record Entry(TreeSitterSourceFrontend.Summary summary, List<TreeSitterSourceFrontend.Fact> facts) {}
+
+    record Lookup(Entry entry, ProbeStatus sentinel) {
+        boolean isSentinel() { return sentinel != null; }
+        boolean isEntry() { return entry != null; }
+    }
 
     private record Slot(Entry entry, ProbeStatus sentinel) {
         static Slot parsed(Entry entry) { return new Slot(Objects.requireNonNull(entry), null); }
@@ -135,6 +141,33 @@ final class IncrementalPolyglotCache {
         if (slot != null && slot.sentinel() != null) {
             hitCount.incrementAndGet();
             return Optional.of(slot.sentinel());
+        }
+        missCount.incrementAndGet();
+        return Optional.empty();
+    }
+
+    /**
+     * Single-slot lookup returning either a cached parsed {@link Entry} or a cached negative
+     * {@link ProbeStatus} sentinel under one key, recording exactly one hit or one miss per task.
+     */
+    Optional<Lookup> lookup(ContentDigest key) {
+        return lookup(key, null);
+    }
+
+    Optional<Lookup> lookup(ContentDigest key, ContentDigest fallbackLegacyKey) {
+        if (Boolean.getBoolean("evo.incremental.disabled")) {
+            missCount.incrementAndGet();
+            return Optional.empty();
+        }
+        Slot slot = getSlot(key);
+        if (slot == null && fallbackLegacyKey != null) {
+            synchronized (memCache) {
+                slot = memCache.get(fallbackLegacyKey);
+            }
+        }
+        if (slot != null) {
+            hitCount.incrementAndGet();
+            return Optional.of(new Lookup(slot.entry(), slot.sentinel()));
         }
         missCount.incrementAndGet();
         return Optional.empty();

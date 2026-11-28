@@ -1,3 +1,8 @@
+---
+trigger: model_decision
+description: Apply for consequential architecture, schema, identity, API, ADR, technology-selection, or scientific benchmark/methodology decisions. Skip for routine reversible implementation details.
+---
+
 # Decision Rule — Architecture, Technology and Methodology
 
 For a consequential decision, define the problem, phase constraints, required capabilities, success evidence, simple baseline, strongest viable alternatives, reversibility and cost of being wrong.

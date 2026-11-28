@@ -25,6 +25,10 @@ public final class TruthRegionEvaluation {
     public static SymbolicTruthRegions.StagedResult evaluateSymbolic(Request request,int maxSignatures,SymbolicConfiguration.Limits limits) {
         return SymbolicTruthRegions.evaluateStaged(request,maxSignatures,limits);
     }
+    public static SymbolicTruthRegions.StagedResult evaluateSymbolic(
+            Request request, int maxSignatures, SymbolicConfiguration.Limits limits, boolean verifyWitnessReplay) {
+        return SymbolicTruthRegions.evaluateStaged(request, maxSignatures, limits, verifyWitnessReplay);
+    }
     public static final VersionedIdentifier REGION_ENCODING =
             new VersionedIdentifier("spring.truth-region-encoding", "explicit-worlds-m4d-v1");
     public static final VersionedIdentifier WITNESS_POLICY =
@@ -574,7 +578,7 @@ public final class TruthRegionEvaluation {
         return List.copyOf(facts);
     }
 
-    private record WorldFactIndex(
+    record WorldFactIndex(
             Map<BeanDefinitionCandidate.Identity, LogicalValue> presenceByCandidate,
             Map<Object, InjectionBindings.Row> rowsByPointAndOwner) {
         LogicalValue truth(ConditionalFactKey fact) {

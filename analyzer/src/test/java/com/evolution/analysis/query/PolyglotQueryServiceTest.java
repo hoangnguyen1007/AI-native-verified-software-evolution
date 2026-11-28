@@ -160,4 +160,181 @@ class PolyglotQueryServiceTest {
         assertFalse(com.evolution.analysis.contract.serialization.CanonicalJson.write(badRes).contains("PRIVATE_HOST_PATH"));
         assertTrue(badRes.gaps().stream().anyMatch(g -> "INVALID_SOURCE_PATH".equals(g.reasonCode())));
     }
+
+    @Test
+    void describesServiceTopologyComponentsAndWhitelistsServiceEdgeEvidence() {
+        var f = new Fixture();
+        var buildEv = GraphEvidence.capture("polyglot.build-component", Map.of(
+                "id", "orders-app", "directory", "services/orders-service", "kind", "MAVEN", "name", "orders-service"));
+        var infraEv = GraphEvidence.capture("architecture.infra-component", Map.of(
+                "name", "eureka", "image", "springcloud/eureka", "spec", "compose_service",
+                "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
+        var actorEv = GraphEvidence.capture("architecture.external-actor", Map.of(
+                "name", "user", "trust", "DERIVED_DFD_POLICY", "rule", "DFD_EXTERNAL_ENTRY_POINT",
+                "runtimeObserved", false));
+        var declEdgeEv = GraphEvidence.capture("architecture.declarative-topology", Map.of(
+                "kind", "CALLS_SERVICE", "mechanism", "SPRING_CONFIG_EUREKA-CLIENT",
+                "source", "orders-service", "target", "eureka",
+                "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
+        var svcCallEv = GraphEvidence.capture("architecture.service-call", Map.of(
+                "kind", "CALLS_SERVICE", "certainty", "CANDIDATE",
+                "routingEstablished", false, "runtimeObserved", false,
+                "source", Map.of("context", f.context, "identity", id("svc-build"), "role", "CALLER_DECLARATION"),
+                "destinations", List.of(Map.of("context", f.context, "identity", id("svc-infra"), "role", "ENDPOINT_SITE"))));
+        f.evidence.addAll(List.of(buildEv, infraEv, actorEv, declEdgeEv, svcCallEv));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-build"), f.context, "BUILD_COMPONENT", List.of(buildEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-infra"), f.context, "INFRA_COMPONENT", List.of(infraEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-actor"), f.context, "EXTERNAL_ACTOR", List.of(actorEv.identity())));
+        f.edges.add(new KnowledgeGraph.Edge(id("e-decl"), f.context, "CALLS_SERVICE", id("svc-build"),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(id("svc-infra")), Optional.empty()),
+                List.of(declEdgeEv.identity()), Optional.empty()));
+        f.edges.add(new KnowledgeGraph.Edge(id("e-call"), f.context, "CALLS_SERVICE", id("svc-actor"),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(id("svc-build")), Optional.empty()),
+                List.of(svcCallEv.identity()), Optional.empty()));
+
+        var service = new ArchitectureQueryService(f.graph());
+        var req = f.request();
+
+        var buildEnt = service.entity(req, id("svc-build")).items().getFirst();
+        assertEquals(Optional.of("services/orders-service"), buildEnt.canonicalName());
+        assertEquals(Optional.of("services/orders-service"), buildEnt.spelling());
+        assertEquals(Optional.of("PROJECT"), buildEnt.origin());
+
+        var infraEnt = service.entity(req, id("svc-infra")).items().getFirst();
+        assertEquals(Optional.of("eureka"), infraEnt.canonicalName());
+        assertEquals(Optional.of("eureka"), infraEnt.spelling());
+        assertEquals(Optional.of("INFRA"), infraEnt.origin());
+
+        var actorEnt = service.entity(req, id("svc-actor")).items().getFirst();
+        assertEquals(Optional.of("user"), actorEnt.canonicalName());
+        assertEquals(Optional.of("EXTERNAL"), actorEnt.origin());
+
+        var declMeta = service.evidence(req, declEdgeEv.identity()).items().getFirst().metadata();
+        assertEquals("orders-service", declMeta.get("source"));
+        assertEquals("eureka", declMeta.get("target"));
+        assertEquals("SPRING_CONFIG_EUREKA-CLIENT", declMeta.get("mechanism"));
+
+        var callMeta = service.evidence(req, svcCallEv.identity()).items().getFirst().metadata();
+        assertEquals("CALLS_SERVICE", callMeta.get("kind"));
+        assertTrue(callMeta.containsKey("source"));
+        assertTrue(callMeta.containsKey("destinations"));
+    }
+
+    @Test
+    void buildComponentUsesCanonicalServiceIdentityWhilePreservingModuleDirectory() {
+        var f = new Fixture();
+        var buildEv = GraphEvidence.capture("polyglot.build-component", Map.of(
+                "id", "catalog-dir", "directory", "services/nested/catalog-dir", "kind", "MAVEN", "name", "catalog-dir"));
+        var identityEv = GraphEvidence.capture("architecture.service-identity", Map.of(
+                "serviceName", "catalog-api",
+                "name", "catalog-api",
+                "directory", "services/nested/catalog-dir",
+                "spec", "spring-config",
+                "trust", "DECLARATIVE_CONFIG",
+                "runtimeObserved", false,
+                "secretRawPath", "C:/PRIVATE_HOST/secret.yml"));
+        var brokerEv = GraphEvidence.capture("polyglot.event-broker-link", Map.of(
+                "kind", "CONSUMES_FROM", "topic", "orders.placed", "protocol", "KAFKA",
+                "site", id("cons"), "brokers", List.of(id("kafka")),
+                "certainty", "CANDIDATE", "trust", "DERIVED_DFD_POLICY", "orientation", "DFD_DATA_FLOW",
+                "runtimeObserved", false));
+        f.evidence.addAll(List.of(buildEv, identityEv, brokerEv));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-order-1"), f.context, "BUILD_COMPONENT",
+                List.of(buildEv.identity(), identityEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-order-2"), f.context, "BUILD_COMPONENT",
+                List.of(identityEv.identity(), buildEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("broker-node"), f.context, "INFRA_COMPONENT",
+                List.of(brokerEv.identity())));
+
+        var service = new ArchitectureQueryService(f.graph());
+        var req = f.request();
+
+        for (String nid : List.of(id("svc-order-1"), id("svc-order-2"))) {
+            var ent = service.entity(req, nid).items().getFirst();
+            assertEquals(Optional.of("catalog-api"), ent.canonicalName());
+            assertEquals(Optional.of("catalog-api"), ent.spelling());
+            assertEquals(Optional.of("services/nested/catalog-dir"), ent.module());
+            assertEquals(Optional.of("PROJECT"), ent.origin());
+        }
+
+        var idView = service.evidence(req, identityEv.identity()).items().getFirst();
+        assertTrue(idView.redacted());
+        assertEquals("catalog-api", idView.metadata().get("serviceName"));
+        assertEquals("services/nested/catalog-dir", idView.metadata().get("directory"));
+        assertEquals("DECLARATIVE_CONFIG", idView.metadata().get("trust"));
+        assertFalse(idView.metadata().containsKey("secretRawPath"));
+        assertFalse(com.evolution.analysis.contract.serialization.CanonicalJson.write(idView).contains("PRIVATE_HOST"));
+
+        var brokerMeta = service.evidence(req, brokerEv.identity()).items().getFirst().metadata();
+        assertEquals("DERIVED_DFD_POLICY", brokerMeta.get("trust"));
+        assertEquals("DFD_DATA_FLOW", brokerMeta.get("orientation"));
+    }
+
+    @Test
+    void operationalGuardReclaimsTransientPreGcHeapDipBeforeHaltingEdgesQuery() {
+        var f = new Fixture();
+        var srcEv = GraphEvidence.capture("polyglot.build-component", Map.of(
+                "id", "orders-service", "directory", "orders-service", "kind", "MAVEN", "name", "orders-service"));
+        var dstEv = GraphEvidence.capture("architecture.infra-component", Map.of(
+                "name", "github-repository", "image", "github-repository", "spec", "config-reference",
+                "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
+        var edgeEv = GraphEvidence.capture("architecture.declarative-topology", Map.of(
+                "kind", "CALLS_SERVICE", "mechanism", "SPRING_CONFIG_CONFIG-GIT-REPO",
+                "source", "github-repository", "target", "orders-service",
+                "trust", "DERIVED_DFD_POLICY", "runtimeObserved", false));
+        f.evidence.addAll(List.of(srcEv, dstEv, edgeEv));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-src"), f.context, "BUILD_COMPONENT", List.of(srcEv.identity())));
+        f.nodes.add(new KnowledgeGraph.Node(id("svc-dst"), f.context, "INFRA_COMPONENT", List.of(dstEv.identity())));
+        f.edges.add(new KnowledgeGraph.Edge(id("e-1"), f.context, "CALLS_SERVICE", id("svc-dst"),
+                new KnowledgeGraph.Target(KnowledgeGraph.TargetState.RESOLVED, List.of(id("svc-src")), Optional.empty()),
+                List.of(edgeEv.identity()), Optional.empty()));
+        var graph = f.graph();
+        var req = new Request(graph.identity(), f.context, Scope.ENTITY, Projection.BOUNDED_UNION,
+                Direction.OUTGOING, Set.of("CALLS_SERVICE"), Population.all(), false, Optional.empty(), Limits.defaults());
+
+        // 1. Transient pre-GC dip (< 8 MB) reclaimed once -> edges query completes with ALL edges (no silent empty list).
+        var available = new java.util.concurrent.atomic.AtomicLong(2_000_000L);
+        var gcCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        var clock = new java.util.concurrent.atomic.AtomicLong(1_000_000_000L);
+        var recoverGuard = ArchitectureQueryService.operationalGuard(
+                () -> false, 0L, 8_000_000L, available::get, () -> 1_536_000_000L,
+                () -> {
+                    gcCalls.incrementAndGet();
+                    available.set(500_000_000L);
+                },
+                clock::get);
+        var recovered = new ArchitectureQueryService(graph, recoverGuard, Optional.empty()).edges(req, Page.first());
+        assertEquals(1, gcCalls.get(), "transient pre-GC dip must trigger a single reclaim check");
+        assertEquals(StopReason.NONE, recovered.bounds().stopReason());
+        assertEquals(Operation.COMPLETED, recovered.operation());
+        assertEquals(1, recovered.items().size());
+
+        // 2. Genuine heap exhaustion (still < 8 MB after GC) -> fail-closed StopReason.MEMORY without GC thrashing.
+        var stuckAvailable = new java.util.concurrent.atomic.AtomicLong(2_000_000L);
+        var stuckGcCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        var stuckGuard = ArchitectureQueryService.operationalGuard(
+                () -> false, 0L, 8_000_000L, stuckAvailable::get, () -> 1_536_000_000L,
+                stuckGcCalls::incrementAndGet, clock::get);
+        var halted = new ArchitectureQueryService(graph, stuckGuard, Optional.empty()).edges(req, Page.first());
+        assertEquals(1, stuckGcCalls.get(), "cooldown must prevent repeated GC calls under sustained memory pressure");
+        assertEquals(StopReason.MEMORY, halted.bounds().stopReason());
+        assertEquals(Operation.RESOURCE_LIMIT, halted.operation());
+        assertTrue(halted.items().isEmpty());
+        // Additional poll within cooldown returns MEMORY immediately with zero extra GC.
+        assertEquals(StopReason.MEMORY, stuckGuard.get());
+        assertEquals(1, stuckGcCalls.get());
+
+        // 3. Reserve >= maxHeap fails closed immediately with zero GC calls.
+        var impossibleGcCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        var impossibleGuard = ArchitectureQueryService.operationalGuard(
+                () -> false, 0L, 1_536_000_000L, () -> 500_000_000L, () -> 1_536_000_000L,
+                impossibleGcCalls::incrementAndGet, clock::get);
+        assertEquals(StopReason.MEMORY, impossibleGuard.get());
+        assertEquals(0, impossibleGcCalls.get());
+
+        // 4. Public overload honors CANCELLED, impossible reserve -> MEMORY, and healthy reserve -> NONE.
+        assertEquals(StopReason.CANCELLED, ArchitectureQueryService.operationalGuard(() -> true, 0L, 8_000_000L).get());
+        assertEquals(StopReason.MEMORY, ArchitectureQueryService.operationalGuard(() -> false, 0L, Long.MAX_VALUE).get());
+        assertEquals(StopReason.NONE, ArchitectureQueryService.operationalGuard(() -> false, 0L, 1L).get());
+    }
 }

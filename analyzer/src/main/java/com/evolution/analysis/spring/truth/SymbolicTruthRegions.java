@@ -141,6 +141,17 @@ public final class SymbolicTruthRegions {
      * unknown residual region.
      */
     public static StagedResult evaluateStaged(TruthRegionEvaluation.Request request, int maxSignatures, Limits limits) {
+        return evaluateStaged(request, maxSignatures, limits,
+                Boolean.parseBoolean(System.getProperty("evo.spring.verifyWitnessReplay", "true")));
+    }
+
+    /**
+     * SAT partitions exogenous atom truth signatures using incremental CDCL +
+     * 3-valued Kleene prime-implicant cube generalization; each representative executes
+     * the unchanged staged M4C engine.
+     */
+    public static StagedResult evaluateStaged(TruthRegionEvaluation.Request request, int maxSignatures, Limits limits,
+            boolean verifyWitnessReplay) {
         if (maxSignatures < 1)
             throw new IllegalArgumentException("Positive signature limit required");
         var c = new Compilation(request.conditionModel(), request.conditionSemantics(), request.reasoner(), limits);
@@ -172,6 +183,7 @@ public final class SymbolicTruthRegions {
         Formula remaining = feasible;
         boolean complete = false;
         var atoms = new TreeMap<ConditionExpression.Identity, Truth>();
+        var atomExpressions = new TreeMap<ConditionExpression.Identity, ConditionExpression>();
         var visited = new HashSet<ConditionExpression.Identity>();
         var pending = new ArrayDeque<ConditionExpression>();
         request.conditionModel().sourceRows().forEach(r -> pending.add(r.expression()));
@@ -184,25 +196,67 @@ public final class SymbolicTruthRegions {
                 compatible = false;
                 break;
             }
-            if (node.children().isEmpty() && node.dependencies().contains(ConditionExpression.Dependency.CONFIGURATION))
+            if (node.children().isEmpty() && node.dependencies().contains(ConditionExpression.Dependency.CONFIGURATION)) {
                 atoms.put(node.identity(), c.expression(node, 0));
+                atomExpressions.put(node.identity(), node);
+            }
             pending.addAll(node.children());
         }
         var traces = new ArrayList<Trace>();
         var gaps = new TreeSet<>(request.conditionModel().capabilityGaps());
+        var factIds = new ConditionalFactKey.Identity[facts.size()];
         var yes = new TreeMap<ConditionalFactKey.Identity, List<Formula>>();
         var no = new TreeMap<ConditionalFactKey.Identity, List<Formula>>();
-        facts.forEach(f -> {
-            yes.put(f.identity(), new ArrayList<>());
-            no.put(f.identity(), new ArrayList<>());
-        });
+        for (int i = 0; i < facts.size(); i++) {
+            var fid = facts.get(i).identity();
+            factIds[i] = fid;
+            yes.put(fid, new ArrayList<>());
+            no.put(fid, new ArrayList<>());
+        }
         if (facts.size() > request.limits().maxFacts()) {
             compatible = false;
             c.issue(UniversalSpringEvidence.Reason.RESOURCE_LIMIT, "staged-facts");
         }
+
+        boolean useCdclSession = compatible && (request.reasoner() == SatConfigurationReasoner.INSTANCE
+                || request.reasoner() == IncrementalCdclReasoner.INSTANCE);
+        IncrementalCdclReasoner.Session cdclSession = null;
+        var atomList = List.copyOf(atoms.entrySet());
+        int[] atomYesLit = new int[atomList.size()];
+        int[] atomNoLit = new int[atomList.size()];
+        int[] atomUnknownLit = new int[atomList.size()];
+        if (useCdclSession) {
+            try {
+                if (feasible.depth() > limits.maxDepth()) {
+                    throw new IllegalStateException("CDCL_DEPTH_LIMIT");
+                }
+                cdclSession = new IncrementalCdclReasoner.Session(limits);
+                c.registerFormula(feasible);
+                cdclSession.addRoot(feasible);
+                for (int i = 0; i < atomList.size(); i++) {
+                    var truth = atomList.get(i).getValue();
+                    atomYesLit[i] = cdclSession.encode(truth.yes());
+                    atomNoLit[i] = cdclSession.encode(truth.no());
+                    atomUnknownLit[i] = cdclSession.encode(truth.unknown());
+                }
+            } catch (RuntimeException fallback) {
+                cdclSession = null;
+                useCdclSession = false;
+            }
+        }
+
         long evaluatedCells = 0;
         for (int signature = 0; compatible && signature < maxSignatures; signature++) {
-            var answer = c.query(remaining);
+            Answer answer;
+            if (useCdclSession) {
+                c.registerFormula(remaining);
+                answer = cdclSession.solveIncremental(remaining.identity());
+                c.queries.add(answer);
+                if (answer.status() == UNKNOWN)
+                    c.issue(UniversalSpringEvidence.Reason.SOLVER_LIMIT, answer.query().value());
+            } else {
+                answer = c.query(remaining);
+            }
             if (answer.status() == UNSATISFIABLE) {
                 complete = true;
                 break;
@@ -213,10 +267,39 @@ public final class SymbolicTruthRegions {
                 c.issue(UniversalSpringEvidence.Reason.RESOURCE_LIMIT, "staged-fact-cells");
                 break;
             }
-            var cube = new ArrayList<Formula>();
-            for (var atom : atoms.values())
-                cube.add(atom.yes().evaluate(answer.witness()) ? atom.yes()
-                        : atom.no().evaluate(answer.witness()) ? atom.no() : atom.unknown());
+
+            List<Formula> cube;
+            if (useCdclSession && !atomList.isEmpty()) {
+                var minimization = minimizeCubeKleene(
+                        c, request.conditionModel(), atomList, answer.witness());
+                cube = new ArrayList<>(minimization.essentialCount());
+                int[] blockingLits = new int[minimization.essentialCount()];
+                int bi = 0;
+                for (int i = 0; i < atomList.size(); i++) {
+                    int state = minimization.keptStates()[i];
+                    if (state == KLEENE_DONT_CARE) {
+                        continue;
+                    }
+                    var truth = atomList.get(i).getValue();
+                    if (state == KLEENE_TRUE) {
+                        cube.add(truth.yes());
+                        blockingLits[bi++] = -atomYesLit[i];
+                    } else if (state == KLEENE_FALSE) {
+                        cube.add(truth.no());
+                        blockingLits[bi++] = -atomNoLit[i];
+                    } else {
+                        cube.add(truth.unknown());
+                        blockingLits[bi++] = -atomUnknownLit[i];
+                    }
+                }
+                cdclSession.addBlockingClause(blockingLits);
+            } else {
+                cube = new ArrayList<>();
+                for (var atom : atoms.values())
+                    cube.add(atom.yes().evaluate(answer.witness()) ? atom.yes()
+                            : atom.no().evaluate(answer.witness()) ? atom.no() : atom.unknown());
+            }
+
             Formula region = and(feasible, and(cube));
             var assignment = c.assignment(answer);
             var exogenous = ExogenousConditionEvaluator.evaluate(request.conditionModel(), request.conditionSemantics(),
@@ -226,11 +309,11 @@ public final class SymbolicTruthRegions {
                 break;
             }
             var binding = InjectionBindings.evaluate(request.bindingPlan(), request.conditionModel(), assignment,
-                    request.limits().enumeration().perAssignment());
+                    request.limits().enumeration().perAssignment(), exogenous);
             gaps.addAll(binding.capabilityGaps());
             var operation = TruthRegionEvaluation.operationalStatus(binding);
             boolean replayed = false;
-            if (signature < request.limits().maxWitnessReplays()
+            if (verifyWitnessReplay && signature < request.limits().maxWitnessReplays()
                     && operation != TruthRegionEvaluation.OperationalStatus.ERROR
                     && operation != TruthRegionEvaluation.OperationalStatus.LIMIT_EXCEEDED) {
                 var replay = InjectionBindings.evaluate(request.bindingPlan(), request.conditionModel(), assignment,
@@ -238,33 +321,49 @@ public final class SymbolicTruthRegions {
                 replayed = binding.identity().equals(replay.identity());
                 if (!replayed)
                     c.issue(UniversalSpringEvidence.Reason.WITNESS_REPLAY_FAILED, "staged-trace");
-            } else if (signature >= request.limits().maxWitnessReplays())
+            } else if (verifyWitnessReplay && signature >= request.limits().maxWitnessReplays())
                 c.issue(UniversalSpringEvidence.Reason.RESOURCE_LIMIT, "witness-replay-budget");
             var values = new TreeMap<ConditionalFactKey.Identity, LogicalValue>();
-            for (var fact : facts) {
-                LogicalValue value = TruthRegionEvaluation.factTruth(fact, binding, dependencies);
-                values.put(fact.identity(), value);
+            var factIndex = TruthRegionEvaluation.indexWorldFacts(binding, dependencies);
+            for (int i = 0; i < facts.size(); i++) {
+                var fact = facts.get(i);
+                var fid = factIds[i];
+                LogicalValue value = factIndex.truth(fact);
+                values.put(fid, value);
                 if (value == LogicalValue.TRUE)
-                    yes.get(fact.identity()).add(region);
+                    yes.get(fid).add(region);
                 else if (value == LogicalValue.FALSE)
-                    no.get(fact.identity()).add(region);
+                    no.get(fid).add(region);
             }
             traces.add(new Trace(region.identity(), assignment, binding.identity(), operation, values, replayed));
             remaining = and(remaining, not(and(cube)));
         }
-        if (!complete && compatible && c.query(remaining).status() == UNSATISFIABLE)
-            complete = true;
+        if (!complete && compatible) {
+            Answer residual = useCdclSession
+                    ? cdclSession.solveIncremental(remaining.identity())
+                    : c.query(remaining);
+            if (useCdclSession) {
+                c.registerFormula(remaining);
+                c.queries.add(residual);
+                if (residual.status() == UNKNOWN)
+                    c.issue(UniversalSpringEvidence.Reason.SOLVER_LIMIT, residual.query().value());
+            }
+            if (residual.status() == UNSATISFIABLE)
+                complete = true;
+        }
         if (!complete)
             c.issue(UniversalSpringEvidence.Reason.SOLVER_LIMIT, "signature-residual");
         if (c.query(and(legal, feasibility.unknown())).status() != UNSATISFIABLE) {
             complete = false;
             c.issue(UniversalSpringEvidence.Reason.SYMBOLIC_INPUT_UNKNOWN, "feasibility-residual");
         }
-        var regions = new ArrayList<FactRegion>();
+        var regions = new ArrayList<FactRegion>(facts.size());
         var exists = complete ? null : c.query(feasible);
-        for (var fact : facts) {
-            var yesList = yes.get(fact.identity());
-            var noList = no.get(fact.identity());
+        for (int i = 0; i < facts.size(); i++) {
+            var fact = facts.get(i);
+            var fid = factIds[i];
+            var yesList = yes.get(fid);
+            var noList = no.get(fid);
             Formula y = or(yesList), n = or(noList), u = and(possible, not(or(y, n)));
             var classification = TruthRegionEvaluation.Classification.UNKNOWN;
             if (complete) {
@@ -302,6 +401,142 @@ public final class SymbolicTruthRegions {
         gaps.addAll(UniversalSpringEvidence.gaps(c.space.buildContext().snapshotIdentity(), input, issues));
         return new StagedResult(input, complete, traces, regions, List.copyOf(c.formulas.values()), c.queries, issues,
                 List.copyOf(gaps));
+    }
+
+    private static final int KLEENE_TRUE = 1;
+    private static final int KLEENE_FALSE = 2;
+    private static final int KLEENE_UNKNOWN = 3;
+    private static final int KLEENE_DONT_CARE = 4;
+
+    private record KleeneMinimization(int[] keptStates, int essentialCount) {}
+
+    private static KleeneMinimization minimizeCubeKleene(
+            Compilation c,
+            ConditionModel model,
+            List<Map.Entry<ConditionExpression.Identity, Truth>> atomList,
+            Map<String, Boolean> witness) {
+        int n = atomList.size();
+        int[] concrete = new int[n];
+        var atomIndex = new HashMap<ConditionExpression.Identity, Integer>(n * 2);
+        for (int i = 0; i < n; i++) {
+            var e = atomList.get(i);
+            atomIndex.put(e.getKey(), i);
+            Truth t = e.getValue();
+            concrete[i] = t.yes().evaluate(witness) ? KLEENE_TRUE
+                    : t.no().evaluate(witness) ? KLEENE_FALSE : KLEENE_UNKNOWN;
+        }
+
+        var trackedExpressions = new ArrayList<ConditionExpression>(
+                model.sourceRows().size() + c.space.constraints().size());
+        for (var occ : model.sourceRows()) {
+            trackedExpressions.add(occ.expression());
+        }
+        for (var con : c.space.constraints()) {
+            trackedExpressions.add(con.expression());
+        }
+        if (trackedExpressions.isEmpty()) {
+            return new KleeneMinimization(new int[n], 0);
+        }
+
+        int[] baselineValues = new int[trackedExpressions.size()];
+        var baseCache = new HashMap<ConditionExpression.Identity, Integer>();
+        for (int i = 0; i < trackedExpressions.size(); i++) {
+            baselineValues[i] = evalKleeneExpr(
+                    c, trackedExpressions.get(i), atomIndex, concrete, witness, baseCache);
+        }
+
+        int[] trial = Arrays.copyOf(concrete, n);
+        int essentialCount = n;
+        for (int k = 0; k < n; k++) {
+            int saved = trial[k];
+            trial[k] = KLEENE_DONT_CARE;
+            boolean preserved = true;
+            var trialCache = new HashMap<ConditionExpression.Identity, Integer>(baseCache.size() * 2);
+            for (int i = 0; i < trackedExpressions.size(); i++) {
+                int v = evalKleeneExpr(
+                        c, trackedExpressions.get(i), atomIndex, trial, witness, trialCache);
+                if (v != baselineValues[i]) {
+                    preserved = false;
+                    break;
+                }
+            }
+            if (preserved) {
+                essentialCount--;
+            } else {
+                trial[k] = saved;
+            }
+        }
+        return new KleeneMinimization(trial, essentialCount);
+    }
+
+    private static int evalKleeneExpr(
+            Compilation c,
+            ConditionExpression expr,
+            Map<ConditionExpression.Identity, Integer> atomIndex,
+            int[] atomStates,
+            Map<String, Boolean> witness,
+            Map<ConditionExpression.Identity, Integer> memo) {
+        Integer cached = memo.get(expr.identity());
+        if (cached != null) {
+            return cached;
+        }
+        int result;
+        if (expr.operator() == ConditionExpression.Operator.NOT) {
+            int child = evalKleeneExpr(c, expr.children().getFirst(), atomIndex, atomStates, witness, memo);
+            result = switch (child) {
+                case KLEENE_TRUE -> KLEENE_FALSE;
+                case KLEENE_FALSE -> KLEENE_TRUE;
+                case KLEENE_UNKNOWN -> KLEENE_UNKNOWN;
+                default -> KLEENE_DONT_CARE;
+            };
+        } else if (expr.operator() == ConditionExpression.Operator.ALL) {
+            boolean anyDontCare = false;
+            boolean anyUnknown = false;
+            int out = KLEENE_TRUE;
+            for (var child : expr.children()) {
+                int v = evalKleeneExpr(c, child, atomIndex, atomStates, witness, memo);
+                if (v == KLEENE_FALSE) {
+                    out = KLEENE_FALSE;
+                    break;
+                }
+                if (v == KLEENE_DONT_CARE) {
+                    anyDontCare = true;
+                } else if (v == KLEENE_UNKNOWN) {
+                    anyUnknown = true;
+                }
+            }
+            result = (out == KLEENE_FALSE) ? KLEENE_FALSE
+                    : anyDontCare ? KLEENE_DONT_CARE : anyUnknown ? KLEENE_UNKNOWN : KLEENE_TRUE;
+        } else if (expr.operator() == ConditionExpression.Operator.ANY) {
+            boolean anyDontCare = false;
+            boolean anyUnknown = false;
+            int out = KLEENE_FALSE;
+            for (var child : expr.children()) {
+                int v = evalKleeneExpr(c, child, atomIndex, atomStates, witness, memo);
+                if (v == KLEENE_TRUE) {
+                    out = KLEENE_TRUE;
+                    break;
+                }
+                if (v == KLEENE_DONT_CARE) {
+                    anyDontCare = true;
+                } else if (v == KLEENE_UNKNOWN) {
+                    anyUnknown = true;
+                }
+            }
+            result = (out == KLEENE_TRUE) ? KLEENE_TRUE
+                    : anyDontCare ? KLEENE_DONT_CARE : anyUnknown ? KLEENE_UNKNOWN : KLEENE_FALSE;
+        } else {
+            Integer idx = atomIndex.get(expr.identity());
+            if (idx != null) {
+                result = atomStates[idx];
+            } else {
+                Truth t = c.expression(expr, 0);
+                result = t.yes().evaluate(witness) ? KLEENE_TRUE
+                        : t.no().evaluate(witness) ? KLEENE_FALSE : KLEENE_UNKNOWN;
+            }
+        }
+        memo.put(expr.identity(), result);
+        return result;
     }
 
     private record Choice(FiniteDomain.Variable variable, FiniteDomain.Value value,

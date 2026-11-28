@@ -33,7 +33,7 @@ final class GrpcSourceSyntax {
     static long acquire(String language,TSNode root,byte[] bytes,SourceCoordinates coordinates,TreeSitterSourceFrontend.Sink sink,BooleanSupplier cancelled)throws IOException {
         if(!Set.of("go","python","csharp","javascript","typescript","tsx").contains(language))return 0;
         String source=coordinates.text();
-        if(language.equals("go")&&!source.contains("Client")&&!source.contains("Register")
+        if(language.equals("go")&&!source.contains("Client")&&!source.contains("Register")&&!source.contains("Unimplemented")&&!source.contains("Server")
                 ||language.equals("python")&&!source.contains("_pb2_grpc")
                 ||language.equals("csharp")&&!source.contains("Client")&&!source.contains("Base")
                 ||Set.of("javascript","typescript","tsx").contains(language)&&!source.contains("addService")&&!source.contains("grpc.credentials"))return 0;
@@ -150,6 +150,8 @@ final class GrpcSourceSyntax {
         if(language.equals("csharp")&&!text(node).matches("(?s)^\\s*(?:(?:public|protected|internal|private|async|sealed)\\s+)*override\\b.*"))return;
         for(String service:services)emit(node,"RPC_HANDLER_CANDIDATE",service,method,Map.of("methodStyle","EXACT","trigger","GENERATED_SERVER_BASE_SYNTAX"));
     }
+    private static final Pattern GO_UNIMPLEMENTED_EMBED = Pattern.compile("(?:(?:" + ID + ")\\.)?(?:Unimplemented|Unsafe)(" + ID + ")Server");
+
     private void registrations(TSNode root)throws IOException {
         if(!language.equals("go"))return;var pending=new ArrayDeque<TSNode>();pending.push(root);
         while(!pending.isEmpty()) {
@@ -163,9 +165,32 @@ final class GrpcSourceSyntax {
                     if(type.isEmpty()&&!invalidTypeAliases.contains(alias)&&typeAliases.containsKey(alias))type=type(typeAliases.get(alias));
                     if(!type.isEmpty())serverTypes.computeIfAbsent(type,ignored->new TreeSet<>()).add(service.group(1));
                 }
+            } else if(node.getType().equals("type_spec")) {
+                var nameNode=field(node,"name");var typeNode=field(node,"type");
+                if(nameNode!=null&&typeNode!=null&&typeNode.getType().equals("struct_type")) {
+                    String structName=text(nameNode).strip();
+                    if(structName.matches(ID))collectEmbeddedGrpcServer(typeNode,structName);
+                }
             }
             if(node.getType().contains("comment")||node.getType().contains("string"))continue;
             for(int i=node.getNamedChildCount()-1;i>=0;i--)pending.push(node.getNamedChild(i));
+        }
+    }
+    private void collectEmbeddedGrpcServer(TSNode structNode,String structName) {
+        var stack=new ArrayDeque<TSNode>();stack.push(structNode);
+        while(!stack.isEmpty()) {
+            var cur=stack.pop();
+            if(cur.getType().equals("field_declaration")) {
+                if(field(cur,"name")==null&&cur.getNamedChildCount()>=1) {
+                    var fieldType=field(cur,"type");
+                    if(fieldType==null)fieldType=cur.getNamedChild(0);
+                    String raw=text(fieldType).replaceFirst("^\\*","").strip();
+                    var m=GO_UNIMPLEMENTED_EMBED.matcher(raw);
+                    if(m.matches())serverTypes.computeIfAbsent(structName,ignored->new TreeSet<>()).add(m.group(1));
+                }
+                continue;
+            }
+            for(int i=cur.getNamedChildCount()-1;i>=0;i--)stack.push(cur.getNamedChild(i));
         }
     }
     private String type(TSNode node) {

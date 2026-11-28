@@ -46,6 +46,19 @@
         <!-- Testing -->
         <dependency><groupId>org.springframework</groupId><artifactId>spring-web</artifactId><version>6.2.0</version><scope>test</scope></dependency>
         <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId><version>6.2.0</version><scope>test</scope></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-autoconfigure</artifactId><version>3.4.0</version><scope>test</scope></dependency>
+        <!-- Offline .m2 provides spring-boot-test 3.4.1; exclude spring-boot/spring-test so Spring 6.2.0 + Boot 3.4.0 satisfy Enforcer dependencyConvergence -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-test</artifactId>
+            <version>3.4.1</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion><groupId>org.springframework.boot</groupId><artifactId>spring-boot</artifactId></exclusion>
+                <exclusion><groupId>org.springframework</groupId><artifactId>spring-test</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+        <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><version>3.27.7</version><scope>test</scope></dependency>
         <dependency><groupId>com.evolution</groupId><artifactId>analyzer-execution</artifactId><version>${project.version}</version></dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -53,6 +66,48 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>online</shadedClassifierName>
+                            <outputFile>${project.build.directory}/evo-workbench.jar</outputFile>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.evolution.backend.analysis.WorkbenchApiMain</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 
     <!-- Explicit platform test classes only; never included in production artifacts. -->
     <profiles>

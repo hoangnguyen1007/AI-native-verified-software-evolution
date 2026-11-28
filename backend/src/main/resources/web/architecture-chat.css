@@ -297,14 +297,16 @@
   gap: 10px;
 }
 
-.architecture-chat-context-options > summary {
-  color: var(--wb-muted);
-  width: fit-content;
-  cursor: pointer;
+.architecture-chat-options-drawer {
+  padding: 10px 12px;
+  border: 1px solid var(--wb-rule);
+  border-radius: var(--r);
+  background: var(--wb-paper);
 }
 
-.architecture-chat-context-options[open] .architecture-chat-settings {
-  margin-top: 8px;
+.architecture-chat-options-btn[aria-expanded="true"] {
+  border-color: var(--wb-accent);
+  color: var(--wb-ink);
 }
 
 .architecture-chat-settings {

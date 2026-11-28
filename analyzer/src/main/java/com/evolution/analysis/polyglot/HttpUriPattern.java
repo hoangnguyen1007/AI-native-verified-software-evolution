@@ -38,13 +38,29 @@ public final class HttpUriPattern {
             // braces are never decoded into syntax, nor may templates name a host.
             if(templates&&(request.toLowerCase(Locale.ROOT).contains("%7b")||request.toLowerCase(Locale.ROOT).contains("%7d")))return Optional.empty();
             var uri=URI.create(templates?request.replace("{","%7B").replace("}","%7D"):request);
-            if(uri.isAbsolute()&&(!Set.of("http","https").contains(uri.getScheme())||uri.getHost()==null||uri.getRawUserInfo()!=null))return Optional.empty();
+            if(uri.isAbsolute()&&(!Set.of("http","https","lb").contains(uri.getScheme())||uri.getHost()==null||uri.getRawUserInfo()!=null))return Optional.empty();
             if(!uri.isAbsolute()&&uri.getRawAuthority()!=null)return Optional.empty();
             String path=uri.getRawPath();
             if(path!=null&&templates)path=path.replace("%7B","{").replace("%7D","}");
             if(path==null||!path.startsWith("/")||unsafe(path)||Arrays.stream(path.split("/",-1)).anyMatch(p->special(p)&&(!templates||!variable(p))))return Optional.empty();
             return Optional.of(path);
         }catch(IllegalArgumentException invalid){return Optional.empty();}
+    }
+    /** Extracts the lowercase host component from an absolute HTTP/HTTPS/LB candidate URI,
+     * omitting loopback aliases. Returns empty when relative or hostless. */
+    public static Optional<String> host(String request) {
+        if (request == null || unsafe(request)) return Optional.empty();
+        try {
+            var uri = URI.create(request.replace("{", "%7B").replace("}", "%7D"));
+            if (!uri.isAbsolute() || !Set.of("http", "https", "lb").contains(uri.getScheme())) return Optional.empty();
+            String host = uri.getHost();
+            if (host == null || host.isBlank()) return Optional.empty();
+            String lower = host.toLowerCase(Locale.ROOT);
+            if (Set.of("localhost", "127.0.0.1", "0.0.0.0").contains(lower)) return Optional.empty();
+            return Optional.of(lower);
+        } catch (IllegalArgumentException invalid) {
+            return Optional.empty();
+        }
     }
     private static boolean unsafe(String value) {
         String lower=value.toLowerCase(Locale.ROOT);

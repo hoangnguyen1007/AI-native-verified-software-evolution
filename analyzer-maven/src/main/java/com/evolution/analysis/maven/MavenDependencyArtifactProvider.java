@@ -38,6 +38,7 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
     private static final long MAX_EXPANDED_ARCHIVE_BYTES = 1_000_000_000L;
     private static final int VALIDATED_CONTENT_CACHE_MAX = 8192;
     private static final long NEGATIVE_404_TTL_MILLIS = 24L * 60 * 60 * 1000;
+    private static final long NEGATIVE_DENIED_TTL_MILLIS = 15L * 60 * 1000;
     private static final int NEGATIVE_404_CACHE_MAX = 8192;
     private static final Map<ValidatedContentKey, Boolean> VALIDATED_CONTENT_CACHE =
             Collections.synchronizedMap(new LinkedHashMap<>(512, 0.75f, true) {
@@ -47,6 +48,12 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             });
     private static final Set<Path> LOADED_VALIDATION_ROOTS = ConcurrentHashMap.newKeySet();
     private static final Map<String, Long> NEGATIVE_404_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+                    return size() > NEGATIVE_404_CACHE_MAX;
+                }
+            });
+    private static final Map<String, Long> NEGATIVE_DENIED_CACHE =
             Collections.synchronizedMap(new LinkedHashMap<>(256, 0.75f, true) {
                 @Override protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
                     return size() > NEGATIVE_404_CACHE_MAX;
@@ -148,7 +155,7 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         return true;
     }
 
-    private static void recordNegative404(Path cacheRoot, URI uri) {
+    static void recordNegative404(Path cacheRoot, URI uri) {
         long now = System.currentTimeMillis();
         String key = uri.toASCIIString();
         NEGATIVE_404_CACHE.put(key, now);
@@ -187,9 +194,46 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
         }
     }
 
+    private static boolean isNegativeDeniedCached(URI uri) {
+        Long ts = NEGATIVE_DENIED_CACHE.get(uri.toASCIIString());
+        if (ts == null) return false;
+        if (System.currentTimeMillis() - ts > NEGATIVE_DENIED_TTL_MILLIS) {
+            NEGATIVE_DENIED_CACHE.remove(uri.toASCIIString());
+            return false;
+        }
+        NEGATIVE_404_CACHE_HITS.incrementAndGet();
+        return true;
+    }
+
+    static void recordNegativeDenied(URI uri) {
+        NEGATIVE_DENIED_CACHE.put(uri.toASCIIString(), System.currentTimeMillis());
+    }
+
+    /**
+     * Returns true when every configured remote repository URI for {@code coordinate} is already
+     * covered by the deterministic negative-404/denied cache for {@code cacheRoot}.
+     */
+    public static boolean isNegativelyCachedAcrossAllRepositories(
+            Path cacheRoot, ArtifactCoordinate coordinate, List<URI> remoteRepositories) {
+        if (cacheRoot == null || coordinate == null || remoteRepositories == null || remoteRepositories.isEmpty()) {
+            return false;
+        }
+        if (!negative404CacheEnabled()) {
+            return false;
+        }
+        String rel = coordinate.repositoryPath();
+        for (URI repository : remoteRepositories) {
+            URI uri = repository.resolve(rel);
+            if (!isNegative404Cached(cacheRoot, uri) && !isNegativeDeniedCached(uri)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static DependencyAcquisitionPolicy defaultPolicy(List<URI> remoteRepositories) {
         return new DependencyAcquisitionPolicy(4096, 64_000_000L, DEFAULT_MAX_TOTAL_BYTES, 64,
-                remoteRepositories, 5_000, 15_000, 1, 8);
+                remoteRepositories, 5_000, 15_000, 1, 16);
     }
 
     private final Path selectedCacheRoot;
@@ -428,13 +472,31 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             AttemptCounter counter) {
         ArtifactCoordinate coordinate = requirement.coordinate();
         FailureReason lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
-        for (URI repository : policy.remoteRepositories()) {
+        List<URI> repos = policy.remoteRepositories();
+        for (int repoIdx = 0; repoIdx < repos.size(); repoIdx++) {
+            URI repository = repos.get(repoIdx);
             URI uri = repository.resolve(coordinate.repositoryPath());
             if (remoteTransport == SHARED_TRANSPORT && negative404CacheEnabled() && isNegative404Cached(root, uri)) {
                 attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
                         uri.toASCIIString(), AttemptOutcome.UNAVAILABLE, Optional.empty()));
                 lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
                 continue;
+            }
+            if (remoteTransport == SHARED_TRANSPORT && negative404CacheEnabled() && isNegativeDeniedCached(uri)) {
+                attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                        uri.toASCIIString(), AttemptOutcome.DENIED, Optional.empty()));
+                lastFailure = FailureReason.CREDENTIALS_REQUIRED;
+                continue;
+            }
+            // When primary repository (index 0) misses and multiple fallback repositories remain,
+            // probe uncached fallback repositories in parallel on virtual threads and commit strictly
+            // in policy.remoteRepositories() priority order so missing coordinates do not pay N serial RTTs.
+            if (repoIdx == 1 && repos.size() > 2 && repos.size() <= 8 && fastDepsEnabled() && budget.remaining() > 0) {
+                Outcome parallelOutcome = acquireFallbackReposParallel(
+                        root, requirement, policy, repos.subList(1, repos.size()), budget, attempts, counter);
+                if (parallelOutcome != null) {
+                    return parallelOutcome;
+                }
             }
             for (int retry = 0; retry <= policy.maxRetries(); retry++) {
                 boolean mayRetry = retry < policy.maxRetries();
@@ -457,6 +519,9 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
                         break;
                     }
                     if (response.statusCode() == 401 || response.statusCode() == 403) {
+                        if (remoteTransport == SHARED_TRANSPORT && negative404CacheEnabled()) {
+                            recordNegativeDenied(uri);
+                        }
                         attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
                                 uri.toASCIIString(), AttemptOutcome.DENIED, Optional.empty()));
                         lastFailure = FailureReason.CREDENTIALS_REQUIRED;
@@ -542,6 +607,239 @@ public final class MavenDependencyArtifactProvider implements DependencyArtifact
             }
         }
         return failed(requirement, lastFailure);
+    }
+
+    private record FallbackStep(AttemptOutcome outcome, long bytesConsumed) {}
+
+    private record FallbackResult(
+            URI uri,
+            List<FallbackStep> steps,
+            boolean succeeded,
+            byte[] winnerBytes,
+            ContentDigest winnerDigest,
+            FailureReason lastFailure,
+            boolean terminalSizeExceeded) {}
+
+    /**
+     * Probes secondary authorized repositories concurrently on virtual threads, then commits
+     * outcomes, per-retry attempts, and byte budgets strictly in {@code fallbacks} declaration order
+     * (exact semantic, retry, and ledger parity with sequential probing without paying serial RTTs).
+     */
+    private Outcome acquireFallbackReposParallel(
+            Path root,
+            DependencyAcquisitionRequest.Requirement requirement,
+            DependencyAcquisitionPolicy policy,
+            List<URI> fallbacks,
+            Budget budget,
+            List<Attempt> attempts,
+            AttemptCounter counter) {
+        ArtifactCoordinate coordinate = requirement.coordinate();
+        int count = fallbacks.size();
+        long perRepoCap = Math.min(policy.maxArtifactBytes(), budget.remaining());
+        boolean useNegCache = remoteTransport == SHARED_TRANSPORT && negative404CacheEnabled();
+        var futures = new ArrayList<Future<FallbackResult>>(count);
+        try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (URI repository : fallbacks) {
+                URI uri = repository.resolve(coordinate.repositoryPath());
+                if (useNegCache && isNegative404Cached(root, uri)) {
+                    futures.add(CompletableFuture.completedFuture(new FallbackResult(
+                            uri, List.of(new FallbackStep(AttemptOutcome.UNAVAILABLE, 0L)),
+                            false, null, null, FailureReason.ARTIFACT_NOT_FOUND, false)));
+                    continue;
+                }
+                if (useNegCache && isNegativeDeniedCached(uri)) {
+                    futures.add(CompletableFuture.completedFuture(new FallbackResult(
+                            uri, List.of(new FallbackStep(AttemptOutcome.DENIED, 0L)),
+                            false, null, null, FailureReason.CREDENTIALS_REQUIRED, false)));
+                    continue;
+                }
+                futures.add(exec.submit(() -> probeSingleFallback(root, requirement, uri, perRepoCap, policy, useNegCache)));
+            }
+
+            FailureReason lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
+            for (int i = 0; i < count; i++) {
+                FallbackResult probe;
+                try {
+                    probe = futures.get(i).get();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    for (int j = i + 1; j < count; j++) futures.get(j).cancel(true);
+                    return failed(requirement, FailureReason.FETCH_TIMEOUT);
+                } catch (ExecutionException ee) {
+                    probe = new FallbackResult(
+                            fallbacks.get(i).resolve(coordinate.repositoryPath()),
+                            List.of(new FallbackStep(AttemptOutcome.FAILED, 0L)),
+                            false, null, null, FailureReason.NETWORK_FAILURE, false);
+                }
+
+                // Replay every non-winning retry/failure attempt step in exact order with byte budget enforcement.
+                for (FallbackStep step : probe.steps()) {
+                    if (step.bytesConsumed() > 0L) {
+                        try {
+                            budget.consume(step.bytesConsumed());
+                        } catch (ReadLimitExceeded limit) {
+                            attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                                    probe.uri().toASCIIString(), AttemptOutcome.LIMIT_EXCEEDED, Optional.empty()));
+                            for (int j = i + 1; j < count; j++) futures.get(j).cancel(true);
+                            return failed(requirement, FailureReason.SIZE_EXCEEDED);
+                        }
+                    }
+                    attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                            probe.uri().toASCIIString(), step.outcome(), Optional.empty()));
+                }
+
+                if (probe.terminalSizeExceeded()) {
+                    for (int j = i + 1; j < count; j++) futures.get(j).cancel(true);
+                    return failed(requirement, FailureReason.SIZE_EXCEEDED);
+                }
+
+                if (!probe.succeeded()) {
+                    lastFailure = probe.lastFailure();
+                    if (lastFailure == FailureReason.FETCH_TIMEOUT && Thread.currentThread().isInterrupted()) {
+                        for (int j = i + 1; j < count; j++) futures.get(j).cancel(true);
+                        return failed(requirement, FailureReason.FETCH_TIMEOUT);
+                    }
+                    // Do NOT cancel lower-priority futures: fall through cleanly to mirror i+1.
+                    continue;
+                }
+
+                // Digest + archive/POM validation already succeeded inside probeSingleFallback.
+                // Enforce byte budget BEFORE canceling lower-priority mirrors or promoting to cache.
+                byte[] bytes = probe.winnerBytes();
+                ContentDigest digest = probe.winnerDigest();
+                try {
+                    budget.consume(bytes.length);
+                } catch (ReadLimitExceeded limit) {
+                    attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                            probe.uri().toASCIIString(), AttemptOutcome.LIMIT_EXCEEDED, Optional.empty()));
+                    for (int j = i + 1; j < count; j++) futures.get(j).cancel(true);
+                    return failed(requirement, FailureReason.SIZE_EXCEEDED);
+                }
+
+                // Exact priority winner validated & within budget: now cancel lower-priority in-flight probes.
+                for (int j = i + 1; j < count; j++) futures.get(j).cancel(true);
+                try {
+                    Artifact artifact = promote(root, coordinate, bytes, digest);
+                    attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                            probe.uri().toASCIIString(), AttemptOutcome.SUCCEEDED, Optional.of(digest)));
+                    return success(requirement, artifact);
+                } catch (AcquisitionFailure failure) {
+                    attempts.add(attempt(counter, coordinate, Origin.REMOTE_REPOSITORY,
+                            probe.uri().toASCIIString(), attemptOutcome(failure.reason), Optional.empty()));
+                    return failed(requirement, failure.reason);
+                }
+            }
+            return failed(requirement, lastFailure);
+        }
+    }
+
+    private FallbackResult probeSingleFallback(
+            Path root,
+            DependencyAcquisitionRequest.Requirement requirement,
+            URI uri,
+            long maxBytes,
+            DependencyAcquisitionPolicy policy,
+            boolean useNegCache) {
+        ArtifactCoordinate coordinate = requirement.coordinate();
+        var steps = new ArrayList<FallbackStep>(policy.maxRetries() + 1);
+        FailureReason lastFailure = FailureReason.ARTIFACT_NOT_FOUND;
+        for (int retry = 0; retry <= policy.maxRetries(); retry++) {
+            boolean mayRetry = retry < policy.maxRetries();
+            try {
+                if (maxBytes < 1L) throw new RemoteLimitExceeded();
+                RemoteResponse response = remoteTransport.fetch(
+                        uri, maxBytes, policy.connectTimeoutMillis(), policy.readTimeoutMillis());
+                byte[] bytes = response.rawBytes();
+                if (bytes.length > maxBytes) throw new RemoteLimitExceeded();
+
+                int code = response.statusCode();
+                if (code == 404 || code == 410) {
+                    if (useNegCache) recordNegative404(root, uri);
+                    steps.add(new FallbackStep(AttemptOutcome.UNAVAILABLE, bytes.length));
+                    return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                            FailureReason.ARTIFACT_NOT_FOUND, false);
+                }
+                if (code == 401 || code == 403) {
+                    if (useNegCache) recordNegativeDenied(uri);
+                    steps.add(new FallbackStep(AttemptOutcome.DENIED, bytes.length));
+                    return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                            FailureReason.CREDENTIALS_REQUIRED, false);
+                }
+                if (code >= 300 && code < 400) {
+                    steps.add(new FallbackStep(AttemptOutcome.DENIED, bytes.length));
+                    return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                            FailureReason.REMOTE_RESPONSE_DENIED, false);
+                }
+                if (code != 200) {
+                    steps.add(new FallbackStep(AttemptOutcome.FAILED, bytes.length));
+                    lastFailure = FailureReason.NETWORK_FAILURE;
+                    if (mayRetry && code >= 500) {
+                        if (!pause(retry)) {
+                            return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                                    FailureReason.FETCH_TIMEOUT, false);
+                        }
+                        continue;
+                    }
+                    return new FallbackResult(uri, List.copyOf(steps), false, null, null, lastFailure, false);
+                }
+
+                ContentDigest digest = ContentDigest.sha256(bytes);
+                if (requirement.expectedDigest().isPresent()
+                        && !requirement.expectedDigest().orElseThrow().equals(digest)) {
+                    steps.add(new FallbackStep(AttemptOutcome.FAILED, bytes.length));
+                    return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                            FailureReason.DIGEST_MISMATCH, false);
+                }
+                try {
+                    validateCachedOrFull(root, coordinate, digest, bytes, FailureReason.CORRUPTED_DOWNLOAD);
+                } catch (AcquisitionFailure failure) {
+                    steps.add(new FallbackStep(AttemptOutcome.FAILED, bytes.length));
+                    lastFailure = failure.reason;
+                    if (mayRetry) {
+                        if (!pause(retry)) {
+                            return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                                    FailureReason.FETCH_TIMEOUT, false);
+                        }
+                        continue;
+                    }
+                    return new FallbackResult(uri, List.copyOf(steps), false, null, null, lastFailure, false);
+                }
+                // Validated candidate! Caller commits byte budget, cancels lower-priority probes, and promotes.
+                return new FallbackResult(uri, List.copyOf(steps), true, bytes, digest, lastFailure, false);
+            } catch (RemoteLimitExceeded limit) {
+                steps.add(new FallbackStep(AttemptOutcome.LIMIT_EXCEEDED, 0L));
+                return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                        FailureReason.SIZE_EXCEEDED, true);
+            } catch (HttpTimeoutException timeout) {
+                steps.add(new FallbackStep(AttemptOutcome.FAILED, 0L));
+                lastFailure = FailureReason.FETCH_TIMEOUT;
+                if (mayRetry) {
+                    if (!pause(retry)) {
+                        return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                                FailureReason.FETCH_TIMEOUT, false);
+                    }
+                    continue;
+                }
+                return new FallbackResult(uri, List.copyOf(steps), false, null, null, lastFailure, false);
+            } catch (IOException io) {
+                steps.add(new FallbackStep(AttemptOutcome.FAILED, 0L));
+                lastFailure = FailureReason.NETWORK_FAILURE;
+                if (mayRetry) {
+                    if (!pause(retry)) {
+                        return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                                FailureReason.FETCH_TIMEOUT, false);
+                    }
+                    continue;
+                }
+                return new FallbackResult(uri, List.copyOf(steps), false, null, null, lastFailure, false);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                steps.add(new FallbackStep(AttemptOutcome.FAILED, 0L));
+                return new FallbackResult(uri, List.copyOf(steps), false, null, null,
+                        FailureReason.FETCH_TIMEOUT, false);
+            }
+        }
+        return new FallbackResult(uri, List.copyOf(steps), false, null, null, lastFailure, false);
     }
 
     private Artifact promote(Path root, ArtifactCoordinate coordinate, byte[] bytes, ContentDigest digest)

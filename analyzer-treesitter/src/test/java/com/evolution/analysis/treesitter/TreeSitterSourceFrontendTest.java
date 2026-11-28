@@ -644,4 +644,59 @@ class TreeSitterSourceFrontendTest {
         assertEquals(0, summary.errors());
         assertTrue(afterCancelFacts.stream().anyMatch(f -> f.category().equals("ROUTE_CANDIDATE")));
     }
+
+    @Test
+    void splitFileGoUnimplementedEmbedDottedPythonHttpClientAndGoVarSpecResolve() throws Exception {
+        var frontend = new TreeSitterSourceFrontend();
+
+        // F6a: Go struct embedding Unimplemented*Server without Register* in same file
+        String goGrpc = """
+                package main
+                type productCatalog struct {
+                    pb.UnimplementedProductCatalogServiceServer
+                }
+                func (p *productCatalog) ListProducts(ctx context.Context, req *pb.Empty) (*pb.ListProductsResponse, error) {
+                    return nil, nil
+                }
+                """;
+        var grpcFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        frontend.parse("go", goGrpc.getBytes(StandardCharsets.UTF_8), grpcFacts::add, () -> false);
+        var grpcHandlers = grpcFacts.stream().filter(f -> f.category().equals("RPC_HANDLER_CANDIDATE")).toList();
+        assertEquals(1, grpcHandlers.size(), () -> "Split-file Go Unimplemented embed missing: " + grpcFacts);
+        assertEquals("ProductCatalogService", grpcHandlers.getFirst().attributes().get("service"));
+        assertTrue(goGrpc.substring(grpcHandlers.getFirst().span().start(), grpcHandlers.getFirst().span().end())
+                .contains("func (p *productCatalog) ListProducts"));
+
+        // F6b: Python dotted client receiver (e.g. Locust self.client / l.client)
+        String pyLocust = """
+                def browse(l):
+                    l.client.get("/")
+                class User:
+                    def checkout(self):
+                        self.client.post("/cart")
+                """;
+        var pyFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        frontend.parse("python", pyLocust.getBytes(StandardCharsets.UTF_8), pyFacts::add, () -> false);
+        var pyCalls = pyFacts.stream().filter(f -> f.category().equals("HTTP_CALL_CANDIDATE")).toList();
+        assertEquals(2, pyCalls.size(), () -> "Dotted Python HTTP client calls missing: " + pyFacts);
+        assertEquals(Set.of("GET", "POST"),
+                pyCalls.stream().map(f -> f.attributes().get("method")).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(pyFacts.stream().noneMatch(f -> f.category().equals("ROUTE_CANDIDATE")));
+
+        // F6b: Go var_spec + Gorilla Mux string concatenation
+        String goVar = """
+                package main
+                var baseUrl = ""
+                func routes(r *mux.Router) {
+                    basePrefix := "/v1"
+                    r.HandleFunc(baseUrl + "/cart", h).Methods("POST")
+                    r.HandleFunc(basePrefix + "/items", h)
+                }
+                """;
+        var goVarFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        frontend.parse("go", goVar.getBytes(StandardCharsets.UTF_8), goVarFacts::add, () -> false);
+        var routes = goVarFacts.stream().filter(f -> f.category().equals("ROUTE_CANDIDATE")).map(TreeSitterSourceFrontend.Fact::name).toList();
+        assertTrue(routes.contains("\"/cart\""), () -> "Missing Go var_spec concat route /cart in " + routes);
+        assertTrue(routes.contains("\"/v1/items\""), () -> "Missing Go short_var concat route /v1/items in " + routes);
+    }
 }

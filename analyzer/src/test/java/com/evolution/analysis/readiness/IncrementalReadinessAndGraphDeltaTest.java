@@ -119,11 +119,59 @@ class IncrementalReadinessAndGraphDeltaTest {
     }
 
     @Test
-    void diskSpillHeuristicTriggersAtLoweredBounds() {
-        assertFalse(UniversalArchitecturePipeline.shouldUseDiskSpill(15_999_999L, 399, 7));
-        assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(16_000_000L, 10, 1));
-        assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(1_000L, 400, 1));
-        assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(1_000L, 10, 8));
+    void incrementalGraphProjectorDiskCachePersistsAndRecoversAcrossInstances(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path cacheDir) throws Exception {
+        var builder = new CanonicalGraphBuilder();
+        var inputA = syntheticMultiModuleGraphInput("package a; class App { int x() { return 1; } }");
+        var projector1 = new IncrementalGraphProjector(cacheDir);
+        KnowledgeGraph graphA = builder.build(inputA, List.of(), false, projector1);
+        assertEquals(3, projector1.stats().rebuiltContexts());
+
+        // Fresh projector simulating a new CLI JVM invocation reading .gt2 cache from disk
+        var inputC = syntheticMultiModuleGraphInput(
+                "package a; class App { int x() { return 42; } int y() { return 7; } }", 35);
+        var projector2 = new IncrementalGraphProjector(cacheDir);
+        KnowledgeGraph incC = builder.build(inputC, List.of(), false, projector2);
+        KnowledgeGraph cleanC = builder.build(inputC, List.of(), false, null);
+        assertEquals(2, projector2.stats().reusedContexts(), "Unchanged modules must hit disk .gt2 templates across processes");
+        assertEquals(1, projector2.stats().rebuiltContexts(), "Changed module must rebuild");
+        assertEquals(cleanC.identity(), incC.identity());
+        assertNotEquals(graphA.identity(), incC.identity());
+
+        // Corrupting a disk .gt2 template fails closed and recomputes bit-identically
+        List<java.nio.file.Path> templates;
+        try (var stream = java.nio.file.Files.list(cacheDir)) {
+            templates = stream.filter(p -> p.toString().endsWith(".gt2")).sorted().toList();
+        }
+        assertTrue(templates.size() >= 3);
+        java.nio.file.Files.writeString(templates.getFirst(), "corrupt-gt2-bytes");
+        var projector3 = new IncrementalGraphProjector(cacheDir);
+        KnowledgeGraph recovered = builder.build(inputC, List.of(), false, projector3);
+        assertEquals(cleanC.identity(), recovered.identity());
+        assertEquals(2, projector3.stats().reusedContexts());
+        assertEquals(1, projector3.stats().rebuiltContexts());
+    }
+
+    @Test
+    void diskSpillHeuristicUsesHeapAwareAdaptiveBoundsAndPropertyOverrides() {
+        long fourGiB = 4L * 1024 * 1024 * 1024;
+        // TeaStore-scale (409 files, 11 contexts) and Shopizer-scale (1340 files, 12 contexts) stay in memory
+        assertFalse(UniversalArchitecturePipeline.shouldUseDiskSpill(8_000_000L, 409, 11, fourGiB));
+        assertFalse(UniversalArchitecturePipeline.shouldUseDiskSpill(12_000_000L, 1_340, 12, fourGiB));
+
+        // Adaptive 4 GiB heap bytes bound = max(64MB, 4GiB/16) = 256 MiB
+        assertFalse(UniversalArchitecturePipeline.shouldUseDiskSpill(200_000_000L, 1_000, 16, fourGiB));
+        assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(268_435_456L, 10, 1, fourGiB));
+        assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(1_000L, 5_000, 1, fourGiB));
+        assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(1_000L, 10, 64, fourGiB));
+
+        // Property overrides for deterministic ablation / testing
+        System.setProperty("evo.spill.minFiles", "1");
+        try {
+            assertTrue(UniversalArchitecturePipeline.shouldUseDiskSpill(1_000L, 1, 1, fourGiB));
+        } finally {
+            System.clearProperty("evo.spill.minFiles");
+        }
     }
 
     private static CanonicalGraphInput syntheticMultiModuleGraphInput(String modACode) {

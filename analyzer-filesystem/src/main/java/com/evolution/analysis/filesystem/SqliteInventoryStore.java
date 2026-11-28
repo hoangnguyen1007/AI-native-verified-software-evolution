@@ -631,10 +631,15 @@ public final class SqliteInventoryStore implements InventoryReader, JobJournal, 
                 do {
                     var page = page(revision, 1000, cursor);
                     for (var entry : page.entries()) {
-                        if (entry.disposition() == InventoryEntry.Disposition.PENDING || entry.disposition() == InventoryEntry.Disposition.GAP)
+                        boolean submoduleGap = entry.kind() == InventoryEntry.Kind.GITLINK
+                                && entry.disposition() == InventoryEntry.Disposition.GAP
+                                && entry.problem().filter("SUBMODULE_COMMIT_REQUIRED"::equals).isPresent();
+                        if (entry.disposition() == InventoryEntry.Disposition.PENDING
+                                || (entry.disposition() == InventoryEntry.Disposition.GAP && !submoduleGap))
                             throw new IOException("INVENTORY_FRONTIER_OPEN");
                         if (!first) writer.write(','); first = false;
                         CanonicalJson.writeTo(entry, writer); count = Math.addExact(count, 1);
+                        if (submoduleGap) { compatible = false; continue; }
                         if (entry.disposition() == InventoryEntry.Disposition.EXCLUDED) { excluded = Math.addExact(excluded, 1); continue; }
                         if (entry.content().isPresent()) {
                             ContentHandle h = entry.content().orElseThrow();

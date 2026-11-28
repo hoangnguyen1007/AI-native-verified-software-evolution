@@ -8,7 +8,7 @@ Build a deterministic, evidence-first platform that understands repositories thr
 
 **CONFIRMED by the human owner on 2026-09-04 and re-affirmed with full universal scope expansion on 2026-09-18:** the platform adapts to understand each repository as deeply as safely and truthfully possible; it does not require repositories to conform to one analyzer assumption. There are **no artificial restrictions or "forbidden zones"**; the platform must not be shackled by narrow academic assumptions or artificial boundaries that declare common real-world code "unsupported". Prefer maximum capability, minimum assumptions, progressive evidence acquisition, explicit uncertainty, and zero silent omission.
 
-The platform targets student/plain Java, legacy and modern apps, multi-build reactors, generated-code-heavy systems, enterprise monorepos, polyglot workspaces, binary/resource inputs and incomplete environments. **CONFIRMED human scope change (2026-10-17):** M8.4 includes actual semantic engines for individual non-Java languages, isolated target builds and comprehensive acquisition without fixed total-repository ceilings. This supersedes the inventory-only language clarification of 2026-09-23. [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) and the [M8.4 contract](architecture/m8-repository-readiness.md) govern the expansion; implementation and empirical acceptance remain pending. The existing 98–99% aspiration is an empirical target on preregistered cohorts, not a worldwide measured fact. Syntax, platform API, framework version and mechanism support are verified separately; finite SAT cannot guarantee infinite-domain or millisecond worst-case solving.
+The platform targets student/plain Java, legacy and modern apps, multi-build reactors, generated-code-heavy systems, enterprise monorepos, polyglot workspaces, binary/resource inputs and incomplete environments. **CONFIRMED human scope change (2026-10-17; M8.4 closed 2026-11-10):** M8.4 added semantic engines for individual non-Java languages, isolated target builds and comprehensive acquisition without fixed total-repository ceilings, superseding the earlier 2026-09-23 inventory-only boundary. [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) and the [M8.4 contract](architecture/m8-repository-readiness.md) govern that foundation; M8.4 closed at the Final Architectural Recovery Baseline within recorded bounds, while Batches 3–11 and [SuperPlan v2](evo-sota-superplan-v2.md) continue closing remaining scale, soundness, and blind-generalization frontiers. The existing 98–99% aspiration is an empirical target on preregistered cohorts, not a worldwide measured fact. Syntax, platform API, framework version and mechanism support are verified separately; finite SAT cannot guarantee infinite-domain or millisecond worst-case solving.
 
 **Autonomous Reasoning & Capability-Driven Specification Mandate:** Documentation declares required capabilities, coverage outcomes, boundaries and verifiable invariants. Implementers choose internal algorithms and structures within those contracts. Historical Universal v1 had two slices and [Universal v2](tasks/m4-universal-v2/README.md) had three tasks. The current [M8.4 plan](tasks/m8/04-comprehensive-repository-readiness.md) has exactly six steps with detailed internal checklists. A checklist is not an additional task; smaller task count cannot remove coverage or correctness controls.
 
@@ -20,11 +20,12 @@ Milestone scope sequences implementation delivery, but never serves as a ceiling
 
 ## Delivery Context
 
-**CONFIRMED human decision (2026-11-15):** deliver one [full-pipeline demo](roadmap.md#full-pipeline-demo) across the former SE121, SE122 and KLTN boundaries. Track A and Track B are the existing analysis, product and evolution foundations. The same demo adds graph-guided AI diagnosis, repair planning and patch/refactoring, isolated differential and targeted mutation verification, and local Verified PR/CI output. See [ADR-011](decisions/ADR-011-full-pipeline-demo.md) for the G7/M11 closure and the verification policy.
+**CONFIRMED Dual-Track Direction (2026-11-15 through 2026-11-28):** Evo serves two aligned goals on one deterministic Software Knowledge Graph core:
 
-The pinned delivery prioritized finishing the integrated journey with a small, reproducible setup. The comprehensive-coverage mandate and evidence, safety and correctness invariants remain in force. Verification is proportional to the behavior changed and the claim made; campaigns, publication packaging and enterprise qualification are separate work only when needed.
+1. **Product Track (Online Web App + CLI + MCP):** Building on the completed [full-pipeline demo](roadmap.md#full-pipeline-demo) ([ADR-011](decisions/ADR-011-full-pipeline-demo.md)) and the 2026-11-16 [captured-repository repair](architecture/captured-repository-repair.md) direction, the **confirmed 2026-11-27 human override** focuses active product delivery on the **Online Web App Workbench** (`backend/target/evo-workbench.jar`, Docker `evo-workbench-online:latest`, Vanilla HTML/CSS/JS + Cytoscape + Lucian UI in `backend/src/main/resources/web/`, Streamable HTTP MCP `2025-11-25`). The `cli` module stays preserved for compatibility and `E0` benchmark parity without new CLI feature scope unless explicitly requested.
+2. **Scientific Research Track (CORE A* / Q1):** Governed by [SuperPlan v2](evo-sota-superplan-v2.md), the curated 19-paper [SOTA Paper Library](paper/README.md) ([catalog.json](paper/catalog.json)), [19-Paper SOTA Deep Synthesis](research/sota-19-paper-deep-synthesis.md), and [Comparative Evaluation Report v7](evo-comparative-evaluation-report.md). Enforces strict anti-overfitting (`I5`), blind holdouts, 3-way timing decomposition, and isolated execution (`I1`) while keeping routine Product SWE verification fast (`T0–T3` in [docs/testing.md](testing.md)).
 
-**CONFIRMED human direction (2026-11-16):** move backend repair beyond the completed fixture. Provide usable recipes and optional AI-written edits, then check changed source with a compiler before generating a Git patch. Use captured inputs and retain the distinction between syntax, verified correctness and unsupported cases. The [repository repair contract](architecture/captured-repository-repair.md) describes the current scope and operating boundary; the earlier fixture's evidence remains intact.
+The comprehensive-coverage mandate and evidence, safety, quarantine (`canonicalLeakage = 0`), and correctness invariants remain in force across both tracks.
 
 ## Durable Architectural Constraints
 
@@ -74,63 +75,43 @@ Lower-authority claims cannot become confirmed without higher-authority evidence
 
 | Decision | Status |
 |---|---|
-| Java 21 compile baseline | CONFIRMED |
-| Maven and monorepo | CONFIRMED |
-| Single full-pipeline demo on Track A + Track B | CONFIRMED (2026-11-15); see ADR-011 |
-| JavaParser + SymbolSolver behind SemanticFrontend | CONFIRMED human choice (2026-09-02); G2 subsequently recorded PASSED in current state; see ADR-001 |
-| OpenRewrite | Existing independent comparator; a bounded transformation route is in demo scope, implementation pending |
-| Storage-neutral canonical graph | CONFIRMED direction; detailed schema pending |
-| Neo4j Community adapter | PROVISIONAL/experimental |
-| Typed external policy representation | Approved direction; exact format pending |
-| CLI-first product path | Approved direction |
-| Spring Boot backend | PROVISIONAL |
-| Cytoscape.js workbench visualization | PROVISIONAL |
-| Complete visual architecture-intelligence workbench | CONFIRMED product outcome |
-| Explainable architecture score plus separate analysis confidence | CONFIRMED direction; exact formula PROVISIONAL |
-| Progressive evidence providers | Passive baseline and Universal v2 imports delivered within recorded scope; M8.4 isolated target execution authorized, design PROVISIONAL and implementation pending |
-| Polyglot semantic engines and scalable readiness | CONFIRMED M8.4 scope expansion; native engine/CAS/VM adapter choices PROVISIONAL under ADR-007 |
-| Staged conditional architecture semantics for M4+ | ACCEPTED direction and bounded M4B–D implementation; empirical G3 acceptance pending; see ADR-004/current state |
-| Solver backend for configuration reasoning | Pure-Java DPLL and exhaustive backends implemented within recorded fragment; broader performance/coverage unmeasured |
-| Deployment federation, cross-system assurance, and production verified evolution | Broader horizons beyond the local demo |
+| Java 21 compile baseline & Maven 3.9.16 monorepo (8 reactor modules) | CONFIRMED |
+| Dual-track Online Web App product + CORE A*/Q1 research roadmap | CONFIRMED (2026-11-27 / 2026-11-28); see [SuperPlan v2](evo-sota-superplan-v2.md) & [ADR-011](decisions/ADR-011-full-pipeline-demo.md) |
+| JavaParser + SymbolSolver (`3.28.2`) behind `SemanticFrontend` | CONFIRMED human choice; `G2 PASSED` (`2026-09-10`); see [ADR-001](decisions/ADR-001-parser-technology.md) |
+| OpenRewrite (`rewrite-java:8.87.7` in `backend/pom.xml`) | CONFIRMED; deterministic repair recipes implemented; compound refactoring expansion in `WP4.3` |
+| Storage-neutral canonical SKG + SQLite WAL / CAS / partitioned persistence | CONFIRMED; `G4 PASSED` (`2026-10-15`); chunked symbolic artifact storage in `WP0.2` (`B3`) |
+| Neo4j Community adapter | PROVISIONAL / optional adapter |
+| Typed policy compilation, Evidence Bundles & explainable Score v2 | CONFIRMED; `G5 PASSED` (`2026-10-15`); score parameters frozen under [ADR-002](decisions/ADR-002-product-outcome-and-explainable-assessment.md) |
+| Online Web App primary product + preserved CLI compatibility | CONFIRMED (`2026-11-27` override; supersedes earlier CLI-first phrasing): standalone `evo-workbench.jar`, Docker `evo-workbench-online:latest`, Streamable HTTP MCP `2025-11-25` |
+| Backend HTTP & Web Workbench UI stack | CONFIRMED lightweight JDK HTTP server (`WorkbenchApiMain`) + Vanilla HTML/CSS/JS + Cytoscape.js + Lucian (`backend/src/main/resources/web/`); no React/Astryx/Spring Boot web server currently used |
+| Progressive evidence providers & isolated target execution | M8.4 Core MVP isolated workers (`Docker`/`QEMU`/`Hyper-V`) delivered within recorded bounds under [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md); unrestricted executor certification remains distinct |
+| Polyglot semantic engines & SCIP interoperability | Tree-sitter `0.26.6` (`16` native grammars), JAX-RS/Servlet, SCIP protobuf (`81k occ/s`), and passive cloud-native topology implemented; large-scale streaming/blind holdout in `WP0.2`–`WP1.1` |
+| Staged conditional Spring semantics & solver backend | `G3 PASSED` (`2026-10-14`); passive ASM starter scanner (`BytecodeAutoConfigScanner`), directed COI slicer, pure-Java CDCL (`IncrementalCdclReasoner`), and 4-valued Kleene cubes implemented; `WP0.1` closes remaining `B5` fixes & real `ApplicationContextRunner` oracle (`E5-v3`) |
+| Quarantined AI/advisory overlays (`AdvisoryOverlayService`) | CONFIRMED (`canonicalLeakage = 0`, `llm-redact:v2` `15/15` secrets redacted); graph-grounded `TacitMemoryStore` planned in Phase 3 |
+| Deployment federation & cross-system production assurance | Broader horizons beyond current demonstrated scope |
 
 ## Document Responsibilities
 
-- `AGENTS.md`: canonical project operating contract
-- `docs/project-context.md`: durable identity, scope, authority, and constraints
-- `docs/roadmap.md`: future milestones, gates, tracks, sequencing, and fallback
-- `docs/current-state.md`: concise operational truth now
+- `AGENTS.md`: lean canonical project operating contract (`< 12 KB`, zero truncation)
+- `docs/project-context.md`: durable identity, scope, authority, and architectural constraints
+- `docs/roadmap.md`: dual-track direction, historical milestones/gates, and publication trajectory
+- `docs/current-state.md`: concise live operational truth (`<= 8 KB`); full historical log archived at `docs/archive/current-state-history-2026-11.md`
+- `docs/testing.md`: empirically measured `T0–T4` verification matrix, PowerShell 5.1 Maven/Node discipline, and native campaign runbooks
+- `docs/evo-sota-superplan-v2.md`: canonical CORE A*/Q1 scientific research & implementation roadmap (`WP0.1–WP4.4`)
+- `docs/evo-comparative-evaluation-report.md`: empirical comparative benchmark report (`v7`)
+- `docs/paper/README.md` & `docs/paper/catalog.json`: Git-tracked index for the 19-paper SOTA library (raw PDFs are local/gitignored)
 - `docs/decisions/`: rationale for consequential approved decisions
 - `docs/architecture/`: current contracts, semantics, boundaries, schemas, and invariants
-- `docs/architecture/m3-workspace-build-model.md`: provisional M3 workspace, safe Maven model, exact classpath, and platform decoupling contract
-- `docs/architecture/evidence-acquisition.md`: provisional M3+ capability-gap, acquisition-attempt, and provider-conflict contract
-- `docs/architecture/m8-repository-readiness.md`: M8.4 acquisition, isolated execution, polyglot semantics, resource and completion contracts
-- `docs/tasks/m8/04-comprehensive-repository-readiness.md`: six-step M8.4 implementation plan and exit criteria
-- `docs/architecture/m4-spring-intelligence.md`: provisional M4 Spring domain model and versioned closed mechanism denominator
-- `docs/architecture/m4-universal-v2.md`: planned adaptive intake/evidence/semantic integration contract; coverage catalog is the required-case companion
-- `docs/tasks/m4-universal-v2/`: historical three-task execution plan and shared index
-- `docs/architecture/m4-r0-semantics-gate.md`: reviewable R0 identity/fragment/version/order contract candidate spanning Spring 1.x XML through Boot 3.4.x
-- `docs/architecture/conditional-architecture-semantics.md`: canonical M4+ configuration-space, staged registration, truth-region, witness, policy and evolution semantics
-- `docs/architecture/product-outcome.md`: canonical product, metric, scoring, visualization, and acceptance contract
-- `docs/research/`: methods and evidence, not project progress
-- Former `roadmap_for_user.md` and `roadmap_for_user_vi.md` review snapshots are absent from the current checkout. Use `docs/roadmap.md` for direction and `docs/current-state.md` for operational status.
+- `docs/research/`: empirical evaluation reports, SOTA synthesis, and methodology (no progress diary)
 
 ## Related Documents
 
-- [Current State](current-state.md)
-- [Roadmap](roadmap.md)
-- [Architecture Overview](architecture/architecture.md)
-- [Knowledge Graph](architecture/knowledge-graph.md)
-- [M1 Contracts](architecture/m1-contracts.md)
-- [M3 Workspace and Build-Model Contract](architecture/m3-workspace-build-model.md)
-- [Progressive Evidence Acquisition Contract](architecture/evidence-acquisition.md)
-- [M4 Spring Intelligence and Closed Mechanism Taxonomy](architecture/m4-spring-intelligence.md)
-- [Conditional Architecture Semantics](architecture/conditional-architecture-semantics.md)
-- [Product Outcome and Workbench Contract](architecture/product-outcome.md)
-- [ADR-002: Complete Visual Product and Explainable Assessment](decisions/ADR-002-product-outcome-and-explainable-assessment.md)
-- [ADR-003: Progressive Evidence Acquisition](decisions/ADR-003-progressive-evidence-acquisition.md)
-- [ADR-004: Staged Conditional Architecture Semantics](decisions/ADR-004-staged-conditional-architecture-semantics.md)
-- [ADR-005: M4 Universal v2](decisions/ADR-005-m4-universal-v2.md)
-- [M4 Universal v2 task plan](tasks/m4-universal-v2/README.md)
-- [Conditional Architecture Redirection Review](research/2026-09-09-conditional-architecture-redirection-review.md)
-- [Research Questions](research/research-questions.md)
-- [Architecture Decisions](decisions/)
+- [Current State](current-state.md) & [Historical State Archive (2026-11)](archive/current-state-history-2026-11.md)
+- [Roadmap](roadmap.md) & [Testing & Fast Verification Protocol](testing.md)
+- [SuperPlan v2 (CORE A*/Q1)](evo-sota-superplan-v2.md) & [19-Paper SOTA Deep Synthesis](research/sota-19-paper-deep-synthesis.md)
+- [SOTA Paper Library](paper/README.md) & [Comparative Evaluation Report v7](evo-comparative-evaluation-report.md)
+- [Architecture Overview](architecture/architecture.md) & [Knowledge Graph](architecture/knowledge-graph.md)
+- [M1 Contracts](architecture/m1-contracts.md), [M3 Build Model](architecture/m3-workspace-build-model.md) & [Evidence Acquisition](architecture/evidence-acquisition.md)
+- [Conditional Architecture Semantics](architecture/conditional-architecture-semantics.md) & [M8.4 Readiness](architecture/m8-repository-readiness.md)
+- [Captured Repository Repair](architecture/captured-repository-repair.md) & [Product Outcome](architecture/product-outcome.md)
+- [ADR-001](decisions/ADR-001-parser-technology.md) · [ADR-002](decisions/ADR-002-product-outcome-and-explainable-assessment.md) · [ADR-003](decisions/ADR-003-progressive-evidence-acquisition.md) · [ADR-004](decisions/ADR-004-staged-conditional-architecture-semantics.md) · [ADR-005](decisions/ADR-005-m4-universal-v2.md) · [ADR-007](decisions/ADR-007-isolated-build-and-polyglot-readiness.md) · [ADR-011](decisions/ADR-011-full-pipeline-demo.md)

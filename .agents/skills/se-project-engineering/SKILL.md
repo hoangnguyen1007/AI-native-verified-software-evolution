@@ -19,13 +19,23 @@ Identify the requested outcome, current gate, approved decisions, affected contr
 
 For language semantics, Java/Spring extraction, ground truth, or semantic benchmark claims, read [semantic-evaluation.md](semantic-evaluation.md). It defines evidence checks, not a replacement for milestone contracts. M8.4 target builds/indexers require the validated isolated executor; platform verification commands below are not permission to run untrusted targets on the host.
 
+## Repository acquisition & query evidence invariants
+
+- **Uninitialized Git submodules vs. fail-closed acquisition (`SqliteInventoryStore`):** `InventoryEntry.Kind.GITLINK` entries with `Disposition.GAP` and `SUBMODULE_COMMIT_REQUIRED` must preserve typed `GAP` records while allowing inventory sealing (`compatible = false` / `compatibleV1Snapshot().isEmpty()`). `LFS_OBJECT_REQUIRED`, `Disposition.PENDING`, and all other `GAP` entries remain strictly fail-closed (`INVENTORY_FRONTIER_OPEN`).
+- **Explicit evidence family whitelisting (`ArchitectureQueryService`):** Any new graph evidence family emitted for UI/API consumers (e.g., `polyglot.build-component`, `architecture.infra-component`, `architecture.external-actor`, `architecture.declarative-topology`, `architecture.service-call`, `polyglot.event-broker-link`, `polyglot.event-topic-match`) must be explicitly whitelisted in `ArchitectureQueryService` (safe label description and `select(...)` metadata projection) without relaxing untrusted redaction (`SAFE_FAMILIES` fail-closed `Map.of()` default).
+
 ## Verification selection
 
-Use this repository's [README](../../../README.md) and the affected module POM/runner to choose commands. Root verification does not cover standalone benchmarks.
+Separate verification cadence by track while keeping invariants `I1-I6` identical:
+- **Track A (Product SWE — Online Web App & Backend):** follow `T0-T3` in [fast-verification](../fast-verification/SKILL.md) (narrow batched tests, Vanilla Web UI `node --check`/`node --test`, zero `cli` or `T4` benchmark overhead unless touched).
+- **Track B (Publication Rigor — CORE A* / Q1 Research):** combine `T0-T3` with `T4` publication gates in [publication-research-rigor](../publication-research-rigor/SKILL.md).
 
-Windows examples, after confirming a JDK 21 runtime:
+Use [fast-verification](../fast-verification/SKILL.md), [README](../../../README.md), and the affected module POM/runner to choose exact commands. Root verification does not cover standalone benchmarks.
+
+Windows PowerShell 5.1 examples (chain with `;`, never `&&`; quote `-D` flags; reuse default `target/`; check `git diff --name-only` before skipping `-am`; include `.` in `-pl` with both `'-Dtest.failIfNoTests=false'` and `'-Dtest.failIfNoSpecifiedTests=false'` on selective multi-module runs and verify total `Tests run: N > 0`):
 - `.\mvnw.cmd --version`
-- `.\mvnw.cmd -B -ntp -pl analyzer test` for analyzer-only behavior.
+- `.\mvnw.cmd -o -B -ntp -pl backend '-Denforcer.skipRules=reactorModuleConvergence' '-Dtest=ChangedTest,ApiSpecificationTest' test` when `0` upstream `analyzer*` files changed.
+- `.\mvnw.cmd -o -B -ntp -pl .,analyzer,backend '-Dtest=ChangedTest,ContractTest' '-Dtest.failIfNoTests=false' '-Dtest.failIfNoSpecifiedTests=false' test` for selective multi-module behavior.
 - `.\mvnw.cmd -B -ntp verify` for reactor integration; use `clean verify` for a clean-build claim.
 
 On POSIX use `sh ./mvnw` with the same arguments. Inspect the actual runner before executing a standalone experiment: tests may regenerate evidence or require separately built artifacts/classpaths.

@@ -325,8 +325,8 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
             Object schema = row.get("schema");
             var view = new TreeMap<>(GraphJson.object(row.get("view")));
             var setup = new TreeMap<>(GraphJson.object(row.get("setup")));
-            if (SCHEMA_V5.equals(schema) && view.containsKey("mode") && setup.containsKey("artifactPolicy")
-                    && row.containsKey("telemetry")) {
+            if (SCHEMA_V5.equals(schema) && view.containsKey("mode") && view.containsKey("projectionProfile")
+                    && setup.containsKey("artifactPolicy") && row.containsKey("telemetry")) {
                 return checked(row, handle, Envelope.class);
             }
             // Authenticate the original preimage before adding backward-compatible defaults.
@@ -336,13 +336,15 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
             var upgraded = new TreeMap<>(row);
             if (legacy) {
                 if (view.containsKey("force") || view.containsKey("reuse") || view.containsKey("reuseDecision")
-                        || view.containsKey("mode")) throw new IOException("JOB_RECEIPT_CORRUPT");
+                        || view.containsKey("mode") || view.get("projectionProfile") != null)
+                    throw new IOException("JOB_RECEIPT_CORRUPT");
                 view.put("force", false);
                 view.put("reuse", null);
                 view.put("reuseDecision", null);
                 upgraded.put("schema", PREVIOUS_SCHEMA);
             }
             view.putIfAbsent("mode", null);
+            view.putIfAbsent("projectionProfile", null);
             setup.putIfAbsent("artifactPolicy", null);
             upgraded.putIfAbsent("telemetry", null);
             upgraded.put("view", view);
@@ -391,8 +393,8 @@ public final class AnalysisJobDiskStore implements AutoCloseable {
                     if(!seen.add(v.id()))continue;
                     progressed++;
                     boolean cancelled=v.stop().filter(s->s==AnalysisJobs.Stop.USER_CANCELLED).isPresent();
-                    var next=new AnalysisJobs.View(v.id(),v.setup(),cancelled?AnalysisJobs.State.CANCELLED:AnalysisJobs.State.QUEUED,cancelled?AnalysisJobs.Stage.FINISHED:AnalysisJobs.Stage.QUEUED,v.revision()+1,v.submittedAt(),Optional.empty(),cancelled?Optional.of(java.time.Instant.now()):Optional.empty(),v.elapsedMillis(),cancelled?v.stop():Optional.empty(),Optional.empty(),List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,java.time.Instant.now())),Optional.empty(),v.force(),Optional.empty(),Optional.empty(),v.mode());
-                    var original=intent(UUID.fromString(v.id()));if(!original.equals(expected))next=new AnalysisJobs.View(v.id(),v.setup(),AnalysisJobs.State.FAILED,AnalysisJobs.Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(java.time.Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty(),v.mode());
+                    var next=new AnalysisJobs.View(v.id(),v.setup(),cancelled?AnalysisJobs.State.CANCELLED:AnalysisJobs.State.QUEUED,cancelled?AnalysisJobs.Stage.FINISHED:AnalysisJobs.Stage.QUEUED,v.revision()+1,v.submittedAt(),Optional.empty(),cancelled?Optional.of(java.time.Instant.now()):Optional.empty(),v.elapsedMillis(),cancelled?v.stop():Optional.empty(),Optional.empty(),List.of(new AnalysisJobs.Event(AnalysisJobs.Stage.QUEUED,java.time.Instant.now())),Optional.empty(),v.force(),Optional.empty(),Optional.empty(),v.mode(),v.projectionProfile());
+                    var original=intent(UUID.fromString(v.id()));if(!original.equals(expected))next=new AnalysisJobs.View(v.id(),v.setup(),AnalysisJobs.State.FAILED,AnalysisJobs.Stage.FINISHED,v.revision()+1,v.submittedAt(),v.startedAt(),Optional.of(java.time.Instant.now()),v.elapsedMillis(),Optional.empty(),Optional.of("SETUP_CONFIGURATION_CHANGED"),v.events(),v.result(),v.force(),Optional.empty(),Optional.empty(),v.mode(),v.projectionProfile());
                     save(saved.retry(),original,next,saved.gaps(),saved.inputProblems());
                 }
                 if(progressed==0)break;

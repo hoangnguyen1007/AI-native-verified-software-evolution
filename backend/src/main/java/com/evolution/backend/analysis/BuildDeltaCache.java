@@ -171,18 +171,20 @@ public final class BuildDeltaCache {
             cached = mavenModelsCache.get(key);
         }
         if (cached == null) return Optional.empty();
-        // Verify all acquired local-cache POM files are still present with matching digest on disk.
+        Path cacheNorm = cache.toAbsolutePath().normalize();
+        // Verify all acquired POM files (both locally cached and Cold-promoted remote POMs) still exist
+        // with matching SHA-256 digests on disk, and verify any deterministic missing-POM problems are
+        // still genuinely absent so newly populated cache entries immediately invalidate.
         for (var res : cached) {
-            if (!res.problems().isEmpty()) {
+            if (!isReusableModelProblemSet(res.problems(), cacheNorm, repositories)) {
                 synchronized (mavenModelsCache) { mavenModelsCache.remove(key); }
                 return Optional.empty();
             }
             for (var pom : res.acquiredPoms()) {
-                if (pom.origin() != MavenBuildModelResolution.Origin.LOCAL_CACHE) {
-                    synchronized (mavenModelsCache) { mavenModelsCache.remove(key); }
-                    return Optional.empty();
-                }
-                Path pomPath = cache.toAbsolutePath().normalize().resolve(pom.logicalLocation());
+                Path pomPath = pom.origin() == MavenBuildModelResolution.Origin.LOCAL_CACHE
+                        ? cacheNorm.resolve(pom.logicalLocation().replace('/', File.separatorChar))
+                        : cacheNorm.resolve(new com.evolution.analysis.classpath.ArtifactCoordinate(
+                                pom.coordinate(), "pom", "").repositoryPath().replace('/', File.separatorChar));
                 if (!verifyPathDigest(pomPath, pom.contentDigest())) {
                     synchronized (mavenModelsCache) { mavenModelsCache.remove(key); }
                     return Optional.empty();
@@ -191,6 +193,63 @@ public final class BuildDeltaCache {
         }
         reusedBuildRoots.addAndGet(cached.size());
         return Optional.of(cached);
+    }
+
+    private static boolean isReusableModelProblemSet(
+            List<MavenBuildModelResolution.Problem> problems,
+            Path cacheNorm,
+            List<URI> repositories) {
+        if (problems.isEmpty()) return true;
+        for (var p : problems) {
+            switch (p.reason()) {
+                case MISSING_POM -> {
+                    Path localPom = cacheNorm.resolve(p.subject().replace('/', File.separatorChar)).normalize();
+                    if (localPom.startsWith(cacheNorm) && Files.exists(localPom, LinkOption.NOFOLLOW_LINKS)) {
+                        return false;
+                    }
+                }
+                case REMOTE_SNAPSHOT_UNSUPPORTED -> {
+                    var coord = parsePomCoordinate(p.subject());
+                    if (coord.isPresent()) {
+                        Path localPom = cacheNorm.resolve(coord.orElseThrow().repositoryPath()
+                                .replace('/', File.separatorChar)).normalize();
+                        if (localPom.startsWith(cacheNorm) && Files.exists(localPom, LinkOption.NOFOLLOW_LINKS)) {
+                            return false;
+                        }
+                    }
+                }
+                case REMOTE_REQUEST_FAILED -> {
+                    var coord = parsePomCoordinate(p.subject());
+                    if (coord.isEmpty()) return false;
+                    Path localPom = cacheNorm.resolve(coord.orElseThrow().repositoryPath()
+                            .replace('/', File.separatorChar)).normalize();
+                    if (localPom.startsWith(cacheNorm) && Files.exists(localPom, LinkOption.NOFOLLOW_LINKS)) {
+                        return false;
+                    }
+                    if (!repositories.isEmpty()
+                            && !MavenDependencyArtifactProvider.isNegativelyCachedAcrossAllRepositories(
+                                    cacheNorm, coord.orElseThrow(), repositories)) {
+                        return false;
+                    }
+                }
+                default -> {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static Optional<com.evolution.analysis.classpath.ArtifactCoordinate> parsePomCoordinate(String notation) {
+        if (notation == null || notation.isBlank()) return Optional.empty();
+        String[] parts = notation.split(":", -1);
+        if (parts.length != 3) return Optional.empty();
+        try {
+            return Optional.of(new com.evolution.analysis.classpath.ArtifactCoordinate(
+                    new MavenCoordinate(parts[0], parts[1], parts[2]), "pom", ""));
+        } catch (IllegalArgumentException invalid) {
+            return Optional.empty();
+        }
     }
 
     void putMavenModels(

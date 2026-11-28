@@ -59,9 +59,13 @@ public record FrameworkGeneration(ContentDigest evidence, Optional<String> frame
             }
         }
         int[] s = version(spring), b = version(boot);
-        Namespace ns = s[0] >= 1 && s[0] <= 5 ? Namespace.JAVAX : s[0] == 6 ? Namespace.JAKARTA : Namespace.UNKNOWN;
+        Namespace ns = s[0] >= 1 && s[0] <= 5 ? Namespace.JAVAX
+                : (s[0] == 6 || (compatible && s[0] == 7)) ? Namespace.JAKARTA : Namespace.UNKNOWN;
         if (!boot.isEmpty())
-            consistent &= b[0] == 1 && s[0] >= 3 && s[0] <= 4 || b[0] == 2 && s[0] == 5 || b[0] == 3 && s[0] == 6;
+            consistent &= b[0] == 1 && s[0] >= 3 && s[0] <= 4
+                    || b[0] == 2 && s[0] == 5
+                    || b[0] == 3 && s[0] == 6
+                    || (compatible && b[0] == 4 && (s[0] == 6 || s[0] == 7));
         consistent &= ns != Namespace.UNKNOWN;
         OverridePolicy override = OverridePolicy.UNKNOWN;
         MetadataPolicy metadata = MetadataPolicy.UNKNOWN;

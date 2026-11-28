@@ -862,18 +862,20 @@ public final class ArchitectureQueryApi {
         try {
             if (cancelled.getAsBoolean())
                 throw new Failure(409, "REQUEST_CANCELLED");
-            var input = QueryJson.object(decode(body, contentType), "setup", "idempotencyKey", "force", "mode", "ref");
+            var input = QueryJson.object(decode(body, contentType),
+                    "setup", "idempotencyKey", "force", "mode", "ref", "projectionProfile");
             if (input.containsKey("force") && !(input.get("force") instanceof Boolean))
                 throw new IllegalArgumentException("Expected boolean force");
             var mode = input.containsKey("mode") ? AnalysisMode.parse(QueryJson.text(input, "mode")) : AnalysisMode.FULL;
             var ref = QueryJson.optionalText(input, "ref");
+            var projectionProfile = AnalysisJobApi.parseProjectionProfile(input);
             String setupId = QueryJson.text(input, "setup");
             if (connections != null && connections.existsOwnedByOther(setupId)) {
                 return error(403, "ACCESS_DENIED");
             }
             var submission = analysisJobs.submit(setupId,
                     QueryJson.text(input, "idempotencyKey"),
-                    Boolean.TRUE.equals(input.get("force")), mode, ref);
+                    Boolean.TRUE.equals(input.get("force")), mode, ref, projectionProfile);
             var data = submission.job();
             var bytes = BoundedJson.encode(data, limits.responseBytes());
             return new Response(submission.created() ? 202 : 200,
@@ -1035,7 +1037,7 @@ public final class ArchitectureQueryApi {
     }
 
     private static boolean isPublicMultiUserRoute(String method, String rawPath) {
-        return ("GET".equals(method) && rawPath.equals("/api/v1"))
+        return ("GET".equals(method) && (rawPath.equals("/api/v1") || rawPath.equals("/api/v1/health")))
                 || rawPath.startsWith(com.evolution.backend.auth.AuthHttpApi.PREFIX)
                 || ("POST".equals(method) && rawPath.equals("/api/v1/github/auth/session"))
                 || rawPath.equals("/api/v1/github/webhooks");
@@ -1880,6 +1882,24 @@ public final class ArchitectureQueryApi {
     }
 
     private Object route(String method, String path, String contentType, byte[] body, BooleanSupplier cancelled) {
+        if (path.equals("/api/v1/health")) {
+            requireMethod(method, "GET");
+            requireEmpty(body);
+            var health = new TreeMap<String, Object>();
+            health.put("status", "ok");
+            health.put("onlineMode", connections != null && connections.isOnlineOnly());
+            health.put("localCheckoutAllowed", connections == null || !connections.isOnlineOnly());
+            health.put("multiUserMode", auth != null && auth.isMultiUserMode());
+            health.put("analysisJobsEnabled", jobs != null);
+            health.put("repositoryConnectionsEnabled", connections != null);
+            health.put("graphSchema", KnowledgeGraph.SCHEMA);
+            health.put("mcpEndpoint", "/mcp");
+            health.put("mcpProtocolVersion", McpToolDispatcher.PROTOCOL_VERSION);
+            health.put("projectionProfiles", com.evolution.backend.analysis.LocalAnalysisRunner.PROJECTION_PROFILES);
+            health.put("defaultProjectionProfile",
+                    com.evolution.backend.analysis.LocalAnalysisRunner.configuredProjectionProfileName());
+            return health;
+        }
         if (path.equals("/api/v1")) {
             requireMethod(method, "GET");
             requireEmpty(body);
@@ -1904,6 +1924,11 @@ public final class ArchitectureQueryApi {
             if (jobs != null)
                 capabilities.put("jobLimits", jobs.limits());
             capabilities.put("analysisModes", List.of("FULL", "FAST_ARCHITECTURE"));
+            capabilities.put("projectionProfiles", com.evolution.backend.analysis.LocalAnalysisRunner.PROJECTION_PROFILES);
+            capabilities.put("defaultProjectionProfile",
+                    com.evolution.backend.analysis.LocalAnalysisRunner.configuredProjectionProfileName());
+            capabilities.put("mcpEndpoint", "/mcp");
+            capabilities.put("mcpProtocolVersion", McpToolDispatcher.PROTOCOL_VERSION);
             capabilities.put("architectureInsightsEnabled", true);
             capabilities.put("architectureChatEnabled", true);
             capabilities.put("architectureChatStreamEnabled", true);
@@ -1944,6 +1969,8 @@ public final class ArchitectureQueryApi {
             capabilities.put("githubIntegrationEnabled", github != null);
             capabilities.put("multiUserAuthEnabled", auth != null);
             capabilities.put("multiUserMode", auth != null && auth.isMultiUserMode());
+            capabilities.put("onlineMode", connections != null && connections.isOnlineOnly());
+            capabilities.put("localCheckoutAllowed", connections == null || !connections.isOnlineOnly());
             capabilities.put("localAccountsEnabled", auth != null && auth.accountStore() != null);
             capabilities.put("oauthWebEnabled", auth != null && auth.oauthService().config().oauthWebEnabled());
             capabilities.put("deviceFlowEnabled", auth != null && auth.oauthService().isDeviceFlowEnabled());
@@ -3549,7 +3576,7 @@ public final class ArchitectureQueryApi {
                 var replay = REPLAY_DIAGNOSIS.diagnose(id, finding, service);
                 if (replay.input().isPresent() && !replay.input().equals(input))
                     throw new Failure(409, "DIAGNOSIS_INPUT_MISMATCH");
-                var captured = new CapturedRepair(repairModel);
+                var captured = new CapturedRepair(repairModel, searchIndex);
                 if (op.equals("repair-options"))
                     yield captured.options(replay, service.graph(), service::assessmentStopReason,
                             activeRepairRunner() != null, finding.bundle().path());
@@ -3665,7 +3692,9 @@ public final class ArchitectureQueryApi {
                         var syntheticOutcome = new CapturedRepair.Outcome(
                                 CapturedRepair.VERSION, "PROPOSED", Optional.empty(), List.of(), List.of(),
                                 List.of(), Optional.of(capturedPinned), 1);
+                        var rts = selectRegressionTests(service.graph(), context, capturedPinned);
                         var inv = activeRunnerSync.run(repoRoot.orElseThrow(), syntheticOutcome, result,
+                                false, Optional.empty(), rts.mavenTestFilter(),
                                 () -> Thread.currentThread().isInterrupted());
                         result = new CapturedRepairVerification(repairWorker, inv.execution(), snapshotGraphs)
                                 .verify(capturedPinned, service.graph(), report, candidate, control, store, reports,
@@ -3940,7 +3969,7 @@ public final class ArchitectureQueryApi {
         var service = factory.apply(graph, guard);
         var req = new CapturedRepair.AdHocRequest(contextId, title, description,
                 List.copyOf(targetPaths), List.copyOf(targetSymbols), strategy, recipeId, maxAttempts);
-        var outcome = new CapturedRepair(repairModel).proposeAdHoc(req, graph, service, service::assessmentStopReason);
+        var outcome = new CapturedRepair(repairModel, searchIndex).proposeAdHoc(req, graph, service, service::assessmentStopReason);
         if ("PROPOSED".equals(outcome.status()) && outcome.proposal().isPresent()) {
             repairStore.put(outcome.proposal().orElseThrow());
         }
@@ -4262,6 +4291,7 @@ public final class ArchitectureQueryApi {
                             }
                             runnerSourceRoot = materializedDir;
                         }
+                        var rts = selectRegressionTests(baselineGraph, null, currentProposal);
                         String sandboxPhaseLabel = skipTestsActive
                                 ? " (tests skipped; compile-only)"
                                 : (effectiveDiffTestGen ? " & baseline-vs-candidate behavioral diff" : " & tests");
@@ -4271,13 +4301,16 @@ public final class ArchitectureQueryApi {
                                         + " inside disposable sandbox",
                                 Map.of("round", round, "maxRounds", effectiveMaxRounds,
                                         "behavioralDiff", effectiveDiffTestGen,
-                                        "skipTests", skipTestsActive));
+                                        "skipTests", skipTestsActive,
+                                        "rtsMode", rts.mode().name(),
+                                        "selectedTestsCount", rts.selectedTests().size()));
                         var syntheticOutcome = new CapturedRepair.Outcome(
                                 CapturedRepair.VERSION, "PROPOSED", Optional.empty(), List.of(), List.of(),
                                 List.of(), Optional.of(currentProposal), 1);
                         var inv = runnerForRound.run(runnerSourceRoot, syntheticOutcome, verification,
                                 effectiveDiffTestGen,
                                 effectiveDiffTestGen ? BehavioralDiffService.encodeStagedProbesJson(probes) : Optional.empty(),
+                                rts.mavenTestFilter(),
                                 jobCancelled);
                         var postVerifier = new CapturedRepairVerification(repairWorker, inv.execution(), snapshotGraphs);
                         verification = baselineReportOpt.isPresent()
@@ -4367,7 +4400,7 @@ public final class ArchitectureQueryApi {
                     var refineGuard = ArchitectureQueryService.operationalGuard(jobCancelled,
                             System.nanoTime() + limits.queryTimeoutMillis() * 1_000_000, 8_000_000);
                     var refineQueries = factory.apply(baselineGraph, refineGuard);
-                    var refined = new CapturedRepair(repairModel).refineFromFeedback(
+                    var refined = new CapturedRepair(repairModel, searchIndex).refineFromFeedback(
                             currentProposal, baselineGraph, Optional.of(refineQueries), feedback, 2,
                             refineQueries::assessmentStopReason);
                     if (!"PROPOSED".equals(refined.status()) || refined.proposal().isEmpty()) {
@@ -4734,6 +4767,16 @@ public final class ArchitectureQueryApi {
             }
         }
         return false;
+    }
+
+    private static com.evolution.backend.query.repair.AffectedTestSelector.Result selectRegressionTests(
+            KnowledgeGraph graph, String context, CapturedRepair.Proposal proposal) {
+        List<String> modifiedPaths = proposal == null || proposal.candidate() == null
+                ? List.of()
+                : proposal.candidate().edits().stream()
+                        .map(CapturedRepair.Edit::path)
+                        .toList();
+        return com.evolution.backend.query.repair.AffectedTestSelector.select(graph, context, modifiedPaths);
     }
 
     private static String defaultAnalysisContext(KnowledgeGraph graph) {

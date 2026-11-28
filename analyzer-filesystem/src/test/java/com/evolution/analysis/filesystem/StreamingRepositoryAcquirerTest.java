@@ -150,4 +150,41 @@ class StreamingRepositoryAcquirerTest {
             assertEquals(manifest,store.manifest("symlink-rev").orElseThrow());
         }
     }
+
+    @Test void uninitializedGitSubmoduleRetainsGapAndAllowsSealing() throws Exception {
+        var cas = new StreamingContentStore(temp.resolve("cas"));
+        try (var store = new SqliteInventoryStore(temp.resolve("metadata"), cas)) {
+            byte[] pomBytes = "<project/>".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] javaBytes = "class App {}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var pomHandle = cas.put(new ByteArrayInputStream(pomBytes), () -> false);
+            var javaHandle = cas.put(new ByteArrayInputStream(javaBytes), () -> false);
+            var req = request();
+            var job = store.create("gitlink-rev", req.identity(), Optional.empty());
+            job = store.transition("gitlink-rev", job.revision(), JobJournal.State.RUNNING, "", Optional.empty());
+            store.entries("gitlink-rev", List.of(
+                    new SqliteInventoryStore.Observation(new InventoryEntry(
+                            LogicalPath.utf8("pom.xml"), InventoryEntry.Kind.FILE, "100644",
+                            InventoryEntry.Population.BUILD, InventoryEntry.Disposition.ACQUIRED,
+                            Optional.of(pomHandle), Optional.empty(), Optional.empty(), List.of(), Optional.empty()), "1"),
+                    new SqliteInventoryStore.Observation(new InventoryEntry(
+                            LogicalPath.utf8("src/App.java"), InventoryEntry.Kind.FILE, "100644",
+                            InventoryEntry.Population.SOURCE, InventoryEntry.Disposition.ACQUIRED,
+                            Optional.of(javaHandle), Optional.empty(), Optional.empty(), List.of(), Optional.empty()), "2"),
+                    new SqliteInventoryStore.Observation(new InventoryEntry(
+                            LogicalPath.utf8("ext-submodule"), InventoryEntry.Kind.GITLINK, "160000",
+                            InventoryEntry.Population.UNKNOWN, InventoryEntry.Disposition.GAP,
+                            Optional.empty(), Optional.of("deadbeef".repeat(5)), Optional.empty(),
+                            List.of(), Optional.of("SUBMODULE_COMMIT_REQUIRED")), "3")));
+            job = store.transition("gitlink-rev", job.revision(), JobJournal.State.RUNNING, "FRONTIER_CLOSED", Optional.empty());
+            var manifest = store.seal("gitlink-rev", repo, req.identity());
+            store.transition("gitlink-rev", job.revision(), JobJournal.State.COMPLETE, "", Optional.empty());
+
+            assertTrue(manifest.compatibleV1Snapshot().isEmpty());
+            assertEquals(2, manifest.files());
+            var compatReq = new RepositoryAcquisitionRequest(repo, Optional.empty(), true, "pom.xml",
+                    new RepositoryAcquisitionPolicy(100, 100, 10_000, 100_000, 64, List.of()));
+            var view = new StreamingRepositoryAcquirer(cas, store).compatibility("gitlink-rev", compatReq, e -> true);
+            assertEquals(List.of("pom.xml", "src/App.java"), view.files().stream().map(AcquiredFile::path).toList());
+        }
+    }
 }

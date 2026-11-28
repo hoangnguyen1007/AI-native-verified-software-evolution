@@ -42,4 +42,52 @@ class GraphProjectionPayloadsTest {
             try(var sql=db.createStatement();var rows=sql.executeQuery("SELECT count(*) FROM payloads")){assertTrue(rows.next());assertEquals(0,rows.getInt(1));}
         }
     }
+    @Test void streamDeflateAboveThresholdRoundTripsCompressibleAndIncompressiblePayloads()throws Exception {
+        try(var db=DriverManager.getConnection("jdbc:sqlite:"+directory.resolve("stream-large.sqlite"))) {
+            String compressible="symbolic-trace-row-".repeat(250_000); // ~4.75 MiB (> 4 MiB stream threshold)
+            var rng=new Random(20261128L);
+            var chars=new char[4_500_000];
+            for(int i=0;i<chars.length;i++)chars[i]=(char)('!' + rng.nextInt(94));
+            String incompressible=new String(chars);
+            try(var payloads=new GraphProjectionPayloads(db,16_000_000,()->false)) {
+                String compId=payloads.put(compressible);
+                assertEquals(compId,payloads.put(compressible));
+                String rawId=payloads.put(incompressible);
+                assertEquals(rawId,payloads.put(incompressible));
+                assertEquals(compressible,payloads.get(compId));
+                assertEquals(incompressible,payloads.get(rawId));
+            }
+            try(var files=Files.list(directory)){assertTrue(files.noneMatch(p->p.toString().endsWith(".pack")));}
+        }
+    }
+    @Test void locatorCacheOverflowDeduplicatesPendingAndCommittedPayloadsWithoutBatchCollision()throws Exception {
+        try(var db=DriverManager.getConnection("jdbc:sqlite:"+directory.resolve("overflow.sqlite"))) {
+            db.setAutoCommit(false);
+            var expected=new LinkedHashMap<String,String>();
+            try(var payloads=new GraphProjectionPayloads(db,65536,()->false,2L*1024*1024,4)) {
+                for(int i=0;i<60;i++) {
+                    String value="payload-row-"+i+"-"+"z".repeat(700);
+                    String id=payloads.put(value);
+                    // Re-insert immediately while still in pendingLocators (overflowed past locatorCacheCap=4).
+                    assertEquals(id,payloads.put(value));
+                    expected.put(id,value);
+                    if(i==25) payloads.flush();
+                }
+                // Re-insert earlier committed and still-pending rows before final flush.
+                for(var entry:expected.entrySet()) {
+                    assertEquals(entry.getKey(),payloads.put(entry.getValue()));
+                    assertEquals(entry.getValue(),payloads.get(entry.getKey()));
+                }
+                payloads.flush();
+                db.commit();
+                try(var sql=db.createStatement();var rows=sql.executeQuery("SELECT count(*) FROM payloads")) {
+                    assertTrue(rows.next());
+                    assertEquals(60,rows.getInt(1));
+                }
+                for(var entry:expected.entrySet()) {
+                    assertEquals(entry.getValue(),payloads.get(entry.getKey()));
+                }
+            }
+        }
+    }
 }

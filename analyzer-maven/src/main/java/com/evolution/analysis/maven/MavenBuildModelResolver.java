@@ -319,7 +319,7 @@ public final class MavenBuildModelResolver {
         }
         var artifacts = coordinates.stream().map(c -> new ArtifactCoordinate(c, "pom", "")).toList();
         long maxPom = Math.min(policy.maxPomBytes(), remainingTotal);
-        int concurrency = Math.min(8, artifacts.size());
+        int concurrency = Math.min(16, artifacts.size());
         var acquisition = artifactProvider.orElseThrow().acquire(DependencyAcquisitionRequest.of(artifacts,
                 new DependencyAcquisitionPolicy(artifacts.size(), maxPom, remainingTotal, 1,
                         policy.remoteRepositories(), policy.connectTimeoutMillis(), policy.requestTimeoutMillis(),

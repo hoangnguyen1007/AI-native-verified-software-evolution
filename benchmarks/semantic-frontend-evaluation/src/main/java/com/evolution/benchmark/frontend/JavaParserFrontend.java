@@ -15,7 +15,7 @@ import java.util.List;
 
 /** JavaParser/SymbolSolver adapter for the shared observation model. */
 public final class JavaParserFrontend implements SemanticFrontend {
-    @Override public String id() { return "javaparser-symbolsolver-3.26.1"; }
+    @Override public String id() { return "javaparser-symbolsolver-3.28.2"; }
 
     @Override public FrontendResult analyze(FrontendRequest request) {
         long start = System.nanoTime();

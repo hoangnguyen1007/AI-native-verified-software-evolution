@@ -17,7 +17,15 @@ final class SqliteGraphProjection implements GraphProjectionStore, AutoCloseable
     private static final String INLINE_PREFIX = "raw:";
     private static final String REF_PREFIX = "ref:";
 
+    private static int defaultKnownKeysCap() {
+        long maxMem = Runtime.getRuntime().maxMemory();
+        if (maxMem >= 2L * 1024 * 1024 * 1024) return 1_048_576;
+        if (maxMem >= 1024L * 1024 * 1024) return 524_288;
+        return KNOWN_KEYS_CAP_PER_SPACE;
+    }
+
     private final boolean fastProjection = Boolean.parseBoolean(System.getProperty("evo.perf.fastProjection", "true"));
+    private final int knownKeysCap = defaultKnownKeysCap();
     private final Connection database;
     private final int rowBytes;
     private final BooleanSupplier cancelled;
@@ -67,6 +75,13 @@ final class SqliteGraphProjection implements GraphProjectionStore, AutoCloseable
         } catch (IOException failure) {
             throw new UncheckedIOException(failure);
         }
+    }
+
+    /** True iff (space, key) is known to have been written into this projection workspace. */
+    boolean hasKnownKey(String space, String key) {
+        if (!fastProjection) return false;
+        var seen = knownKeys.get(space);
+        return seen != null && seen.contains(key);
     }
 
     private void flushPending() throws SQLException {
@@ -254,7 +269,7 @@ final class SqliteGraphProjection implements GraphProjectionStore, AutoCloseable
             private void recordKnownKey(String key) {
                 if (!fastProjection || knownKeysCapped.contains(space)) return;
                 var seen = knownKeys.computeIfAbsent(space, ignored -> new HashSet<>(1024));
-                if (seen.size() < KNOWN_KEYS_CAP_PER_SPACE) {
+                if (seen.size() < knownKeysCap) {
                     seen.add(key);
                 } else if (!seen.contains(key)) {
                     knownKeysCapped.add(space);
@@ -502,7 +517,7 @@ final class SqliteGraphProjection implements GraphProjectionStore, AutoCloseable
     String encoded(String value) {
         try {
             // Fast ASCII/short bound: UTF-8 uses <= 3 bytes per UTF-16 code unit (<= 4 across supplementary pairs, <= 3 per char).
-            int maxPossibleUtf8 = value.length() * 3;
+            long maxPossibleUtf8 = (long) value.length() * 3L;
             if (maxPossibleUtf8 <= INLINE_MAX_UTF8_BYTES && maxPossibleUtf8 <= rowBytes) {
                 return INLINE_PREFIX + value;
             }

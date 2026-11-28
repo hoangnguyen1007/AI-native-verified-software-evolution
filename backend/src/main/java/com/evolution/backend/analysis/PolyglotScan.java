@@ -151,20 +151,29 @@ public final class PolyglotScan {
     /** Preserve the full inventory and static/native facts even when the legacy Java
      * view needs a larger/sharded worker. This root claims no Java attribution. */
     public void projectInventoryRoot(Result result,GraphProjectionStore store,BooleanSupplier cancelled)throws IOException {
+        projectInventoryRoot(result,store,ServiceArchitectureProjection.ProjectionProfile.STRICT,cancelled);
+    }
+    public void projectInventoryRoot(Result result,GraphProjectionStore store,ServiceArchitectureProjection.ProjectionProfile profile,BooleanSupplier cancelled)throws IOException {
         if(!result.context().snapshotIdentity().equals(SnapshotIdentity.from(result.readiness().inventory().repository(),result.inventory().inventory())))throw new IOException("INVENTORY_GRAPH_SNAPSHOT_MISMATCH");
         var writer=new Projection(store);String context=result.context().snapshotIdentity().value();
         var evidence=writer.evidence("repository.inventory-snapshot",Map.of("snapshot",result.context().snapshotIdentity(),"inventory",result.inventory().inventory(),"readiness",result.readiness().identity(),"javaAttribution","WORKER_REQUIRED"));
         writer.contexts.put(context,new KnowledgeGraph.Context(context,result.context().snapshotIdentity(),Optional.empty(),evidence));
         writer.node(KnowledgeGraph.derivedIdentity("inventory-root",List.of(result.inventory().inventory(),result.readiness().inventory().repository())),context,"REPOSITORY",evidence);
         var gap=javaWorkerGap(result);writer.node(gap.gapIdentity().value(),context,"CAPABILITY_GAP",writer.evidence("evidence.gap",gap));
-        project(result,store,cancelled);
+        project(result,store,profile,cancelled);
     }
 
     /** Project inventory and captured native rows without collecting an aggregate graph or export. */
     public void project(Result result,GraphProjectionStore store,BooleanSupplier cancelled)throws IOException {
-        project(result,store,result.context().snapshotIdentity(),cancelled);
+        project(result,store,result.context().snapshotIdentity(),ServiceArchitectureProjection.ProjectionProfile.STRICT,cancelled);
+    }
+    public void project(Result result,GraphProjectionStore store,ServiceArchitectureProjection.ProjectionProfile profile,BooleanSupplier cancelled)throws IOException {
+        project(result,store,result.context().snapshotIdentity(),profile,cancelled);
     }
     public void project(Result result,GraphProjectionStore store,SnapshotIdentity graphSnapshot,BooleanSupplier cancelled)throws IOException {
+        project(result,store,graphSnapshot,ServiceArchitectureProjection.ProjectionProfile.STRICT,cancelled);
+    }
+    public void project(Result result,GraphProjectionStore store,SnapshotIdentity graphSnapshot,ServiceArchitectureProjection.ProjectionProfile profile,BooleanSupplier cancelled)throws IOException {
         var writer=new Projection(store);String context=graphSnapshot.value();
         if(result.published().isPresent())result.published().orElseThrow().current().check();
         var modules=new TreeMap<String,String>();
@@ -228,7 +237,7 @@ public final class PolyglotScan {
         }
         HttpServiceCallProjection.project(store,context,cancelled);
         GrpcServiceCallProjection.project(store,context,cancelled);
-        ServiceArchitectureProjection.project(store,context,cancelled);
+        ServiceArchitectureProjection.project(store,context,profile,cancelled);
         EventFlowProjection.project(store,context,cancelled);
     }
     /** Join the native census to native targets. Syntax names never supply a callee.

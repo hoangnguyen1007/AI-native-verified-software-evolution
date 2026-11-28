@@ -27,6 +27,17 @@ class UniversalFrameworkContextTest {
         var three=generation("6.2.0","3.4.0");assertEquals(FrameworkGeneration.Namespace.JAKARTA,three.namespace());assertEquals(FrameworkGeneration.MetadataPolicy.IMPORTS,three.metadataPolicy());
         assertEquals(FrameworkGeneration.OverridePolicy.ALLOW,generation("5.3.31","").overridePolicy());
         assertFalse(generation("5.3.31","3.4.0").consistent());assertEquals(FrameworkGeneration.Namespace.UNKNOWN,generation("7.0.0","4.0.0").namespace());
+        var boot4Compat=FrameworkGeneration.from(new SpringFrameworkEvidence(true,Optional.of(ContentDigest.sha256Utf8("boot4-manifest")),List.of(
+                new SpringFrameworkEvidence.Artifact("org.springframework:spring-core:7.0.2",ContentDigest.sha256Utf8("sc")),
+                new SpringFrameworkEvidence.Artifact("org.springframework:spring-beans:7.0.2",ContentDigest.sha256Utf8("sb")),
+                new SpringFrameworkEvidence.Artifact("org.springframework:spring-context:7.0.2",ContentDigest.sha256Utf8("sctx")),
+                new SpringFrameworkEvidence.Artifact("org.springframework.boot:spring-boot:4.1.2",ContentDigest.sha256Utf8("boot")),
+                new SpringFrameworkEvidence.Artifact("org.springframework.boot:spring-boot-webmvc:4.1.2",ContentDigest.sha256Utf8("bmvc")))),
+                Optional.empty(),SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED);
+        assertTrue(boot4Compat.consistent());
+        assertEquals(FrameworkGeneration.Namespace.JAKARTA,boot4Compat.namespace());
+        assertEquals(FrameworkGeneration.MetadataPolicy.IMPORTS,boot4Compat.metadataPolicy());
+        assertEquals(FrameworkGeneration.OverridePolicy.DENY,boot4Compat.overridePolicy());
     }
     static AutoConfigurationMetadata.Resource resource(String path,String text){return new AutoConfigurationMetadata.Resource(path,text.getBytes(StandardCharsets.UTF_8),UniversalSpringEvidence.derived(ContentDigest.sha256Utf8(text),"authored-resource"));}
     @Test void bothMetadataFormatsPreserveProvenanceVersionFilteringContinuationsAndDeduplication() {

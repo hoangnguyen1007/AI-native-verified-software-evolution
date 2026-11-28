@@ -1,0 +1,17 @@
+FROM eclipse-temurin:21-jdk-noble
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/e0
+
+COPY benchmarks/e0-publication-suite/ /opt/e0/
+COPY cli/target/evo.jar /opt/e0/evo.jar
+
+ENV JAVA_TOOL_OPTIONS="-Djava.awt.headless=true"
+
+ENTRYPOINT ["python3", "/opt/e0/run_e0_benchmark.py", "--jar", "/opt/e0/evo.jar"]
+CMD ["--help"]

@@ -44,22 +44,51 @@ public final class ConfigDataIngestion {
         public ContentDigest identity() { return IngestionEvidence.digest(Map.of("input",inputIdentity,"documents",documents,
                 "properties",properties,"profiles",activeProfiles,"assignment",assignment.map(ConfigurationAssignment::identity),"issues",issues,"gaps",gaps)); }
     }
+    private static final int PHASE_BOOTSTRAP = 0;
+    private static final int PHASE_CONFIG_SERVER_APP = 1;
+    private static final int PHASE_CONFIG_SERVER_SERVICE = 2;
+    private static final int PHASE_APPLICATION = 3;
+
+    private record IndexedDoc(Document document, int phaseRank, int locationOrder) {}
+
     private static boolean isApplicationConfigFile(String name) {
-        if (!name.startsWith("application")) return false;
+        return isConfigFileWithBase(name, "application");
+    }
+
+    private static boolean isBootstrapConfigFile(String name) {
+        return isConfigFileWithBase(name, "bootstrap");
+    }
+
+    private static boolean isConfigFileWithBase(String name, String base) {
+        if (!name.startsWith(base)) return false;
+        int len = base.length();
         int dot = name.lastIndexOf('.');
-        if (dot < 11) return false;
-        if (dot > 11 && (name.charAt(11) != '-' || dot == 12)) return false;
+        if (dot < len) return false;
+        if (dot > len && (name.charAt(len) != '-' || dot == len + 1)) return false;
         String ext = name.substring(dot + 1);
         return ext.equals("properties") || ext.equals("yml") || ext.equals("yaml");
     }
+
+    private static Optional<String> configFileProfile(String name, int extensionDot) {
+        if (name.startsWith("application-")) return Optional.of(name.substring(12, extensionDot));
+        if (name.startsWith("bootstrap-")) return Optional.of(name.substring(10, extensionDot));
+        return Optional.empty();
+    }
+
     public Result ingest(RepositoryInputs inputs, Policy policy) {
         var identity = IngestionEvidence.digest(Map.of("provider",PROVIDER,"inputs",inputs.identity(),"policy",policy));
         var issues = new ArrayList<IngestionEvidence.Issue>();
-        var parsed = new ArrayList<Document>();
+        var indexedDocs = new ArrayList<IndexedDoc>();
+        var parsedPaths = new HashSet<String>();
+        boolean hasBootstrapDoc = false;
         for (var file : inputs.snapshot().files()) {
             String path = file.path();
             String fname = filename(path);
-            if (!isApplicationConfigFile(fname) || location(path,policy) < 0) continue;
+            boolean appFile = isApplicationConfigFile(fname);
+            boolean bootFile = !appFile && isBootstrapConfigFile(fname);
+            if ((!appFile && !bootFile) || location(path,policy) < 0) continue;
+            parsedPaths.add(path);
+            if (bootFile) hasBootstrapDoc = true;
             var source = inputs.files().get(path);
             if (source == null) { issue(issues,INPUT_UNAVAILABLE,path,file.contentDigest()); continue; }
             if (source.text().length() > policy.maxCharacters()) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); continue; }
@@ -67,22 +96,83 @@ public final class ConfigDataIngestion {
                 String decoded=path.endsWith(".properties")?new String(source.bytes(),StandardCharsets.ISO_8859_1):decodeYaml(source);
                 if(decoded.length()>policy.maxCharacters())throw new Limit();
                 List<Map<String,String>> rows = path.endsWith(".properties") ? properties(decoded,policy) : yaml(decoded,policy);
-                if ((long) parsed.size()+rows.size() > policy.maxDocuments()) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); continue; }
+                if ((long) indexedDocs.size()+rows.size() > policy.maxDocuments()) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); continue; }
                 String name = filename(path); int extension = name.lastIndexOf('.');
-                Optional<String> profile = name.startsWith("application-") ? Optional.of(name.substring(12,extension)) : Optional.empty();
+                Optional<String> profile = configFileProfile(name, extension);
+                int phaseRank = bootFile ? PHASE_BOOTSTRAP : PHASE_APPLICATION;
+                int locOrd = location(path, policy);
                 for (int index=0; index<rows.size(); index++) {
                     var row=rows.get(index);
                     if(!validProfileLists(row))issue(issues,CONFIG_PROFILE_INVALID,path+"#"+index,file.contentDigest());
-                    parsed.add(new Document(path,index,profile,row,
-                        new ConditionEvidence.Source(source.document().identity(),file.contentDigest(),Optional.empty(),index),false));
+                    indexedDocs.add(new IndexedDoc(new Document(path,index,profile,row,
+                        new ConditionEvidence.Source(source.document().identity(),file.contentDigest(),Optional.empty(),index),false),
+                        phaseRank, locOrd));
                 }
             } catch (Limit failure) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); }
             catch (UnsupportedFormat failure) { issue(issues,CONFIG_FORMAT_UNSUPPORTED,path,file.contentDigest()); }
             catch (YAMLException | IllegalArgumentException failure) { issue(issues,MALFORMED_INPUT,path,file.contentDigest()); }
         }
-        Comparator<Document> baseOrder = Comparator.comparingInt((Document d) -> location(d.path(),policy))
+        Comparator<IndexedDoc> baseOrder = Comparator.comparingInt(IndexedDoc::phaseRank)
+                .thenComparingInt(IndexedDoc::locationOrder)
+                .thenComparingInt(d -> d.document().path().endsWith(".properties") ? 1 : 0)
+                .thenComparing(d -> d.document().path()).thenComparingInt(d -> d.document().ordinal());
+        indexedDocs.sort(baseOrder);
+        // Passive local Spring Cloud Config Server shared/*.yml discovery (within captured snapshot only).
+        var preScanBase = new TreeMap<String,String>();
+        indexedDocs.stream().filter(d -> d.document().profile().isEmpty() && !hasActivation(d.document().properties()))
+                .forEach(d -> mergeProfileLists(preScanBase, d.document().properties()));
+        String appName = preScanBase.getOrDefault("spring.application.name", "").trim();
+        boolean usesConfigClient = hasBootstrapDoc
+                || preScanBase.keySet().stream().anyMatch(k -> k.startsWith("spring.cloud.config."));
+        if (!appName.isEmpty() && appName.matches("[A-Za-z0-9._-]+") && usesConfigClient) {
+            for (var file : inputs.snapshot().files()) {
+                String path = file.path();
+                if (parsedPaths.contains(path)) continue;
+                int sharedIdx = path.indexOf("/shared/");
+                if (sharedIdx < 0 && !path.startsWith("shared/")) continue;
+                String fname = filename(path);
+                boolean sharedApp = isConfigFileWithBase(fname, "application");
+                boolean sharedSvc = !sharedApp && isConfigFileWithBase(fname, appName);
+                if (!sharedApp && !sharedSvc) continue;
+                var source = inputs.files().get(path);
+                if (source == null) { issue(issues,INPUT_UNAVAILABLE,path,file.contentDigest()); continue; }
+                if (source.text().length() > policy.maxCharacters()) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); continue; }
+                try {
+                    String decoded=path.endsWith(".properties")?new String(source.bytes(),StandardCharsets.ISO_8859_1):decodeYaml(source);
+                    if(decoded.length()>policy.maxCharacters())throw new Limit();
+                    List<Map<String,String>> rows = path.endsWith(".properties") ? properties(decoded,policy) : yaml(decoded,policy);
+                    if ((long) indexedDocs.size()+rows.size() > policy.maxDocuments()) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); continue; }
+                    int extension = fname.lastIndexOf('.');
+                    Optional<String> profile = fname.startsWith("application-")
+                            ? Optional.of(fname.substring(12, extension))
+                            : fname.startsWith(appName + "-")
+                                    ? Optional.of(fname.substring(appName.length() + 1, extension))
+                                    : Optional.empty();
+                    int phaseRank = sharedApp ? PHASE_CONFIG_SERVER_APP : PHASE_CONFIG_SERVER_SERVICE;
+                    for (int index=0; index<rows.size(); index++) {
+                        var row=rows.get(index);
+                        if(!validProfileLists(row))issue(issues,CONFIG_PROFILE_INVALID,path+"#"+index,file.contentDigest());
+                        indexedDocs.add(new IndexedDoc(new Document(path,index,profile,row,
+                            new ConditionEvidence.Source(source.document().identity(),file.contentDigest(),Optional.empty(),index),false),
+                            phaseRank, 0));
+                    }
+                } catch (Limit failure) { issue(issues,INPUT_LIMIT,path,file.contentDigest()); }
+                catch (UnsupportedFormat failure) { issue(issues,CONFIG_FORMAT_UNSUPPORTED,path,file.contentDigest()); }
+                catch (YAMLException | IllegalArgumentException failure) { issue(issues,MALFORMED_INPUT,path,file.contentDigest()); }
+            }
+            indexedDocs.sort(baseOrder);
+        }
+        var docMetaByKey = new HashMap<String, IndexedDoc>(indexedDocs.size() * 2);
+        var parsed = new ArrayList<Document>(indexedDocs.size());
+        for (var idDoc : indexedDocs) {
+            parsed.add(idDoc.document());
+            docMetaByKey.putIfAbsent(idDoc.document().path() + "#" + idDoc.document().ordinal(), idDoc);
+        }
+        Comparator<Document> rawDocOrder = Comparator
+                .comparingInt((Document d) -> docMetaByKey.getOrDefault(d.path() + "#" + d.ordinal(), new IndexedDoc(d, PHASE_APPLICATION, location(d.path(), policy))).phaseRank())
+                .thenComparingInt(d -> docMetaByKey.getOrDefault(d.path() + "#" + d.ordinal(), new IndexedDoc(d, PHASE_APPLICATION, location(d.path(), policy))).locationOrder())
                 .thenComparingInt(d -> d.path().endsWith(".properties") ? 1 : 0).thenComparing(Document::path).thenComparingInt(Document::ordinal);
-        parsed.sort(baseOrder);
+        parsed.sort(rawDocOrder);
         // Both YAML suffixes in one location have no provider-independent precedence contract.
         Set<String> yamlNames = new HashSet<>();
         for (var d : parsed) if (!d.path().endsWith(".properties") && d.ordinal()==0
@@ -115,8 +205,10 @@ public final class ConfigDataIngestion {
         List<String> active = List.copyOf(profiles);
         // Config locations override earlier locations; within a location profiles override base,
         // and later active profiles override earlier ones, independently of file enumeration.
-        parsed.sort(Comparator.comparingInt((Document d) -> location(d.path(),policy))
-                .thenComparingInt(d -> d.profile().map(active::indexOf).map(i -> i+1).orElse(0)).thenComparing(baseOrder));
+        parsed.sort(Comparator
+                .comparingInt((Document d) -> docMetaByKey.getOrDefault(d.path() + "#" + d.ordinal(), new IndexedDoc(d, PHASE_APPLICATION, location(d.path(), policy))).phaseRank())
+                .thenComparingInt(d -> docMetaByKey.getOrDefault(d.path() + "#" + d.ordinal(), new IndexedDoc(d, PHASE_APPLICATION, location(d.path(), policy))).locationOrder())
+                .thenComparingInt(d -> d.profile().map(active::indexOf).map(i -> i+1).orElse(0)).thenComparing(rawDocOrder));
         Map<String,String> merged = new TreeMap<>(); var documents = new ArrayList<Document>();
         for (var d : new ImportClosure(inputs,policy,issues,identity,profiles,false).expand(parsed)) {
             boolean enabled = d.profile().map(profiles::contains).orElse(true);
@@ -126,9 +218,14 @@ public final class ConfigDataIngestion {
                     if(expressions.isEmpty())throw new IllegalArgumentException();
                     enabled &= expressions.stream().anyMatch(e -> matches(e,profiles,policy.maxDepth(),identity));
                 }
+                var legacyExpressions=listValue(d.properties(),"spring.profiles");
+                if (d.properties().keySet().stream().anyMatch(k -> k.equals("spring.profiles") || k.startsWith("spring.profiles["))) {
+                    if(legacyExpressions.isEmpty())throw new IllegalArgumentException();
+                    enabled &= legacyExpressions.stream().anyMatch(e -> matches(e,profiles,policy.maxDepth(),identity));
+                }
             }
             catch (IllegalArgumentException failure) { enabled=false; issue(issues,CONFIG_ACTIVATION_UNKNOWN,d.path()+"#"+d.ordinal(),d.evidence().identity()); }
-            if (d.properties().containsKey("spring.config.activate.on-cloud-platform") || d.properties().containsKey("spring.profiles")) {
+            if (d.properties().containsKey("spring.config.activate.on-cloud-platform")) {
                 enabled=false; issue(issues,CONFIG_ACTIVATION_UNKNOWN,d.path()+"#"+d.ordinal(),d.evidence().identity());
             }
             if ((d.profile().isPresent() || hasActivation(d.properties())) && d.properties().keySet().stream()
@@ -253,11 +350,20 @@ public final class ConfigDataIngestion {
         private boolean enabled(Document d) {
             if(beforeProfiles)return d.profile().isEmpty()&&!hasActivation(d.properties());
             if(d.profile().isPresent()&&!profiles.contains(d.profile().orElseThrow()))return false;
-            if(d.properties().containsKey("spring.profiles")||d.properties().containsKey("spring.config.activate.on-cloud-platform"))return false;
-            if(d.properties().keySet().stream().noneMatch(k -> k.startsWith("spring.config.activate.on-profile")))return true;
-            try {return listValue(d.properties(),"spring.config.activate.on-profile").stream()
-                    .anyMatch(e -> matches(e,profiles,policy.maxDepth(),identity));}
-            catch(IllegalArgumentException invalid) {return false;}
+            if(d.properties().containsKey("spring.config.activate.on-cloud-platform"))return false;
+            if(d.properties().keySet().stream().anyMatch(k -> k.startsWith("spring.config.activate.on-profile"))) {
+                try {
+                    var exprs = listValue(d.properties(),"spring.config.activate.on-profile");
+                    if (exprs.isEmpty() || exprs.stream().noneMatch(e -> matches(e,profiles,policy.maxDepth(),identity))) return false;
+                } catch(IllegalArgumentException invalid) {return false;}
+            }
+            if(d.properties().keySet().stream().anyMatch(k -> k.equals("spring.profiles") || k.startsWith("spring.profiles["))) {
+                try {
+                    var exprs = listValue(d.properties(),"spring.profiles");
+                    if (exprs.isEmpty() || exprs.stream().noneMatch(e -> matches(e,profiles,policy.maxDepth(),identity))) return false;
+                } catch(IllegalArgumentException invalid) {return false;}
+            }
+            return true;
         }
         private void readTree(String suppliedLocation,boolean optional,Document importer,int depth) {
             // Boot configtree locations are working-directory relative, unlike ordinary
@@ -355,7 +461,7 @@ public final class ConfigDataIngestion {
     }
     private static boolean validProfileLists(Map<String,String> values) {
         var bases=new TreeSet<String>();
-        for(String key:values.keySet())if(key.startsWith("spring.profiles.")||key.startsWith("spring.config.activate.on-profile")) {
+        for(String key:values.keySet())if(key.startsWith("spring.profiles.")||key.startsWith("spring.profiles[")||key.startsWith("spring.config.activate.on-profile")) {
             int bracket=key.indexOf('[');if(bracket<0)continue;
             String base=key.substring(0,bracket);bases.add(base);
             if(!key.substring(bracket).matches("\\[(?:0|[1-9][0-9]*)\\]"))return false;
@@ -480,7 +586,7 @@ public final class ConfigDataIngestion {
         var list=new ArrayList<String>(); for (int i=0;values.containsKey(key+"["+i+"]");i++) list.add(values.get(key+"["+i+"]").trim()); return list;
     }
     private static void addProfiles(Set<String> profiles,List<String> additions) { profiles.addAll(additions); }
-    private static boolean hasActivation(Map<String,String> values) { return values.keySet().stream().anyMatch(k -> k.startsWith("spring.config.activate.") || k.equals("spring.profiles")); }
+    private static boolean hasActivation(Map<String,String> values) { return values.keySet().stream().anyMatch(k -> k.startsWith("spring.config.activate.") || k.equals("spring.profiles") || k.startsWith("spring.profiles[")); }
     private static boolean matches(String expression,Set<String> profiles,int depth,ContentDigest identity) {
         var semantics=new ConditionExpression.Semantics(PROVIDER,identity);
         return evaluate(ProfileExpressionLowering.parse(expression,semantics,depth),profiles);

@@ -18,10 +18,42 @@ import java.util.*;
  * invokes a provider.
  */
 public final class CapabilityGapNormalizer {
+        public static final int MAX_COALESCED_REPRESENTATIVE_SPANS = 3;
+        private static final int MAX_COALESCED_REPRESENTATIVE_DIAGNOSTICS = 3;
+
         private CapabilityGapNormalizer() {
         }
 
         private record AttemptKey(EvidenceContext context, EvidenceSubject subject, EvidenceRequirement.Kind kind) {
+        }
+
+        private record UnresolvedGroupKey(com.evolution.analysis.contract.identity.SourceDocumentIdentity document,
+                        String category) implements Comparable<UnresolvedGroupKey> {
+                @Override
+                public int compareTo(UnresolvedGroupKey other) {
+                        int docCmp = document.value().compareTo(other.document.value());
+                        return docCmp != 0 ? docCmp : category.compareTo(other.category);
+                }
+        }
+
+        /**
+         * Returns the closed-denominator observation count represented by a gap record
+         * (1 for uncoalesced gaps, {@code occurrenceCount=N} for coalesced document groups).
+         */
+        public static int occurrenceCount(CapabilityGapRecord gap) {
+                for (String limitation : gap.limitations()) {
+                        if (limitation.startsWith("occurrenceCount=")) {
+                                try {
+                                        int parsed = Integer.parseInt(limitation.substring("occurrenceCount=".length()));
+                                        if (parsed > 0) {
+                                                return parsed;
+                                        }
+                                } catch (NumberFormatException ignored) {
+                                        // Fall through to default count of 1.
+                                }
+                        }
+                }
+                return 1;
         }
 
         public static EvidenceAcquisitionLedger normalize(EvidenceContext context, EvidenceNormalizationInput input) {
@@ -442,6 +474,7 @@ public final class CapabilityGapNormalizer {
                                                 List.of(), List.of(), attemptIndex, gaps);
                         }
                 }
+                var unresolvedGroups = new TreeMap<UnresolvedGroupKey, List<ObservationRecord>>();
                 for (ObservationRecord observation : result.observations()) {
                         boolean unresolved = observation
                                         .attribution() != com.evolution.analysis.contract.semantic.SemanticStatus.RESOLVED;
@@ -452,6 +485,20 @@ public final class CapabilityGapNormalizer {
                         if (!unresolved && !missingOrigin && !missingProvenance && !unmapped) {
                                 continue;
                         }
+                        if (observation.attribution() == com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED) {
+                                unresolvedGroups.computeIfAbsent(
+                                                new UnresolvedGroupKey(observation.document(), observation.category().value()),
+                                                ignored -> new ArrayList<>()).add(observation);
+                                if (missingProvenance) {
+                                        ProviderObservationReference reference = reference(result.frontend(), "java.observation",
+                                                        resultIdentity, observation);
+                                        EvidenceSubject subject = EvidenceSubject.observation(reference.identity());
+                                        List<SourceSpan> spans = observation.span().stream().toList();
+                                        addGap(context, result.frontend(), reference, CapabilityGapCatalog.missingProvenance(),
+                                                        subject, spans, observation.diagnostics(), attemptIndex, gaps);
+                                }
+                                continue;
+                        }
                         ProviderObservationReference reference = reference(result.frontend(), "java.observation",
                                         resultIdentity, observation);
                         EvidenceSubject subject = EvidenceSubject.observation(reference.identity());
@@ -459,37 +506,8 @@ public final class CapabilityGapNormalizer {
                         List<AffectedOutput> outputs = List.of(new AffectedOutput(
                                         AffectedOutput.Kind.RELATIONSHIP_CATEGORY, observation.category().value()));
                         if (unresolved) {
-                                CapabilityGapCatalog.Entry base = CapabilityGapCatalog
-                                                .entryFor(observation.attribution());
-                                var entry = new CapabilityGapCatalog.Entry(
-                                                observation.category().value(), base.reasonCode(),
-                                                base.requirementKind(), base.question(),
-                                                base.authorizationClass(), outputs.getFirst());
-                                // Missing target origin and an unmapped occurrence are consequences of the same
-                                // failed attribution. Preserve all dimensions and requirements in one root gap.
-                                var requirements = new ArrayList<EvidenceRequirement>();
-                                requirements.add(entry.requirement(List.of(subject)));
-                                var affected = new ArrayList<AffectedOutput>(outputs);
-                                var dimensions = new ArrayList<String>();
-                                if (observation.origin() == ObservationRecord.EvidenceState.MISSING) {
-                                        var origin = CapabilityGapCatalog.missingOrigin();
-                                        requirements.add(origin.requirement(List.of(subject)));
-                                        affected.add(origin.affectedOutput());
-                                        dimensions.add("origin=MISSING");
-                                }
-                                if (observation.mappedOccurrence().isEmpty()) {
-                                        var mapping = CapabilityGapCatalog.unmappedObservation();
-                                        requirements.add(mapping.requirement(List.of(subject)));
-                                        affected.add(mapping.affectedOutput());
-                                        dimensions.add("mapping=MISSING");
-                                }
-                                List<AcquisitionAttemptRecord.Identity> related = relatedAttempts(context, subject,
-                                                requirements, attemptIndex);
-                                gaps.add(CapabilityGapRecord.create(context, result.frontend(),
-                                                entry.mechanismCategory(), entry.reasonCode(), subject, spans,
-                                                List.of(reference), requirements.stream().distinct().toList(),
-                                                List.of(), affected.stream().distinct().toList(), related,
-                                                observation.diagnostics(), dimensions));
+                                emitSingleUnresolvedObservationGap(context, result, observation, reference, subject,
+                                                spans, outputs, attemptIndex, gaps);
                         }
                         if (missingOrigin) {
                                 addGap(context, result.frontend(), reference, CapabilityGapCatalog.missingOrigin(),
@@ -507,6 +525,197 @@ public final class CapabilityGapNormalizer {
                                                 spans, observation.diagnostics(), attemptIndex, gaps);
                         }
                 }
+                for (var entry : unresolvedGroups.entrySet()) {
+                        List<ObservationRecord> group = entry.getValue();
+                        if (group.size() == 1) {
+                                ObservationRecord observation = group.getFirst();
+                                ProviderObservationReference reference = reference(result.frontend(), "java.observation",
+                                                resultIdentity, observation);
+                                EvidenceSubject subject = EvidenceSubject.observation(reference.identity());
+                                List<SourceSpan> spans = observation.span().stream().toList();
+                                List<AffectedOutput> outputs = List.of(new AffectedOutput(
+                                                AffectedOutput.Kind.RELATIONSHIP_CATEGORY, observation.category().value()));
+                                emitSingleUnresolvedObservationGap(context, result, observation, reference, subject,
+                                                spans, outputs, attemptIndex, gaps);
+                        } else {
+                                emitCoalescedUnresolvedGroupGap(context, result, resultIdentity, entry.getKey(), group,
+                                                attemptIndex, gaps);
+                        }
+                }
+        }
+
+        private static void emitSingleUnresolvedObservationGap(
+                        EvidenceContext context,
+                        FrontendResult result,
+                        ObservationRecord observation,
+                        ProviderObservationReference reference,
+                        EvidenceSubject subject,
+                        List<SourceSpan> spans,
+                        List<AffectedOutput> outputs,
+                        Map<AttemptKey, List<AcquisitionAttemptRecord.Identity>> attemptIndex,
+                        List<CapabilityGapRecord> gaps) {
+                CapabilityGapCatalog.Entry base = CapabilityGapCatalog.entryFor(observation.attribution());
+                var entry = new CapabilityGapCatalog.Entry(
+                                observation.category().value(), base.reasonCode(),
+                                base.requirementKind(), base.question(),
+                                base.authorizationClass(), outputs.getFirst());
+                // Missing target origin and an unmapped occurrence are consequences of the same
+                // failed attribution. Preserve all dimensions and requirements in one root gap.
+                var requirements = new ArrayList<EvidenceRequirement>();
+                requirements.add(entry.requirement(List.of(subject)));
+                var affected = new ArrayList<AffectedOutput>(outputs);
+                var dimensions = new ArrayList<String>();
+                if (observation.origin() == ObservationRecord.EvidenceState.MISSING) {
+                        var origin = CapabilityGapCatalog.missingOrigin();
+                        requirements.add(origin.requirement(List.of(subject)));
+                        affected.add(origin.affectedOutput());
+                        dimensions.add("origin=MISSING");
+                }
+                if (observation.mappedOccurrence().isEmpty()) {
+                        var mapping = CapabilityGapCatalog.unmappedObservation();
+                        requirements.add(mapping.requirement(List.of(subject)));
+                        affected.add(mapping.affectedOutput());
+                        dimensions.add("mapping=MISSING");
+                }
+                List<AcquisitionAttemptRecord.Identity> related = relatedAttempts(context, subject,
+                                requirements, attemptIndex);
+                gaps.add(CapabilityGapRecord.create(context, result.frontend(),
+                                entry.mechanismCategory(), entry.reasonCode(), subject, spans,
+                                List.of(reference), requirements.stream().distinct().toList(),
+                                List.of(), affected.stream().distinct().toList(), related,
+                                observation.diagnostics(), dimensions));
+        }
+
+        private static void emitCoalescedUnresolvedGroupGap(
+                        EvidenceContext context,
+                        FrontendResult result,
+                        ContentDigest resultIdentity,
+                        UnresolvedGroupKey key,
+                        List<ObservationRecord> group,
+                        Map<AttemptKey, List<AcquisitionAttemptRecord.Identity>> attemptIndex,
+                        List<CapabilityGapRecord> gaps) {
+                record Member(ObservationRecord observation, ProviderObservationReference reference) {}
+                var members = new ArrayList<Member>(group.size());
+                for (ObservationRecord obs : group) {
+                        members.add(new Member(obs, reference(result.frontend(), "java.observation", resultIdentity, obs)));
+                }
+                members.sort((a, b) -> {
+                        var spanA = a.observation().span();
+                        var spanB = b.observation().span();
+                        if (spanA.isPresent() != spanB.isPresent()) {
+                                return spanA.isPresent() ? -1 : 1;
+                        }
+                        if (spanA.isPresent()) {
+                                int cmp = spanA.get().compareTo(spanB.get());
+                                if (cmp != 0) return cmp;
+                        }
+                        int refCmp = Objects.toString(a.observation().reference(), "")
+                                        .compareTo(Objects.toString(b.observation().reference(), ""));
+                        if (refCmp != 0) return refCmp;
+                        return a.reference().identity().value().compareTo(b.reference().identity().value());
+                });
+
+                var representativeSpans = new LinkedHashSet<SourceSpan>();
+                var allMemberDescriptors = new ArrayList<List<Object>>(members.size());
+                boolean anyMissingOrigin = false;
+                boolean anyUnmapped = false;
+                var representativeDiagnostics = new TreeSet<Diagnostic>();
+                for (Member member : members) {
+                        ObservationRecord obs = member.observation();
+                        if (representativeSpans.size() < MAX_COALESCED_REPRESENTATIVE_SPANS) {
+                                obs.span().ifPresent(representativeSpans::add);
+                        }
+                        if (obs.origin() == ObservationRecord.EvidenceState.MISSING) {
+                                anyMissingOrigin = true;
+                        }
+                        if (obs.mappedOccurrence().isEmpty()) {
+                                anyUnmapped = true;
+                        }
+                        for (Diagnostic d : obs.diagnostics()) {
+                                if (representativeDiagnostics.size() < MAX_COALESCED_REPRESENTATIVE_DIAGNOSTICS) {
+                                        representativeDiagnostics.add(d);
+                                }
+                        }
+                        List<Integer> spanCoords = obs.span()
+                                        .map(s -> List.of(s.startLine(), s.startColumn(), s.endLine(), s.endColumn()))
+                                        .orElse(List.of());
+                        allMemberDescriptors.add(List.of(
+                                        spanCoords,
+                                        Objects.toString(obs.reference(), ""),
+                                        member.reference().payloadDigest().value()));
+                }
+
+                ContentDigest allSpansDigest = ContentDigest.sha256Utf8(CanonicalJson.write(allMemberDescriptors));
+                ProviderObservationReference coalescedRef = ProviderObservationReference.create(
+                                result.frontend(), "java.observation.coalesced", resultIdentity, allSpansDigest);
+                EvidenceSubject subject = EvidenceSubject.observation(coalescedRef.identity());
+
+                CapabilityGapCatalog.Entry base = CapabilityGapCatalog
+                                .entryFor(com.evolution.analysis.contract.semantic.SemanticStatus.UNRESOLVED);
+                AffectedOutput categoryOutput = new AffectedOutput(
+                                AffectedOutput.Kind.RELATIONSHIP_CATEGORY, key.category());
+                var entry = new CapabilityGapCatalog.Entry(
+                                key.category(), base.reasonCode(), base.requirementKind(),
+                                base.question(), base.authorizationClass(), categoryOutput);
+
+                var requirements = new ArrayList<EvidenceRequirement>();
+                requirements.add(entry.requirement(List.of(subject)));
+                var affected = new ArrayList<AffectedOutput>();
+                affected.add(categoryOutput);
+                var dimensions = new LinkedHashSet<String>();
+                if (anyMissingOrigin) {
+                        var origin = CapabilityGapCatalog.missingOrigin();
+                        requirements.add(origin.requirement(List.of(subject)));
+                        affected.add(origin.affectedOutput());
+                        dimensions.add("origin=MISSING");
+                }
+                if (anyUnmapped) {
+                        var mapping = CapabilityGapCatalog.unmappedObservation();
+                        requirements.add(mapping.requirement(List.of(subject)));
+                        affected.add(mapping.affectedOutput());
+                        dimensions.add("mapping=MISSING");
+                }
+                dimensions.add("coalesced=true");
+                dimensions.add("occurrenceCount=" + group.size());
+                dimensions.add("allSpansDigest=" + allSpansDigest.value());
+
+                var diagnostics = new ArrayList<Diagnostic>(representativeDiagnostics);
+                diagnostics.add(new Diagnostic(
+                                com.evolution.analysis.contract.semantic.DiagnosticSeverity.WARNING,
+                                "evidence.gap.coalesced",
+                                "Coalesced " + group.size() + " SEMANTIC_UNRESOLVED observations in document.",
+                                Optional.empty(),
+                                Map.of(
+                                                "coalesced", "true",
+                                                "occurrenceCount", String.valueOf(group.size()),
+                                                "allSpansDigest", allSpansDigest.value())));
+
+                var relatedSet = new TreeSet<AcquisitionAttemptRecord.Identity>(
+                                relatedAttempts(context, subject, requirements, attemptIndex));
+                if (!attemptIndex.isEmpty()) {
+                        for (Member member : members) {
+                                relatedSet.addAll(relatedAttempts(
+                                                context,
+                                                EvidenceSubject.observation(member.reference().identity()),
+                                                requirements,
+                                                attemptIndex));
+                        }
+                }
+
+                gaps.add(CapabilityGapRecord.create(
+                                context,
+                                result.frontend(),
+                                entry.mechanismCategory(),
+                                entry.reasonCode(),
+                                subject,
+                                List.copyOf(representativeSpans),
+                                List.of(coalescedRef),
+                                requirements.stream().distinct().toList(),
+                                List.of(),
+                                affected.stream().distinct().toList(),
+                                List.copyOf(relatedSet),
+                                diagnostics,
+                                List.copyOf(dimensions)));
         }
 
         private static List<AcquisitionAttemptRecord.Identity> relatedAttempts(EvidenceContext context,

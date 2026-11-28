@@ -28,6 +28,9 @@ import java.util.stream.Stream;
 public final class PartitionedGraphStore implements PartitionedGraphReader {
     private static final String FORMAT = "graph.partition-store:m8.4-v1", LEAF = "graph.page-leaf:m8.4-v1",
             BRANCH = "graph.page-branch:m8.4-v1";
+    static final int DEFAULT_ROW_BYTES = 512 * 1024 * 1024;
+    private static final int MAX_ROW_BYTES = 1_073_741_824;
+    private static final int LEAF_ENVELOPE_ALLOWANCE = 65_536;
     private static final int FANOUT = 128, PAGE_ROWS = 256, PAGE_CHARACTERS = 1_048_576;
     private static final int LOCAL_PAGE_CACHE_MAX_ENTRIES = 128;
     private static final long LOCAL_PAGE_CACHE_MAX_BYTES = 64L * 1024 * 1024;
@@ -172,7 +175,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     }
 
     public PartitionedGraphStore(Path directory) throws IOException {
-        this(directory, 64_000_000);
+        this(directory, DEFAULT_ROW_BYTES);
     }
 
     public PartitionedGraphStore(Path directory, int rowBytes) throws IOException {
@@ -181,7 +184,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
     public PartitionedGraphStore(Path directory, int rowBytes, int pageWorkers) throws IOException {
         this.directory = StreamingContentStore.directory(directory);
-        if (rowBytes < 1024 || rowBytes == Integer.MAX_VALUE)
+        if (rowBytes < 1024 || rowBytes > MAX_ROW_BYTES)
             throw new IllegalArgumentException("GRAPH_PAGE_WORKER_BUDGET");
         if (pageWorkers < 1 || pageWorkers > 8)
             throw new IllegalArgumentException("GRAPH_PAGE_WORKERS_REQUIRED");
@@ -309,7 +312,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
 
     PartitionedGraphStore(Path directory, int rowBytes, int pageWorkers, StreamingContentStore.Force force)
             throws IOException {
-        if (rowBytes < 1024 || rowBytes == Integer.MAX_VALUE)
+        if (rowBytes < 1024 || rowBytes > MAX_ROW_BYTES)
             throw new IllegalArgumentException("GRAPH_PAGE_WORKER_BUDGET");
         if (pageWorkers < 1 || pageWorkers > 8)
             throw new IllegalArgumentException("GRAPH_PAGE_WORKERS_REQUIRED");
@@ -665,8 +668,15 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution,
             boolean fastArchitecture)
             throws IOException {
+        return build(input, snapshots, cancelled, ledgers, contribution, fastArchitecture, null);
+    }
+
+    public Publication build(CanonicalGraphInput input, Path snapshots, BooleanSupplier cancelled,
+            Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution,
+            boolean fastArchitecture, IncrementalGraphProjector projector)
+            throws IOException {
         return assemble(input.repository().snapshot().identity(), snapshots, cancelled, workspace -> {
-            new CanonicalGraphBuilder().project(input, workspace, ledgers, fastArchitecture);
+            new CanonicalGraphBuilder().project(input, workspace, ledgers, fastArchitecture, projector);
             contribution.project(workspace);
         });
     }
@@ -719,53 +729,77 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                     var contexts = new ArrayList<KnowledgeGraph.Context>(
                             workspace.records("contexts", GraphSnapshotCodec::context).values());
                     var kinds = new TreeMap<String, Long>();
-                    try (var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
-                        int batched = 0;
-                        for (var edge : workspace.records("edges", GraphSnapshotCodec::edge).values()) {
-                            kinds.merge(edge.kind(), 1L, Long::sum);
-                            String id = key(edge.context(), edge.identity());
-                            addInsertBatch(workspace, insert, "outgoing", key(edge.context(), edge.source(), edge.identity()),
-                                    id, cancelled);
-                            if (++batched == 1024) { insert.executeBatch(); batched = 0; }
-                            for (String target : edge.target().identities()) {
-                                addInsertBatch(workspace, insert, "incoming", key(edge.context(), target, edge.identity()), id,
-                                        cancelled);
-                                if (++batched == 1024) { insert.executeBatch(); batched = 0; }
-                            }
+                    boolean runPageAudit = Boolean.getBoolean("evo.graph.auditOnPublish");
+                    int auditSeenCap = defaultAuditSeenCap();
+                    var contextIds = runPageAudit ? null : new HashSet<String>();
+                    var evidenceSeen = runPageAudit ? null : new HashSet<String>();
+                    var nodeSeen = runPageAudit ? null : new HashSet<String>();
+                    try (var existsStmt = runPageAudit ? null
+                            : database.prepareStatement("SELECT 1 FROM rows WHERE space=? AND k=?")) {
+                        if (!runPageAudit) {
+                            auditContextsAndNodes(database, workspace, snapshot.value(), cancelled,
+                                    existsStmt, contextIds, nodeSeen, evidenceSeen, auditSeenCap);
                         }
-                        if (batched > 0) insert.executeBatch();
+                        try (var edgeQuery = database.prepareStatement("SELECT payload FROM rows WHERE space='edges'");
+                                var edgeRows = edgeQuery.executeQuery();
+                                var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
+                            int batched = 0;
+                            while (edgeRows.next()) {
+                                check(cancelled);
+                                var edge = GraphSnapshotCodec.edge(parse(workspace.decoded(edgeRows.getString(1))));
+                                if (!runPageAudit) {
+                                    auditEdge(edge, workspace, existsStmt, contextIds, nodeSeen, evidenceSeen, auditSeenCap);
+                                }
+                                kinds.merge(edge.kind(), 1L, Long::sum);
+                                String id = key(edge.context(), edge.identity());
+                                addInsertBatch(workspace, insert, "outgoing", key(edge.context(), edge.source(), edge.identity()),
+                                        id, cancelled);
+                                if (++batched == 1024) { insert.executeBatch(); batched = 0; }
+                                for (String target : edge.target().identities()) {
+                                    addInsertBatch(workspace, insert, "incoming", key(edge.context(), target, edge.identity()), id,
+                                            cancelled);
+                                    if (++batched == 1024) { insert.executeBatch(); batched = 0; }
+                                }
+                            }
+                            if (batched > 0) insert.executeBatch();
+                        }
                     }
                     workspace.flush();
                     database.commit();
                     var digest = StreamingContentStore.sha256();
                     ContentDigest identity;
+                    ContentDigest frameDigest;
                     var frame = StreamingContentStore.sha256();
-                    try (var channel = java.nio.channels.FileChannel.open(pending, StandardOpenOption.WRITE,
-                            LinkOption.NOFOLLOW_LINKS)) {
-                        var destination = new DigestOutputStream(
-                                new BufferedOutputStream(java.nio.channels.Channels.newOutputStream(channel), 65536),
-                                frame);
-                        var writer = new BufferedWriter(new OutputStreamWriter(destination, StandardCharsets.UTF_8), 65536);
-                        writer.write("{\"format\":");
-                        CanonicalJson.writeTo(GraphSnapshotCodec.FORMAT, writer);
-                        writer.write(",\"graph\":");
-                        writer.flush();
-                        var graphWriter = new BufferedWriter(new OutputStreamWriter(
-                                new DigestOutputStream(destination, digest), StandardCharsets.UTF_8), 65536);
-                        writeGraph(database, workspace, snapshot.value(), graphWriter, cancelled);
-                        graphWriter.flush();
-                        identity = new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()));
-                        writer.write(",\"identity\":");
-                        CanonicalJson.writeTo(identity, writer);
-                        writer.write("}");
-                        writer.flush();
-                        destination.flush();
-                        channel.force(true);
+                    var prebuiltTrees = new TreeMap<String, Tree>();
+                    try (var workers = new BoundedTasks(pageWorkers, pageWorkers, "evo-graph-page", cancelled)) {
+                        try (var channel = java.nio.channels.FileChannel.open(pending, StandardOpenOption.WRITE,
+                                LinkOption.NOFOLLOW_LINKS)) {
+                            var destination = new DigestOutputStream(
+                                    new BufferedOutputStream(java.nio.channels.Channels.newOutputStream(channel), 65536),
+                                    frame);
+                            var writer = new BufferedWriter(new OutputStreamWriter(destination, StandardCharsets.UTF_8), 65536);
+                            writer.write("{\"format\":");
+                            CanonicalJson.writeTo(GraphSnapshotCodec.FORMAT, writer);
+                            writer.write(",\"graph\":");
+                            writer.flush();
+                            var graphWriter = new BufferedWriter(new OutputStreamWriter(
+                                    new DigestOutputStream(destination, digest), StandardCharsets.UTF_8), 65536);
+                            writeGraph(database, workspace, snapshot.value(), graphWriter, cancelled, workers, prebuiltTrees);
+                            graphWriter.flush();
+                            identity = new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()));
+                            writer.write(",\"identity\":");
+                            CanonicalJson.writeTo(identity, writer);
+                            writer.write("}");
+                            writer.flush();
+                            destination.flush();
+                            channel.force(true);
+                        }
+                        // Audits endpoints, evidence, contexts and both adjacency indexes before
+                        // publication.
+                        frameDigest = new ContentDigest("sha256:" + HexFormat.of().formatHex(frame.digest()));
+                        publish(database, workspace, identity, snapshot.value(), cancelled,
+                                Optional.of(frameDigest), false, workers, prebuiltTrees, !runPageAudit);
                     }
-                    // Audits endpoints, evidence, contexts and both adjacency indexes before
-                    // publication.
-                    publish(database, workspace, identity, snapshot.value(), cancelled,
-                            Optional.of(new ContentDigest("sha256:" + HexFormat.of().formatHex(frame.digest()))));
                     Path target = snapshots.resolve(identity.value().substring(7) + ".graph.json");
                     StreamingContentStore.safe(target);
                     check(cancelled);
@@ -773,7 +807,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                         StreamingContentStore.createLinkWithRetry(target, pending);
                     } catch (FileAlreadyExistsException existing) {
                         if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
-                                || Files.size(target) != Files.size(pending) || !hash(target).equals(hash(pending)))
+                                || Files.size(target) != Files.size(pending) || !hash(target).equals(frameDigest))
                             throw new IOException("GRAPH_SNAPSHOT_CONFLICT");
                     }
                     return new Publication(identity, snapshot, contexts, total(database, "nodes"),
@@ -805,7 +839,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     }
 
     private void writeGraph(Connection database, SqliteGraphProjection workspace, String snapshot, Writer writer,
-            BooleanSupplier cancelled) throws SQLException, IOException {
+            BooleanSupplier cancelled, BoundedTasks workers, Map<String, Tree> builtTrees) throws SQLException, IOException {
         writer.write("{");
         boolean first = true;
         for (String space : List.of("contexts", "edges", "evidence", "nodes")) {
@@ -815,18 +849,23 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             CanonicalJson.writeTo(space, writer);
             writer.write(":[");
             boolean member = false;
-            try (var query = database.prepareStatement("SELECT payload FROM rows WHERE space=? ORDER BY k")) {
+            var pages = new TreePages(cancelled, workers);
+            try (var query = database.prepareStatement("SELECT k,payload FROM rows WHERE space=? ORDER BY k")) {
                 query.setString(1, space);
                 try (var rows = query.executeQuery()) {
                     while (rows.next()) {
                         check(cancelled);
+                        String k = rows.getString(1);
+                        String decoded = workspace.decoded(rows.getString(2));
                         if (member)
                             writer.write(",");
                         member = true;
-                        writer.write(workspace.decoded(rows.getString(1)));
+                        writer.write(decoded);
+                        pages.add(new EncodedEntry(k, decoded));
                     }
                 }
             }
+            builtTrees.put(space, pages.finish());
             writer.write("]");
         }
         writer.write(",\"schema\":");
@@ -922,7 +961,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                                 StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                                         .onUnmappableCharacter(CodingErrorAction.REPORT))) {
                     GraphJson.streamObject(reader,
-                            new GraphJson.StreamLimits(bytes, 128, bytes, Math.toIntExact(Math.min(bytes, rowBytes))),
+                            new GraphJson.StreamLimits(bytes, 128, bytes, Math.toIntExact(Math.min(bytes, pageByteLimit()))),
                             (name, member) -> {
                                 check(cancelled);
                                 if (name.equals("format") || name.equals("identity"))
@@ -1001,7 +1040,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
                 workspace.flush();
                 database.commit();
                 publish(database, workspace, expected, text(body.get("snapshot")), cancelled,
-                        Optional.of(new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()))));
+                        Optional.of(new ContentDigest("sha256:" + HexFormat.of().formatHex(digest.digest()))), true);
             }
         } catch (UncheckedIOException failure) {
             throw unwrap(failure);
@@ -1012,31 +1051,148 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         }
     }
 
+    public boolean hasPublishedRoot(ContentDigest graph) {
+        try {
+            Path p = pointer(Objects.requireNonNull(graph));
+            return Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
     private void publish(Connection database, SqliteGraphProjection workspace, ContentDigest graph, String snapshot,
-            BooleanSupplier cancelled, Optional<ContentDigest> frame) throws SQLException, IOException {
+            BooleanSupplier cancelled, Optional<ContentDigest> frame, boolean verifyFromPages) throws SQLException, IOException {
         try (var workers = new BoundedTasks(pageWorkers, pageWorkers, "evo-graph-page", cancelled)) {
-            var trees = new TreeMap<String, Tree>();
-            for (String space : List.of("contexts", "nodes", "edges", "outgoing", "incoming", "evidence"))
+            publish(database, workspace, graph, snapshot, cancelled, frame, verifyFromPages, workers, Map.of(), false);
+        }
+    }
+
+    private void publish(Connection database, SqliteGraphProjection workspace, ContentDigest graph, String snapshot,
+            BooleanSupplier cancelled, Optional<ContentDigest> frame, boolean verifyFromPages,
+            BoundedTasks workers, Map<String, Tree> prebuiltTrees, boolean alreadyAudited) throws SQLException, IOException {
+        boolean runPageAudit = verifyFromPages || Boolean.getBoolean("evo.graph.auditOnPublish");
+        if (!runPageAudit && !alreadyAudited) {
+            auditDatabaseReferences(database, workspace, snapshot, cancelled);
+        }
+        var trees = new TreeMap<String, Tree>(prebuiltTrees);
+        for (String space : List.of("contexts", "nodes", "edges", "outgoing", "incoming", "evidence")) {
+            if (!trees.containsKey(space)) {
                 trees.put(space, build(database, workspace, space, cancelled, workers));
-            try (var query = database.prepareStatement("SELECT payload FROM rows WHERE space='contexts' ORDER BY k");
-                    var contexts = query.executeQuery();
-                    var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
-                while (contexts.next()) {
-                    var context = GraphSnapshotCodec.context(parse(workspace.decoded(contexts.getString(1))));
-                    long nodes = count(database, "nodes", context.identity()),
-                            edges = count(database, "edges", context.identity());
-                    insert(workspace, insert, "partitions", context.identity(),
-                            partition(graph, context.identity(), nodes, edges, trees, cancelled), cancelled);
+            }
+        }
+        try (var query = database.prepareStatement("SELECT payload FROM rows WHERE space='contexts' ORDER BY k");
+                var contexts = query.executeQuery();
+                var insert = database.prepareStatement("INSERT INTO rows(space,k,payload) VALUES(?,?,?)")) {
+            while (contexts.next()) {
+                var context = GraphSnapshotCodec.context(parse(workspace.decoded(contexts.getString(1))));
+                long nodes = count(database, "nodes", context.identity()),
+                        edges = count(database, "edges", context.identity());
+                insert(workspace, insert, "partitions", context.identity(),
+                        partition(graph, context.identity(), nodes, edges, trees, cancelled), cancelled);
+            }
+        }
+        workspace.flush();
+        database.commit();
+        trees.put("partitions", build(database, workspace, "partitions", cancelled, workers));
+        var root = rootDocument(graph, snapshot, trees, cancelled);
+        if (runPageAudit && !graph.equals(canonicalDigest(root, cancelled, true, frame)))
+            throw new IOException("GRAPH_PARTITION_DIGEST_MISMATCH");
+        publishRoot(root, cancelled);
+    }
+
+    private static int defaultAuditSeenCap() {
+        long maxMem = Runtime.getRuntime().maxMemory();
+        if (maxMem >= 2L * 1024 * 1024 * 1024) return 1_048_576;
+        if (maxMem >= 1024L * 1024 * 1024) return 524_288;
+        return 262_144;
+    }
+
+    private void auditContextsAndNodes(Connection database, SqliteGraphProjection workspace, String snapshot,
+            BooleanSupplier cancelled, PreparedStatement existsStmt, Set<String> contextIds,
+            Set<String> nodeSeen, Set<String> evidenceSeen, int seenCap) throws SQLException, IOException {
+        try (var q = database.prepareStatement("SELECT payload FROM rows WHERE space='contexts'");
+                var rs = q.executeQuery()) {
+            while (rs.next()) {
+                check(cancelled);
+                var ctx = GraphSnapshotCodec.context(parse(workspace.decoded(rs.getString(1))));
+                if (!ctx.snapshot().value().equals(snapshot))
+                    throw new IOException("GRAPH_PARTITION_FOREIGN_SNAPSHOT");
+                contextIds.add(ctx.identity());
+                if (!existsInRows(workspace, existsStmt, evidenceSeen, "evidence", ctx.evidence().value(), seenCap))
+                    throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+            }
+        }
+        try (var q = database.prepareStatement("SELECT k,payload FROM rows WHERE space='nodes'");
+                var rs = q.executeQuery()) {
+            while (rs.next()) {
+                check(cancelled);
+                String nodeKey = rs.getString(1);
+                var node = GraphSnapshotCodec.node(parse(workspace.decoded(rs.getString(2))));
+                if (!contextIds.contains(node.context()))
+                    throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+                for (var ev : node.evidence()) {
+                    if (!existsInRows(workspace, existsStmt, evidenceSeen, "evidence", ev.value(), seenCap))
+                        throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+                }
+                if (nodeSeen.size() < seenCap) {
+                    nodeSeen.add(nodeKey);
                 }
             }
-            workspace.flush();
-            database.commit();
-            trees.put("partitions", build(database, workspace, "partitions", cancelled, workers));
-            var root = rootDocument(graph, snapshot, trees, cancelled);
-            if (!graph.equals(canonicalDigest(root, cancelled, true, frame)))
-                throw new IOException("GRAPH_PARTITION_DIGEST_MISMATCH");
-            publishRoot(root, cancelled);
         }
+    }
+
+    private void auditEdge(KnowledgeGraph.Edge edge, SqliteGraphProjection workspace, PreparedStatement existsStmt,
+            Set<String> contextIds, Set<String> nodeSeen, Set<String> evidenceSeen, int seenCap)
+            throws SQLException, IOException {
+        if (!contextIds.contains(edge.context()))
+            throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+        if (!existsInRows(workspace, existsStmt, nodeSeen, "nodes", key(edge.context(), edge.source()), seenCap))
+            throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+        for (String target : edge.target().identities()) {
+            if (!existsInRows(workspace, existsStmt, nodeSeen, "nodes", key(edge.context(), target), seenCap))
+                throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+        }
+        if (edge.region().isPresent()
+                && !existsInRows(workspace, existsStmt, nodeSeen, "nodes", key(edge.context(), edge.region().orElseThrow()), seenCap))
+            throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+        for (var ev : edge.evidence()) {
+            if (!existsInRows(workspace, existsStmt, evidenceSeen, "evidence", ev.value(), seenCap))
+                throw new IOException("GRAPH_PARTITION_DANGLING_REFERENCE");
+        }
+    }
+
+    private void auditDatabaseReferences(Connection database, SqliteGraphProjection workspace, String snapshot,
+            BooleanSupplier cancelled) throws SQLException, IOException {
+        int seenCap = defaultAuditSeenCap();
+        var contextIds = new HashSet<String>();
+        var evidenceSeen = new HashSet<String>();
+        var nodeSeen = new HashSet<String>();
+        try (var existsStmt = database.prepareStatement("SELECT 1 FROM rows WHERE space=? AND k=?")) {
+            auditContextsAndNodes(database, workspace, snapshot, cancelled, existsStmt, contextIds, nodeSeen, evidenceSeen, seenCap);
+            try (var q = database.prepareStatement("SELECT payload FROM rows WHERE space='edges'");
+                    var rs = q.executeQuery()) {
+                while (rs.next()) {
+                    check(cancelled);
+                    var edge = GraphSnapshotCodec.edge(parse(workspace.decoded(rs.getString(1))));
+                    auditEdge(edge, workspace, existsStmt, contextIds, nodeSeen, evidenceSeen, seenCap);
+                }
+            }
+        }
+    }
+
+    private static boolean existsInRows(SqliteGraphProjection workspace, PreparedStatement existsStmt,
+            Set<String> cache, String space, String key, int seenCap) throws SQLException {
+        if (workspace.hasKnownKey(space, key) || cache.contains(key))
+            return true;
+        existsStmt.setString(1, space);
+        existsStmt.setString(2, key);
+        try (var rs = existsStmt.executeQuery()) {
+            if (!rs.next())
+                return false;
+        }
+        if (cache.size() < seenCap)
+            cache.add(key);
+        return true;
     }
 
     private Partition partition(ContentDigest graph, String context, long nodes, long edges, Map<String, Tree> trees,
@@ -1166,15 +1322,18 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             if (length > rowBytes || length > rowBytes / 3
                     && row.payload().getBytes(StandardCharsets.UTF_8).length > rowBytes)
                 throw new IOException("GRAPH_PARTITION_ROW_WORKER_REQUIRED");
-            if (!batch.isEmpty() && (batch.size() == PAGE_ROWS || characters + length > PAGE_CHARACTERS))
+            long pageCap = Math.min(PAGE_CHARACTERS, rowBytes);
+            long entryCost = rowBytes < PAGE_CHARACTERS ? (long) length + row.key().length() * 3L + 32L : length;
+            if (!batch.isEmpty() && (batch.size() == PAGE_ROWS || characters + entryCost > pageCap))
                 flush();
             batch.add(row);
-            characters += length;
+            characters += entryCost;
         }
 
         private void flush() throws IOException {
             var captured = List.copyOf(batch);
-            if (characters > PAGE_CHARACTERS) {
+            long pageCap = Math.min(PAGE_CHARACTERS, rowBytes);
+            if (characters > pageCap) {
                 // One admitted large row proceeds alone, without multiplying worker heap.
                 drain();
                 builder.add(leaf(captured, cancelled), 0);
@@ -1814,9 +1973,15 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
         }, cancelled);
     }
 
+    /** Leaf framing wraps an admitted canonical row with schema/key metadata; allow that envelope on read. */
+    private int pageByteLimit() {
+        return (int) Math.min((long) Integer.MAX_VALUE - 8, (long) rowBytes + LEAF_ENVELOPE_ALLOWANCE);
+    }
+
     private Object read(ContentHandle handle, BooleanSupplier cancelled) throws IOException {
         check(cancelled);
-        if (handle.size() > rowBytes)
+        int pageLimit = pageByteLimit();
+        if (handle.size() > pageLimit)
             throw new IOException("GRAPH_PARTITION_PAGE_WORKER_REQUIRED");
         var localCache = LOCAL_PAGE_CACHE.get();
         if (localCache != null) {
@@ -1827,7 +1992,7 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             }
         }
         try (var input = content.open(handle)) {
-            byte[] bytes = input.readNBytes(Math.addExact(rowBytes, 1));
+            byte[] bytes = input.readNBytes(Math.addExact(pageLimit, 1));
             if (bytes.length != handle.size() || !ContentDigest.sha256(bytes).equals(handle.digest()))
                 throw new IOException("GRAPH_PARTITION_CONTENT_CORRUPT");
             Object parsed = parse(utf8(bytes));
@@ -1847,7 +2012,8 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
     }
 
     private Object parse(String encoded) {
-        return GraphJson.read(encoded, new GraphJson.Limits(rowBytes, 128, rowBytes));
+        int limit = pageByteLimit();
+        return GraphJson.read(encoded, new GraphJson.Limits(limit, 128, limit));
     }
 
     private Path pointer(ContentDigest graph) throws IOException {

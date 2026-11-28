@@ -12,6 +12,7 @@ import com.evolution.backend.query.repair.RepairAgentTools;
 import com.evolution.backend.query.repair.RepairContextPlanner;
 import com.evolution.backend.query.repair.RepairEditV2;
 import com.evolution.backend.query.repair.RepairSyntaxGate;
+import com.evolution.backend.query.search.CapturedSearchIndex;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -32,6 +33,7 @@ public final class CapturedRepair {
             "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "cargo.toml", "go.mod");
 
     private final RepairChatModel model;
+    private final CapturedSearchIndex searchIndex;
 
     public enum Strategy {
         RECIPE, AI
@@ -213,7 +215,12 @@ public final class CapturedRepair {
     }
 
     public CapturedRepair(RepairChatModel model) {
+        this(model, null);
+    }
+
+    public CapturedRepair(RepairChatModel model, CapturedSearchIndex searchIndex) {
         this.model = model;
+        this.searchIndex = searchIndex;
     }
 
     Options options(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, Supplier<StopReason> stop) {
@@ -318,7 +325,7 @@ public final class CapturedRepair {
             String promptLower = ((req.title() == null ? "" : req.title()) + " "
                     + (req.description() == null ? "" : req.description())).toLowerCase(Locale.ROOT);
             try {
-                var repoMap = RepoMapBuilder.build(graph, Optional.of(req.context()), promptSeeds, 10, 2_400, stop);
+                var repoMap = RepoMapBuilder.build(graph, Optional.of(req.context()), promptSeeds, 10, 2_400, stop, searchIndex);
                 var safeCandidates = new ArrayList<RepoMapBuilder.FileRank>();
                 for (var fr : repoMap.files()) {
                     if (!RepairSyntaxGate.supportsPath(fr.path())) continue;
@@ -395,7 +402,7 @@ public final class CapturedRepair {
         var targetSymbolsList = List.copyOf(effectiveSymbols);
         var plan = RepairContextPlanner.plan(graph, req.context(), graph.snapshot().value(),
                 targetPathsList, targetSymbolsList,
-                targetSymbolsList.isEmpty() ? "" : targetSymbolsList.getFirst(), stop);
+                targetSymbolsList.isEmpty() ? "" : targetSymbolsList.getFirst(), stop, searchIndex);
         var files = new ArrayList<RepairSource.File>();
         var sources = new ArrayList<Source>();
         var contextMap = new LinkedHashMap<String, RepairSource.File>();
@@ -493,7 +500,7 @@ public final class CapturedRepair {
         }
         String ctx = basePin.analysis().map(a -> a.value()).orElse(basePin.context());
         var plan = RepairContextPlanner.plan(baselineGraph, ctx, basePin.context(),
-                editedPaths, List.copyOf(fallbackSymbols), prevCand.affectedScope().target(), stop);
+                editedPaths, List.copyOf(fallbackSymbols), prevCand.affectedScope().target(), stop, searchIndex);
         var files = new ArrayList<RepairSource.File>();
         var sources = new ArrayList<Source>();
         var contextMap = new LinkedHashMap<String, RepairSource.File>();
@@ -958,7 +965,7 @@ public final class CapturedRepair {
         return model.proposeConversation(conversation, offered, stop);
     }
 
-    private static Inputs collect(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, List<String> bundlePath,
+    private Inputs collect(FindingDiagnosis.Outcome diagnosis, KnowledgeGraph graph, List<String> bundlePath,
                                   Supplier<StopReason> stop) {
         var groups = new TreeMap<String, List<FindingDiagnosis.Citation>>();
         for (var c : diagnosis.citations())
@@ -1004,7 +1011,7 @@ public final class CapturedRepair {
         if (diagnosis.proof().isPresent() && stop.get() == StopReason.NONE) {
             String ctx = diagnosis.pin().analysis().map(a -> a.value()).orElse(diagnosis.pin().context());
             var plan = RepairContextPlanner.plan(graph, ctx, diagnosis.pin().context(),
-                    List.copyOf(groups.keySet()), bundlePath, diagnosis.proof().orElseThrow().target(), stop);
+                    List.copyOf(groups.keySet()), bundlePath, diagnosis.proof().orElseThrow().target(), stop, searchIndex);
             allowedDirs.addAll(plan.allowedCreateDirectories());
             linkedDocs.addAll(plan.linkedDocs());
             advisoryBadges.addAll(plan.advisoryBadges());

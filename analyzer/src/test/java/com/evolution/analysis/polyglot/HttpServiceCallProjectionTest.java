@@ -76,5 +76,139 @@ class HttpServiceCallProjectionTest {
         assertFalse(evidence.values().stream().anyMatch(e->e.family().equals("evidence.gap")&&e.canonicalJson().contains("HTTP_ROUTE_PATTERN_UNSUPPORTED")));
         assertTrue(evidence.values().stream().filter(e->e.family().equals("polyglot.http-uri-match")).allMatch(e->e.canonicalJson().contains("HTTP_ROUTING_EVIDENCE_MISSING")));
     }
+    @Test void gatewayStripPrefixAndLbSchemeJoinTargetServiceEndpoints()throws Exception {
+        // Gateway call /api/vet/vets matches gateway route (StripPrefix=2 -> /vets) targeting vets-service
+        syntax("client",root,"SOURCE_HTTP_CALL_CANDIDATE","/api/vet/vets","GET",false);
+        syntax("lb-client",root,"SOURCE_HTTP_CALL_CANDIDATE","lb://vets-service/vets","GET",false);
+        var gwProof=GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("fact",Map.of("name","vets-service","recovered",false,
+                "attributes",Map.of("uri","lb://vets-service","targetService","vets-service","pathPrefix","/api/vet/**","stripPrefix","2")))));
+        add("gw-route",root,"SOURCE_GATEWAY_ROUTE",gwProof);
+        var idProof=GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("path","vets-service/src/App.java",
+                "fact",Map.of("name","vets-service","recovered",false,"attributes",Map.of("serviceName","vets-service")))));
+        add("id-node",root,"SOURCE_CONFIG_SERVICE_IDENTITY",idProof);
+        var epProof=GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("path","vets-service/src/VetsController.java",
+                "fact",Map.of("name","'/vets'","recovered",false,"attributes",Map.of("method","GET")))));
+        add("vets-ep",root,"ENDPOINT",epProof);
+        var wrongEpProof=GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("path","visits-service/src/VisitsController.java",
+                "fact",Map.of("name","'/vets'","recovered",false,"attributes",Map.of("method","GET")))));
+        var wrongIdProof=GraphEvidence.capture("polyglot.source-syntax",Map.of("fields",Map.of("path","visits-service/src/App.java",
+                "fact",Map.of("name","visits-service","recovered",false,"attributes",Map.of("serviceName","visits-service")))));
+        add("wrong-id",root,"SOURCE_CONFIG_SERVICE_IDENTITY",wrongIdProof);
+        add("wrong-ep",root,"ENDPOINT",wrongEpProof);
+        HttpServiceCallProjection.project(nodes,edges,evidence,root,()->false);
+        var joins=edges.values().stream().filter(e->e.kind().equals("polyglot.service-call.candidate")).toList();
+        assertEquals(2,joins.size());
+        for(var j:joins) {
+            assertEquals(KnowledgeGraph.TargetState.RESOLVED,j.target().state(),"Host affinity must select vets-service only, not visits-service");
+            assertTrue(j.target().identities().getFirst().equals(ContentDigest.sha256Utf8("vets-ep").value()));
+        }
+    }
+    @Test void jaxRsAndServletEndpointsJoinHttpClientsCleanly() throws Exception {
+        syntax("client-jaxrs", root, "SOURCE_HTTP_CALL_CANDIDATE", "/rest/products/42", "GET", false);
+        syntax("client-servlet", root, "SOURCE_HTTP_CALL_CANDIDATE", "/cart/checkout", "POST", false);
+        add("jaxrs-ep", root, "ENDPOINT", GraphEvidence.capture("jaxrs.endpoint-declaration",
+                Map.of("route", Map.of("path", "/rest/products/{id}", "methods", List.of("GET"), "implicitHead", true, "module", "inventory"))));
+        add("servlet-ep", root, "ENDPOINT", GraphEvidence.capture("servlet.endpoint-declaration",
+                Map.of("route", Map.of("path", "/cart/*", "methods", List.of("GET", "POST"), "module", "webui"))));
+        HttpServiceCallProjection.project(nodes, edges, evidence, root, () -> false);
+        var joins = edges.values().stream().filter(e -> e.kind().equals("polyglot.service-call.candidate")).toList();
+        assertEquals(2, joins.size());
+        assertTrue(joins.stream().anyMatch(j -> j.target().identities().equals(List.of(ContentDigest.sha256Utf8("jaxrs-ep").value()))));
+        assertTrue(joins.stream().anyMatch(j -> j.target().identities().equals(List.of(ContentDigest.sha256Utf8("servlet-ep").value()))));
+    }
+
+    @Test void longestPrefixBuildComponentResolutionMatchesNestedModulesCleanly() throws Exception {
+        add("agg", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "platform-core", "directory", "platform/core")));
+        add("inv-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "inventory-api", "directory", "platform/core/inventory-api")));
+        add("bill-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "billing-api", "directory", "platform/core/billing-api")));
+        add("inv-id", root, "SOURCE_CONFIG_SERVICE_IDENTITY", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "platform/core/inventory-api/src/main/resources/application.yml",
+                        "fact", Map.of("name", "inventory-api", "recovered", false,
+                                "attributes", Map.of("serviceName", "inventory-api"))))));
+        add("bill-id", root, "SOURCE_CONFIG_SERVICE_IDENTITY", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "platform/core/billing-api/src/main/resources/application.yml",
+                        "fact", Map.of("name", "billing-api", "recovered", false,
+                                "attributes", Map.of("serviceName", "billing-api"))))));
+        String invEp = add("inv-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "platform/core/inventory-api/src/main/java/ItemsController.java",
+                        "fact", Map.of("name", "'/items/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        add("bill-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "platform/core/billing-api/src/main/java/ItemsController.java",
+                        "fact", Map.of("name", "'/items/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        syntax("caller", root, "SOURCE_HTTP_CALL_CANDIDATE", "http://inventory-api/items/7", "GET", false);
+
+        HttpServiceCallProjection.project(nodes, edges, evidence, root, () -> false);
+        var joins = edges.values().stream().filter(e -> e.kind().equals("polyglot.service-call.candidate")).toList();
+        assertEquals(1, joins.size());
+        assertEquals(KnowledgeGraph.TargetState.RESOLVED, joins.getFirst().target().state());
+        assertEquals(List.of(invEp), joins.getFirst().target().identities());
+    }
+
+    @Test void resolvesValuePropertyKeyAndLocalhostPortToTargetService() throws Exception {
+        add("order-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "order-app", "directory", "order-app")));
+        add("pricing-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "pricing-app", "directory", "pricing-app")));
+        add("other-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "other-app", "directory", "other-app")));
+        add("pricing-port", root, "SOURCE_INFRA_PORT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "pricing-app/src/main/resources/application.yml",
+                        "fact", Map.of("nodeKind", "spring_server_port", "name", "8092", "recovered", false,
+                                "attributes", Map.of("port", "8092", "spec", "spring-config"))))));
+        add("order-prop", root, "SOURCE_CONFIG_PROPERTY", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "order-app/src/main/resources/application.yml",
+                        "fact", Map.of("nodeKind", "config_property", "name", "clients.pricing.url", "recovered", false,
+                                "attributes", Map.of("key", "clients.pricing.url",
+                                        "value", "http://localhost:8092/quotes",
+                                        "target", "localhost", "port", "8092"))))));
+        String pricingEp = add("pricing-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "pricing-app/src/main/java/QuoteController.java",
+                        "fact", Map.of("name", "'/quotes/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        add("other-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "other-app/src/main/java/QuoteController.java",
+                        "fact", Map.of("name", "'/quotes/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        add("prop-call", root, "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "order-app/src/main/java/PricingClient.java",
+                        "fact", Map.of("name", "\"/{id}\"", "recovered", false,
+                                "attributes", Map.of("method", "GET", "propertyKey", "clients.pricing.url"))))));
+        add("localhost-call", root, "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "order-app/src/main/java/DirectClient.java",
+                        "fact", Map.of("name", "\"http://localhost:8092/quotes/1\"", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+
+        HttpServiceCallProjection.project(nodes, edges, evidence, root, () -> false);
+        var joins = edges.values().stream().filter(e -> e.kind().equals("polyglot.service-call.candidate")).toList();
+        assertEquals(2, joins.size());
+        for (var j : joins) {
+            assertEquals(KnowledgeGraph.TargetState.RESOLVED, j.target().state());
+            assertEquals(List.of(pricingEp), j.target().identities());
+        }
+    }
+
+    @Test void ignoresTestSourceFactsInHttpCallProjection() throws Exception {
+        add("prod-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "order-app/src/main/java/OrderController.java",
+                        "fact", Map.of("name", "'/orders/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        add("tagged-test-call", root, "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "order-app/src/main/java/TaggedTest.java",
+                        "fact", Map.of("name", "'/orders/1'", "recovered", false,
+                                "attributes", Map.of("method", "GET", "testSource", "true"))))));
+        add("path-test-call", root, "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "order-app/src/test/java/OrderContractTest.java",
+                        "fact", Map.of("name", "'/orders/2'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+
+        HttpServiceCallProjection.project(nodes, edges, evidence, root, () -> false);
+        assertTrue(edges.isEmpty());
+        assertEquals(0, nodes.values().stream().filter(n -> n.kind().equals("CAPABILITY_GAP")).count());
+    }
     private String add(String name,String context,String kind,GraphEvidence proof){String id=ContentDigest.sha256Utf8(name).value();evidence.put(proof.identity().value(),proof);nodes.put(context+"|"+id,new KnowledgeGraph.Node(id,context,kind,List.of(proof.identity())));return id;}
 }

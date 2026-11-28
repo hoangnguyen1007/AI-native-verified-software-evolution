@@ -10,7 +10,7 @@ final class TruthIdentity {
     private TruthIdentity() {}
 
     static ContentDigest digest(Object value) {
-        return ContentDigest.sha256Utf8(CanonicalJson.write(value));
+        return CanonicalJson.sha256(value);
     }
 
     static String derive(String kind, Map<String, ?> fields) {

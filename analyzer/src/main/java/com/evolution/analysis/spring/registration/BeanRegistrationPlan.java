@@ -84,13 +84,22 @@ public record BeanRegistrationPlan(RegistrationPlan discoveryPlan, List<Step> st
             processed.add(key);
         }
     }
+    private record IdentityCacheEntry(java.lang.ref.WeakReference<BeanRegistrationPlan> plan, RegistrationPlan.Identity identity) {}
+    private static final java.util.concurrent.atomic.AtomicReferenceArray<IdentityCacheEntry> IDENTITY_CACHE =
+            new java.util.concurrent.atomic.AtomicReferenceArray<>(32);
+
     public RegistrationPlan.Identity identity() {
-        return new RegistrationPlan.Identity(RegistrationIdentity.derive("spring-registration-plan", Map.of(
+        int slot = (System.identityHashCode(this) & 0x7fffffff) % 32;
+        var hit = IDENTITY_CACHE.get(slot);
+        if (hit != null && hit.plan().get() == this) return hit.identity();
+        var computed = new RegistrationPlan.Identity(RegistrationIdentity.derive("spring-registration-plan", Map.of(
                 "buildContextIdentity", discoveryPlan.buildContext().identity(), "frameworkSemantics", discoveryPlan.lowering().semantics(),
                 "eventDescriptors", canonicalForm(), "precedenceConstraints", establishedOrderPrefix,
                 "initialDefinitions", discoveryPlan.initialDefinitions(),
                 "containerHierarchy", Map.of("container", discoveryPlan.container(), "noParent", noParentContainer, "evidence", closureEvidence),
                 "orderCompleteness", order, "overridePolicy", discoveryPlan.overridePolicy())));
+        IDENTITY_CACHE.set(slot, new IdentityCacheEntry(new java.lang.ref.WeakReference<>(this), computed));
+        return computed;
     }
     public Object canonicalForm() {
         return Map.ofEntries(Map.entry("schema", "spring-bean-registration-plan-v1"),

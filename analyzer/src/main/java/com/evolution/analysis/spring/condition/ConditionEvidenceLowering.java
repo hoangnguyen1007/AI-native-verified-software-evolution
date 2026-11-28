@@ -101,6 +101,7 @@ public final class ConditionEvidenceLowering {
         private final List<ConditionProcessing.Issue> issues;
         private final List<CapabilityGapRecord> gaps;
         private final List<SourceCandidate> sourceCandidates;
+        private volatile ContentDigest cachedIdentity;
         Result(ContentDigest input, SpringMechanismInventory inventory, SpringBuildContext build,
                List<Row> rows, List<ConditionOccurrence> occurrences, Collection<ConditionProcessing.Issue> issues) {
             this(input, inventory, build, rows, occurrences, issues, SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
@@ -136,7 +137,13 @@ public final class ConditionEvidenceLowering {
         public List<ConditionProcessing.Issue> issues() { return issues; }
         public List<CapabilityGapRecord> capabilityGaps() { return gaps; }
         public List<SourceCandidate> sourceCandidates() {return sourceCandidates;}
-        public ContentDigest identity() { return ConditionIdentitySupport.digest(canonicalForm()); }
+        public ContentDigest identity() {
+            ContentDigest cached = cachedIdentity;
+            if (cached != null) return cached;
+            ContentDigest computed = ConditionIdentitySupport.digest(canonicalForm());
+            cachedIdentity = computed;
+            return computed;
+        }
         public Coverage coverage() {
             return new Coverage(rows.size(), count(Outcome.LOWERED), count(Outcome.OPAQUE), count(Outcome.NOT_A_CONDITION));
         }
@@ -230,7 +237,7 @@ public final class ConditionEvidenceLowering {
                     .orElseGet(() -> new ConditionEvidence.Derived(List.of(inventory.identity(), observation.identity()), PROVIDER, "unavailable-source"));
             ConditionProcessing.Reason reason = null;
             ConditionExpression expression = null;
-            String rawType = exactAnnotationType(observation, inventory.frameworkEvidence());
+            String rawType = exactAnnotationType(observation, inventory.frameworkEvidence(), validationMode);
             boolean sourceScoped = false;
             if (compatSourceScoped
                     && sourceSpanValid
@@ -389,20 +396,79 @@ public final class ConditionEvidenceLowering {
         }
         throw LiteralConditionAnnotation.unsupported();
     }
+    private static final Set<String> TRUSTED_SPRING_GROUPS = Set.of(
+            "org.springframework",
+            "org.springframework.boot",
+            "org.springframework.cloud",
+            "org.springframework.ai",
+            "org.springframework.security");
+
     static String exactAnnotationType(RawObservation observation, SpringFrameworkEvidence framework) {
+        return exactAnnotationType(observation, framework, SpringFrameworkEvidence.ValidationMode.STRICT_R0_PINNED);
+    }
+
+    static String exactAnnotationType(
+            RawObservation observation,
+            SpringFrameworkEvidence framework,
+            SpringFrameworkEvidence.ValidationMode validationMode) {
         String key = observation.stableReference();
-        String type = CONDITION_CANONICAL_TO_TYPE.get(key);
-        if (type == null || observation.resolvedTarget().isEmpty()) return null;
-        boolean isBoot = type.startsWith("org.springframework.boot.");
+        if (observation.resolvedTarget().isEmpty()) return null;
+        EntityIdentity resolved = observation.resolvedTarget().orElseThrow();
+        String knownType = CONDITION_CANONICAL_TO_TYPE.get(key);
+        if (validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED) {
+            boolean matchesTrustedArtifact = false;
+            for (var artifact : framework.artifacts()) {
+                if (TRUSTED_SPRING_GROUPS.contains(artifact.groupId())
+                        && EntityIdentity.from(EntityOrigin.DEPENDENCY, artifact.entityScope(), EntityKind.TYPE, key)
+                                .equals(resolved)) {
+                    matchesTrustedArtifact = true;
+                    break;
+                }
+            }
+            if (!matchesTrustedArtifact) {
+                return null;
+            }
+            if (knownType != null) {
+                return knownType;
+            }
+            String parsedFqn = parseCanonicalTopLevelTypeFqn(key);
+            if (parsedFqn != null && (parsedFqn.contains(".ConditionalOn") || parsedFqn.endsWith(".Conditional"))) {
+                return parsedFqn;
+            }
+            return null;
+        }
+        if (knownType == null) return null;
+        boolean isBoot = knownType.startsWith("org.springframework.boot.");
         String expectedGroup = isBoot ? "org.springframework.boot" : "org.springframework";
         String expectedArtifact = isBoot ? "spring-boot-autoconfigure" : "spring-context";
-        EntityIdentity resolved = observation.resolvedTarget().orElseThrow();
         for (var artifact : framework.artifacts()) {
             if (artifact.groupId().equals(expectedGroup)
                     && artifact.artifactId().equals(expectedArtifact)
                     && EntityIdentity.from(EntityOrigin.DEPENDENCY, artifact.entityScope(), EntityKind.TYPE, key).equals(resolved)) {
-                return type;
+                return knownType;
             }
+        }
+        return null;
+    }
+
+    private static String parseCanonicalTopLevelTypeFqn(String canonicalKey) {
+        try {
+            String json = canonicalKey != null && canonicalKey.startsWith("java:v1:")
+                    ? canonicalKey.substring(8) : canonicalKey;
+            var parsed = com.evolution.analysis.graph.GraphJson.array(
+                    com.evolution.analysis.graph.GraphJson.read(
+                            json, com.evolution.analysis.graph.GraphJson.Limits.defaults()));
+            if (parsed.size() == 3 && "type".equals(parsed.getFirst())) {
+                var pkgParts = com.evolution.analysis.graph.GraphJson.array(parsed.get(1));
+                var sb = new StringBuilder();
+                for (Object part : pkgParts) {
+                    if (!sb.isEmpty()) sb.append('.');
+                    sb.append(com.evolution.analysis.graph.GraphJson.string(part));
+                }
+                String simple = com.evolution.analysis.graph.GraphJson.string(parsed.get(2));
+                return sb.isEmpty() ? simple : sb + "." + simple;
+            }
+        } catch (RuntimeException ignored) {
         }
         return null;
     }

@@ -192,4 +192,34 @@ class StreamingStorageTest {
         new FileGraphStore(Files.createDirectories(temp.resolve("heal-graph")));
         assertTrue(Files.isDirectory(evDir));
     }
+    @Test void warmSmallWriteSkipsStagingTempFileAndVerifyOnHitCatchesLooseCorruption()throws Exception{
+        var forces=new java.util.concurrent.atomic.AtomicInteger();
+        var cas=new StreamingContentStore(temp.resolve("hit-cas"),0,channel->{forces.incrementAndGet();channel.force(true);});
+        byte[] payload="cached-small-page-payload-v1".repeat(4000).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var expected=cas.write(out->out.write(payload),()->false);
+        assertEquals(1,forces.get());
+        // Warm identical write <= 2 MiB must hit CAS in memory with 0 staging forces & 0 temp files.
+        var hit=cas.write(out->out.write(payload),()->false);
+        assertEquals(expected,hit);
+        assertEquals(1,forces.get(),"Warm CAS hit must not allocate or force a staging temp file");
+        try(var staging=Files.list(temp.resolve("hit-cas/staging"))){assertEquals(0,staging.count());}
+
+        // Matching-size 1-bit flip corruption AND size mismatch must both be caught unconditionally by default.
+        String hex=expected.digest().value().substring(7);
+        Path loose=temp.resolve("hit-cas/sha256/"+hex.substring(0,2)+"/"+hex.substring(2));
+        byte[] tamperedSameLen=Arrays.copyOf(payload,payload.length);
+        tamperedSameLen[0]^=0x55;
+        Files.write(loose,tamperedSameLen);
+        assertEquals("CAS_CORRUPT",assertThrows(IOException.class,()->cas.write(out->out.write(payload),()->false)).getMessage());
+        Files.writeString(loose,"short");
+        assertEquals("CAS_CORRUPT",assertThrows(IOException.class,()->cas.write(out->out.write(payload),()->false)).getMessage());
+
+        // Failing >2 MiB spill writer must close its channel and delete its staging .part file.
+        assertEquals("BOOM_AFTER_SPILL",assertThrows(IOException.class,()->cas.write(out->{
+            out.write(new byte[2*1024*1024+4096]);
+            out.flush();
+            throw new IOException("BOOM_AFTER_SPILL");
+        },()->false)).getMessage());
+        try(var staging=Files.list(temp.resolve("hit-cas/staging"))){assertEquals(0,staging.count());}
+    }
 }

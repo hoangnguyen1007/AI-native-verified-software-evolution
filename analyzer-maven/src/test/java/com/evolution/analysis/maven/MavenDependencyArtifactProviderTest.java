@@ -425,6 +425,126 @@ class MavenDependencyArtifactProviderTest {
                 corrupted.outcomes().getFirst().failureReason().orElseThrow());
     }
 
+    @Test
+    void defaultPolicyUsesSixteenConcurrentDownloadsAndParallelFallbackPreservesPriorityOrder() throws Exception {
+        assertEquals(16, MavenDependencyArtifactProvider.defaultPolicy(List.of(REPOSITORY)).maxConcurrentDownloads());
+
+        Path cache = cache();
+        URI primary = URI.create("https://primary.example.test/maven2/");
+        URI fb1 = URI.create("https://fb1.example.test/maven2/");
+        URI fb2 = URI.create("https://fb2.example.test/maven2/");
+        URI fb3 = URI.create("https://fb3.example.test/maven2/");
+        byte[] winnerBytes = jar("example/Winner.class", new byte[] { 11, 22, 33 });
+        byte[] lowerPriorityBytes = jar("example/Lower.class", new byte[] { 44, 55, 66 });
+
+        var fallbackEntered = new java.util.concurrent.CountDownLatch(3);
+        var provider = provider(cache, (uri, max, connect, read) -> {
+            String host = uri.getHost();
+            if (host.equals(primary.getHost())) {
+                return new MavenDependencyArtifactProvider.RemoteResponse(404, new byte[0]);
+            }
+            fallbackEntered.countDown();
+            if (!fallbackEntered.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new IOException("Fallback repositories were probed serially instead of in parallel");
+            }
+            if (host.equals(fb1.getHost())) {
+                return new MavenDependencyArtifactProvider.RemoteResponse(404, new byte[0]);
+            }
+            if (host.equals(fb2.getHost())) {
+                return new MavenDependencyArtifactProvider.RemoteResponse(200, winnerBytes);
+            }
+            return new MavenDependencyArtifactProvider.RemoteResponse(200, lowerPriorityBytes);
+        });
+
+        var multiPolicy = new DependencyAcquisitionPolicy(
+                10, 1_000_000, 10_000_000, 8, List.of(primary, fb1, fb2, fb3), 1_000, 2_000, 0, 16);
+        var result = provider.acquire(DependencyAcquisitionRequest.of(List.of(JAR), multiPolicy));
+
+        assertEquals(DependencyAcquisitionResult.Status.ACQUIRED, result.outcomes().getFirst().status());
+        assertEquals(ContentDigest.sha256(winnerBytes),
+                result.outcomes().getFirst().artifact().orElseThrow().contentDigest(),
+                "Higher-priority fb2 must win over lower-priority fb3");
+        assertArrayEquals(winnerBytes, Files.readAllBytes(path(cache, JAR)));
+
+        var remoteAttempts = result.attempts().stream()
+                .filter(a -> a.origin() == DependencyAcquisitionResult.Origin.REMOTE_REPOSITORY)
+                .toList();
+        assertEquals(3, remoteAttempts.size(), "Lower-priority fb3 attempt must not be committed after fb2 succeeds");
+        assertEquals(primary.resolve(JAR.repositoryPath()).toASCIIString(), remoteAttempts.get(0).subject());
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.UNAVAILABLE, remoteAttempts.get(0).outcome());
+        assertEquals(fb1.resolve(JAR.repositoryPath()).toASCIIString(), remoteAttempts.get(1).subject());
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.UNAVAILABLE, remoteAttempts.get(1).outcome());
+        assertEquals(fb2.resolve(JAR.repositoryPath()).toASCIIString(), remoteAttempts.get(2).subject());
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.SUCCEEDED, remoteAttempts.get(2).outcome());
+        for (int i = 0; i < result.attempts().size(); i++) {
+            assertEquals(i, result.attempts().get(i).ordinal());
+        }
+    }
+
+    @Test
+    void negativeCacheAcrossAllRepositoriesCoversBoth404And401DeniedEntries() throws Exception {
+        Path cache = cache();
+        URI repoA = URI.create("https://neg-a-" + java.util.UUID.randomUUID() + ".example.test/maven2/");
+        URI repoB = URI.create("https://neg-b-" + java.util.UUID.randomUUID() + ".example.test/maven2/");
+        ArtifactCoordinate pom = new ArtifactCoordinate(
+                new MavenCoordinate("example.neg", "missing-bom", "1.0.0"), "pom", "");
+
+        assertFalse(MavenDependencyArtifactProvider.isNegativelyCachedAcrossAllRepositories(cache, pom, List.of()));
+        assertFalse(MavenDependencyArtifactProvider.isNegativelyCachedAcrossAllRepositories(cache, pom, List.of(repoA, repoB)));
+
+        MavenDependencyArtifactProvider.recordNegative404(cache, repoA.resolve(pom.repositoryPath()));
+        assertFalse(MavenDependencyArtifactProvider.isNegativelyCachedAcrossAllRepositories(cache, pom, List.of(repoA, repoB)),
+                "Must remain false until ALL configured repositories are negatively cached");
+
+        MavenDependencyArtifactProvider.recordNegativeDenied(repoB.resolve(pom.repositoryPath()));
+        assertTrue(MavenDependencyArtifactProvider.isNegativelyCachedAcrossAllRepositories(cache, pom, List.of(repoA, repoB)),
+                "404 + 401/403 across all configured repositories must be recognized as negatively cached");
+    }
+
+    @Test
+    void corruptedFallbackMirrorRetriesPreservesLedgerAndFallsThroughToNextMirrorWithoutCancellation() throws Exception {
+        Path cache = cache();
+        URI primary = URI.create("https://primary-corrupt.example.test/maven2/");
+        URI fb1 = URI.create("https://fb1-corrupt.example.test/maven2/");
+        URI fb2 = URI.create("https://fb2-valid.example.test/maven2/");
+        byte[] corruptBytes = new byte[] { 'P', 'K', 3, 4, 1, 2, 3 };
+        byte[] validBytes = jar("example/Recovered.class", new byte[] { 7, 8, 9 });
+        var fb1Calls = new AtomicInteger();
+
+        var provider = provider(cache, (uri, max, connect, read) -> {
+            String host = uri.getHost();
+            if (host.equals(primary.getHost())) {
+                return new MavenDependencyArtifactProvider.RemoteResponse(404, new byte[0]);
+            }
+            if (host.equals(fb1.getHost())) {
+                fb1Calls.incrementAndGet();
+                return new MavenDependencyArtifactProvider.RemoteResponse(200, corruptBytes);
+            }
+            return new MavenDependencyArtifactProvider.RemoteResponse(200, validBytes);
+        });
+
+        var retryPolicy = new DependencyAcquisitionPolicy(
+                10, 1_000_000, 10_000_000, 8, List.of(primary, fb1, fb2), 1_000, 2_000, 1, 16);
+        var result = provider.acquire(DependencyAcquisitionRequest.of(List.of(JAR), retryPolicy));
+
+        assertEquals(DependencyAcquisitionResult.Status.ACQUIRED, result.outcomes().getFirst().status());
+        assertEquals(ContentDigest.sha256(validBytes),
+                result.outcomes().getFirst().artifact().orElseThrow().contentDigest(),
+                "Must cleanly fall through from corrupted fb1 to valid fb2 without CancellationException");
+        assertEquals(2, fb1Calls.get(), "Corrupted fb1 must honor maxRetries=1 before falling through");
+        assertEquals(2L * corruptBytes.length + validBytes.length, result.bytesConsumed(),
+                "Consumed byte budget must account for all retry attempts on fb1 plus winning fb2 bytes");
+
+        var remoteAttempts = result.attempts().stream()
+                .filter(a -> a.origin() == DependencyAcquisitionResult.Origin.REMOTE_REPOSITORY)
+                .toList();
+        assertEquals(4, remoteAttempts.size(), "Expected primary(404) + fb1(retry0) + fb1(retry1) + fb2(200)");
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.UNAVAILABLE, remoteAttempts.get(0).outcome());
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.FAILED, remoteAttempts.get(1).outcome());
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.FAILED, remoteAttempts.get(2).outcome());
+        assertEquals(DependencyAcquisitionResult.AttemptOutcome.SUCCEEDED, remoteAttempts.get(3).outcome());
+    }
+
     private Path cache() throws IOException {
         Path cache = temporary.resolve("cache-" + java.util.UUID.randomUUID());
         return Files.createDirectory(cache).toRealPath();

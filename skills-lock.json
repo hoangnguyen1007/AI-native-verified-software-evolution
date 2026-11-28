@@ -1,6 +1,13 @@
 {
   "version": 2,
   "skills": {
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "commit": "e7fd0e9e52f029fe87729d8185cb8caf7049f678",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "7bc223e2aafbdbf6e50ea243ba6ef67fe432bb069ab439fea0390795dac0bf7f"
+    },
     "lucian-uxui": {
       "source": "Seokwoooo/lucian-uxui",
       "commit": "36f9a57dac3bee6b74c83a362d51479c3041bde4",

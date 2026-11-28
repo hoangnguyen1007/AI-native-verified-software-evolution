@@ -187,9 +187,20 @@ public final class ArchitectureChatModel {
     private final ThreadLocal<RunTelemetry> runTelemetry = new ThreadLocal<>();
 
     String instructions(boolean reviewer, boolean agentic) {
+        return instructions(reviewer, agentic, false);
+    }
+
+    String instructions(boolean reviewer, boolean agentic, boolean strictQaMode) {
         return INSTRUCTIONS + (agentic ? AGENT_INSTRUCTIONS : "") + (reviewer ? REVIEWER_INSTRUCTIONS : "")
+                + (strictQaMode ? ANTI_EDIT_BIAS_INSTRUCTIONS : "")
                 + (settings.jsonMode() ? JSON_INSTRUCTIONS : TEXT_INSTRUCTIONS);
     }
+
+    private static final String ANTI_EDIT_BIAS_INSTRUCTIONS = """
+            STRICT QA MODE (anti-Edit-Bias): Answer architectural comprehension questions directly using verified repository facts.
+            Do NOT fabricate patches, speculative code edits, unverified refactoring plans, or ungrounded symbol names.
+            Cite concrete [E#] evidence IDs, file paths, and line spans for every factual claim, and state UNKNOWN cleanly whenever evidence is absent.
+            """;
 
     ArchitectureChatModel(URI endpoint, String model, String key, boolean allowRemote) {
         this(endpoint, model, key, allowRemote, ChatCompletions.CHAT);

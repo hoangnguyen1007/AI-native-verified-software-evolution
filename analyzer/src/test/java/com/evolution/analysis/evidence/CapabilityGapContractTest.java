@@ -502,4 +502,84 @@ class CapabilityGapContractTest {
                 List.of(new AffectedOutput(AffectedOutput.Kind.RELATIONSHIP_CATEGORY, "java.calls")),
                 List.of(), List.of(diagnostic("frontend.unresolved", "Target unavailable.")), List.of());
     }
+
+    @Test
+    void coalescesPerDocumentSemanticUnresolvedObservationsDeterministicallyWithClosedDenominator() {
+        AnalysisManifest manifest = manifest();
+        EvidenceContext context = EvidenceContext.forAnalysis(manifest);
+        var callCat = new RelationshipKind("java.calls");
+        var typeCat = new RelationshipKind("java.type-uses");
+        var diagA = diagnostic("frontend.unresolved", "Unresolved call target");
+        var diagB = diagnostic("frontend.unresolved", "Missing dependency symbol");
+        var observations = new ArrayList<ObservationRecord>();
+        for (int i = 1; i <= 100; i++) {
+            var span = new SourceSpan(DOCUMENT.identity(), i, 1, i, 12);
+            observations.add(new ObservationRecord(DOCUMENT.identity(), callCat, Optional.of(span),
+                    SemanticStatus.UNRESOLVED, ObservationRecord.EvidenceState.MISSING,
+                    ObservationRecord.EvidenceState.VERIFIED, Optional.empty(), "missing" + i + "()",
+                    List.of(i % 2 == 0 ? diagA : diagB)));
+        }
+        // Separate category and non-SEMANTIC_UNRESOLVED gap must remain distinct
+        observations.add(new ObservationRecord(DOCUMENT.identity(), typeCat,
+                Optional.of(new SourceSpan(DOCUMENT.identity(), 201, 1, 201, 10)),
+                SemanticStatus.UNRESOLVED, ObservationRecord.EvidenceState.MISSING,
+                ObservationRecord.EvidenceState.VERIFIED, Optional.empty(), "MissingType", List.of(diagA)));
+        observations.add(new ObservationRecord(DOCUMENT.identity(), callCat,
+                Optional.of(new SourceSpan(DOCUMENT.identity(), 202, 1, 202, 10)),
+                SemanticStatus.AMBIGUOUS, ObservationRecord.EvidenceState.MISSING,
+                ObservationRecord.EvidenceState.VERIFIED, Optional.empty(), "ambiguous()", List.of(diagB)));
+
+        var coverage = FrontendRequest.CATEGORIES.stream()
+                .map(c -> new CategoryCoverage(new RelationshipKind("java." + c), CategoryCoverage.Support.IMPLEMENTED,
+                        c.equals("calls") ? 101 : c.equals("type-uses") ? 1 : 0, 0,
+                        c.equals("calls") ? 101 : c.equals("type-uses") ? 1 : 0))
+                .toList();
+        var source = new SourceOutcome(DOCUMENT.identity(), SourceOutcome.State.PARTIAL, List.of(diagA));
+        var frontendOrdered = new FrontendResult(manifest.identity(), PROVIDER, FrontendResult.State.PARTIAL,
+                List.of(), List.of(), observations, List.of(source), coverage, List.of(diagA, diagB));
+
+        var shuffledObs = new ArrayList<>(observations);
+        Collections.shuffle(shuffledObs, new Random(42L));
+        var frontendShuffled = new FrontendResult(manifest.identity(), PROVIDER, FrontendResult.State.PARTIAL,
+                List.of(), List.of(), shuffledObs, List.of(source), coverage, List.of(diagA, diagB));
+
+        EvidenceAcquisitionLedger ledgerOrdered = CapabilityGapNormalizer.normalize(context,
+                EvidenceNormalizationInput.builder().frontendResults(List.of(frontendOrdered)).build());
+        EvidenceAcquisitionLedger ledgerShuffled = CapabilityGapNormalizer.normalize(context,
+                EvidenceNormalizationInput.builder().frontendResults(List.of(frontendShuffled)).build());
+
+        assertEquals(ledgerOrdered.identity(), ledgerShuffled.identity(),
+                "Coalesced ledger identity must be invariant to observation ordering");
+        assertEquals(com.evolution.analysis.contract.serialization.CanonicalJson.write(ledgerOrdered),
+                com.evolution.analysis.contract.serialization.CanonicalJson.write(ledgerShuffled),
+                "Coalesced ledger CanonicalJson must be bit-identical regardless of input order");
+
+        List<CapabilityGapRecord> unresolvedGaps = ledgerOrdered.gaps().stream()
+                .filter(g -> g.reasonCode().equals("SEMANTIC_UNRESOLVED"))
+                .toList();
+        assertEquals(2, unresolvedGaps.size(), "Expected 1 coalesced gap for java.calls and 1 single gap for java.type-uses");
+
+        CapabilityGapRecord callsGap = unresolvedGaps.stream()
+                .filter(g -> g.mechanismCategory().equals("java.calls"))
+                .findFirst().orElseThrow();
+        assertEquals(100, CapabilityGapNormalizer.occurrenceCount(callsGap));
+        assertEquals(CapabilityGapNormalizer.MAX_COALESCED_REPRESENTATIVE_SPANS, callsGap.sourceSpans().size());
+        assertEquals(1, callsGap.observationReferences().size());
+        assertTrue(callsGap.limitations().contains("coalesced=true"));
+        assertTrue(callsGap.limitations().contains("occurrenceCount=100"));
+        assertTrue(callsGap.limitations().stream().anyMatch(l -> l.startsWith("allSpansDigest=sha256:")));
+        assertTrue(callsGap.diagnostics().stream().anyMatch(d -> d.code().equals("evidence.gap.coalesced")));
+
+        CapabilityGapRecord typeGap = unresolvedGaps.stream()
+                .filter(g -> g.mechanismCategory().equals("java.type-uses"))
+                .findFirst().orElseThrow();
+        assertEquals(1, CapabilityGapNormalizer.occurrenceCount(typeGap));
+        assertFalse(typeGap.limitations().contains("coalesced=true"));
+
+        int totalUnresolvedDenominator = unresolvedGaps.stream()
+                .mapToInt(CapabilityGapNormalizer::occurrenceCount)
+                .sum();
+        assertEquals(101, totalUnresolvedDenominator, "Closed denominator must preserve all 101 unresolved observations");
+        assertEquals(1, ledgerOrdered.gaps().stream().filter(g -> g.reasonCode().equals("SEMANTIC_AMBIGUOUS")).count());
+    }
 }

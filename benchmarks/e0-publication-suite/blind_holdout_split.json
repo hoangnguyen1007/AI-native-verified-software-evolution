@@ -1,0 +1,190 @@
+{
+  "schema": "e0.blind-holdout-protocol:v1",
+  "protocol_version": "2026-11-28",
+  "purpose": "Disciplined dev-vs-holdout evaluation protocol to detect in-sample overfitting on microSecEnD and enforce zero-touch blind evaluation on unseen repositories.",
+  "historical_disclosure": {
+    "microsecend_17_in_sample_dev_contaminated": true,
+    "explanation": "Historical Batch 10 and Batch 11 iterations inspected error diagnostics across all 17/17 microSecEnD applications. Therefore, any retrospective score on microSecEnD must be explicitly labeled with its development contamination status. This split isolates the original 5-repo development seed plus 5 additional apps into dev_10, holds out 7 non-seed apps (stratified across Maven and Gradle) as holdout_7 for generalization-gap auditing, and pairs them with external out-of-distribution polyglot benchmarks plus a frozen zero-touch unseen registry for truly blind future evaluation."
+  },
+  "governance_invariants": {
+    "require_anti_overfitting_audit_pass": true,
+    "max_allowed_generalization_gap_f1": 0.05,
+    "forbid_rule_tuning_on_holdout_ids": true,
+    "require_commit_sha_freeze_before_unseen_eval": true,
+    "separate_strict_and_dfd_export_reporting": true
+  },
+  "microsecend_17_stratified_split": {
+    "stratification_axes": [
+      "build_tool (Maven: 8 dev / 6 holdout; Gradle: 2 dev / 1 holdout)",
+      "seed_isolation (all 5 original 5-repo baseline apps strictly confined to dev_10; 0/5 in holdout_7)",
+      "architectural_diversity (Spring Cloud Config/Eureka, OAuth2, Kafka/RabbitMQ, Zipkin, Reverse-Proxy)"
+    ],
+    "dev_10": [
+      {
+        "id": "anilallewar/microservices-basics-spring-boot",
+        "dir": "microservices-basics-spring-boot",
+        "build": "gradle",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "callistaenterprise/blog-microservices",
+        "dir": "blog-microservices",
+        "build": "gradle",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "ewolff/microservice",
+        "dir": "microservice",
+        "build": "maven",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "spring-petclinic/spring-petclinic-microservices",
+        "dir": "spring-petclinic-microservices",
+        "build": "maven",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "sqshq/piggymetrics",
+        "dir": "piggymetrics",
+        "build": "maven",
+        "in_5repo_baseline": true
+      },
+      {
+        "id": "apssouza22/java-microservice",
+        "dir": "java-microservice",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "ewolff/microservice-kafka",
+        "dir": "microservice-kafka",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "georgwittberger/apache-spring-boot-microservice-example",
+        "dir": "apache-spring-boot-microservice-example",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "koushikkothagal/spring-boot-microservices-workshop",
+        "dir": "spring-boot-microservices-workshop",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "mudigal-technologies/microservices-sample",
+        "dir": "microservices-sample",
+        "build": "maven",
+        "in_5repo_baseline": false
+      }
+    ],
+    "holdout_7": [
+      {
+        "id": "jferrater/tap-and-eat-microservices",
+        "dir": "tap-and-eat-microservices",
+        "build": "gradle",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "fernandoabcampos/spring-netflix-oss-microservices",
+        "dir": "spring-netflix-oss-microservices",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "mdeket/spring-cloud-movie-recommendation",
+        "dir": "spring-cloud-movie-recommendation",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "piomin/sample-spring-oauth2-microservices",
+        "dir": "sample-spring-oauth2-microservices",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "rohitghatol/spring-boot-microservices",
+        "dir": "spring-boot-microservices",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "shabbirdwd53/springboot-microservice",
+        "dir": "springboot-microservice",
+        "build": "maven",
+        "in_5repo_baseline": false
+      },
+      {
+        "id": "yidongnan/spring-cloud-netflix-example",
+        "dir": "spring-cloud-netflix-example",
+        "build": "maven",
+        "in_5repo_baseline": false
+      }
+    ]
+  },
+  "external_ood_polyglot_suite": [
+    {
+      "id": "GoogleCloudPlatform/microservices-demo",
+      "pinned_sha": "c7cb6d5bfd6ea3aed768634ebbcb98cb7a523712",
+      "stack": "polyglot-5lang-grpc-k8s",
+      "ground_truth_core_services": [
+        "adservice",
+        "cartservice",
+        "checkoutservice",
+        "currencyservice",
+        "emailservice",
+        "frontend",
+        "loadgenerator",
+        "paymentservice",
+        "productcatalogservice",
+        "recommendationservice",
+        "redis-cart",
+        "shippingservice"
+      ],
+      "optional_repo_components_at_sha": [
+        "shoppingassistantservice",
+        "opentelemetrycollector"
+      ]
+    },
+    {
+      "id": "DescartesResearch/TeaStore",
+      "pinned_sha": "34b37f7",
+      "stack": "java-jaxrs-servlet-k8s-compose",
+      "ground_truth_core_services": [
+        "auth",
+        "image",
+        "persistence",
+        "recommender",
+        "registry",
+        "webui",
+        "db"
+      ]
+    }
+  ],
+  "zero_touch_blind_candidates": [
+    {
+      "id": "FudanSELab/train-ticket",
+      "stack": "polyglot-spring-cloud-41svc",
+      "status": "RESERVED_UNTOUCHED_BLIND"
+    },
+    {
+      "id": "instana/robot-shop",
+      "stack": "polyglot-node-python-java-go-php-k8s",
+      "status": "RESERVED_UNTOUCHED_BLIND"
+    },
+    {
+      "id": "microservices-demo/microservices-demo",
+      "stack": "polyglot-sock-shop-go-java-node",
+      "status": "RESERVED_UNTOUCHED_BLIND"
+    },
+    {
+      "id": "dotnet/eShop",
+      "stack": "dotnet-microservices-sln-k8s",
+      "status": "RESERVED_UNTOUCHED_BLIND"
+    }
+  ]
+}

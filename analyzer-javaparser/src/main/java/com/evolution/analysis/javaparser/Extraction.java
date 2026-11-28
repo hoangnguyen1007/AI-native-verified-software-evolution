@@ -19,13 +19,17 @@ import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import java.util.*;
 import java.util.function.Supplier;
 
-/** Per-request state. Traversal order never enters identity or output ordering. */
+/**
+ * Per-request state. Traversal order never enters identity or output ordering.
+ */
 final class Extraction {
     private static final VersionedIdentifier VERSION = JavaParserFrontend.PROVIDER;
-    private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT, new VersionedIdentifier("java.source", "1"), List.of());
+    private static final Derivation DIRECT = new Derivation(DerivationKind.DIRECT,
+            new VersionedIdentifier("java.source", "1"), List.of());
     private static final Set<String> HTTP_CLIENT_METHODS = Set.of(
             "getForObject", "getForEntity", "postForObject", "postForEntity", "postForLocation",
-            "put", "patchForObject", "delete", "headForHeaders", "optionsForAllow", "exchange", "uri");
+            "put", "patchForObject", "delete", "headForHeaders", "optionsForAllow", "exchange",
+            "uri", "baseUrl", "getInstances", "choose", "request");
     private static final Set<String> WEB_CLIENT_VERB_METHODS = Set.of(
             "get", "post", "put", "patch", "delete", "head", "options");
     private static final Set<String> SPRING_BOUNDARY_METHODS = Set.of(
@@ -36,12 +40,17 @@ final class Extraction {
     private static final SkeletonLruCache REACTOR_SKELETON_CACHE = new SkeletonLruCache(96L << 20);
     static final java.util.concurrent.atomic.AtomicLong KOTLIN_SKELETON_CACHE_HITS = new java.util.concurrent.atomic.AtomicLong();
 
-    private record SkeletonCacheKey(int syntaxLevel, com.evolution.analysis.contract.common.ContentDigest digest, String kotlinFileName) {}
-    private record CachedReactorSkeleton(UnicodeSource translated, CompilationUnit template, long weightBytes) {}
+    private record SkeletonCacheKey(int syntaxLevel, com.evolution.analysis.contract.common.ContentDigest digest,
+            String kotlinFileName) {
+    }
+
+    private record CachedReactorSkeleton(UnicodeSource translated, CompilationUnit template, long weightBytes) {
+    }
 
     private static final class SkeletonLruCache {
         private final long maxBytes;
-        private final LinkedHashMap<SkeletonCacheKey, CachedReactorSkeleton> map = new LinkedHashMap<>(128, 0.75f, true);
+        private final LinkedHashMap<SkeletonCacheKey, CachedReactorSkeleton> map = new LinkedHashMap<>(128, 0.75f,
+                true);
         private long usedBytes;
 
         SkeletonLruCache(long maxBytes) {
@@ -53,9 +62,11 @@ final class Extraction {
         }
 
         synchronized void put(SkeletonCacheKey key, CachedReactorSkeleton value) {
-            if (value.weightBytes() > maxBytes) return;
+            if (value.weightBytes() > maxBytes)
+                return;
             var prev = map.put(key, value);
-            if (prev != null) usedBytes -= prev.weightBytes();
+            if (prev != null)
+                usedBytes -= prev.weightBytes();
             usedBytes += value.weightBytes();
             var it = map.entrySet().iterator();
             while (usedBytes > maxBytes && it.hasNext()) {
@@ -85,17 +96,25 @@ final class Extraction {
     private final Set<DerivedRelationshipRecord> derived = new TreeSet<>();
     private Set<EntityIdentity> activeUnitDecls;
     private final Map<EntityIdentity, DeclarationRecord> declarations = new TreeMap<>() {
-        @Override public DeclarationRecord get(Object key) {
+        @Override
+        public DeclarationRecord get(Object key) {
             var val = super.get(key);
-            if (val != null && activeUnitDecls != null && key instanceof EntityIdentity id) activeUnitDecls.add(id);
+            if (val != null && activeUnitDecls != null && key instanceof EntityIdentity id)
+                activeUnitDecls.add(id);
             return val;
         }
-        @Override public DeclarationRecord put(EntityIdentity key, DeclarationRecord value) {
-            if (activeUnitDecls != null && key != null) activeUnitDecls.add(key);
+
+        @Override
+        public DeclarationRecord put(EntityIdentity key, DeclarationRecord value) {
+            if (activeUnitDecls != null && key != null)
+                activeUnitDecls.add(key);
             return super.put(key, value);
         }
-        @Override public DeclarationRecord putIfAbsent(EntityIdentity key, DeclarationRecord value) {
-            if (activeUnitDecls != null && key != null) activeUnitDecls.add(key);
+
+        @Override
+        public DeclarationRecord putIfAbsent(EntityIdentity key, DeclarationRecord value) {
+            if (activeUnitDecls != null && key != null)
+                activeUnitDecls.add(key);
             return super.putIfAbsent(key, value);
         }
     };
@@ -120,9 +139,12 @@ final class Extraction {
     private final List<HttpClientCallRecord> httpClientCalls = new ArrayList<>();
     private final Set<Diagnostic> diagnostics = new TreeSet<>();
     private final List<SourceOutcome> rejected = new ArrayList<>();
-    private record ClosureFailure(SemanticStatus status,String code) {}
-    private final Map<String,Optional<ClosureFailure>> recoveryHierarchies=new HashMap<>();
-    private final Set<MethodCallExpr> recoveryCallInputs=Collections.newSetFromMap(new IdentityHashMap<>());
+
+    private record ClosureFailure(SemanticStatus status, String code) {
+    }
+
+    private final Map<String, Optional<ClosureFailure>> recoveryHierarchies = new HashMap<>();
+    private final Set<MethodCallExpr> recoveryCallInputs = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<Expression, Object> unitValueCache = new IdentityHashMap<>();
     private final Map<Expression, Object> unitTypeNameCache = new IdentityHashMap<>();
     private final Map<AnnotationExpr, Object> unitAnnotationCache = new IdentityHashMap<>();
@@ -141,6 +163,7 @@ final class Extraction {
         final OriginalSource source;
         final CompilationUnit ast;
         final Set<Diagnostic> diagnostics = new TreeSet<>();
+
         Unit(SourceInput input, CompilationUnit ast, UnicodeSource translated) {
             this.input = input;
             this.ast = ast;
@@ -148,26 +171,40 @@ final class Extraction {
             this.source = new OriginalSource(input.document().identity(), input.text(), translated);
         }
     }
-    private record ReactorUnit(ReactorSourceInput input, Unit unit) {}
+
+    private record ReactorUnit(ReactorSourceInput input, Unit unit) {
+    }
+
     private record ParsedReactorChange(
             ReactorSourceInput slot,
             SourceInput input,
             UnicodeSource translated,
             CompilationUnit skeletonAst,
-            SourceAbiFingerprinter.AbiSummary abi) {}
-    private static final class MappingFailure extends RuntimeException {
-        final SemanticStatus status; final String code;
-        MappingFailure(SemanticStatus status, String code) { this.status = status; this.code = code; }
+            SourceAbiFingerprinter.AbiSummary abi) {
     }
+
+    private static final class MappingFailure extends RuntimeException {
+        final SemanticStatus status;
+        final String code;
+
+        MappingFailure(SemanticStatus status, String code) {
+            this.status = status;
+            this.code = code;
+        }
+    }
+
     Extraction(FrontendRequest request) {
         this(request, true, FrontendProgress.NOOP);
     }
+
     Extraction(FrontendRequest request, boolean compactBodies) {
         this(request, compactBodies, FrontendProgress.NOOP);
     }
+
     Extraction(FrontendRequest request, boolean compactBodies, FrontendProgress progress) {
         this(request, compactBodies, progress, new ResolutionEnvironment(Objects.requireNonNull(request)));
     }
+
     private Extraction(
             FrontendRequest request,
             boolean compactBodies,
@@ -176,7 +213,8 @@ final class Extraction {
         this.request = Objects.requireNonNull(request);
         this.compactBodies = compactBodies;
         this.progress = progress != null ? progress : FrontendProgress.NOOP;
-        this.fastArchitecture = "FAST_ARCHITECTURE".equals(request.manifest().configuration().values().get("analysis.profile"));
+        this.fastArchitecture = "FAST_ARCHITECTURE"
+                .equals(request.manifest().configuration().values().get("analysis.profile"));
         this.environment = sharedEnvironment;
         this.activeSolver = sharedEnvironment.solver;
         this.activeAndroidProject = sharedEnvironment.androidProject;
@@ -214,20 +252,26 @@ final class Extraction {
         long runStartNanos = System.nanoTime();
         progress.onModuleStarted(request.module().value(), request.sourceSet().name(), request.sources().size());
         parse();
-        if (request.sourceRecovery()) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.source-recovery",
-                "Available source, platform and artifact bindings are attributed individually; build closure remains incomplete",
-                Optional.empty(), Map.of("mode", FrontendRequest.SOURCE_RECOVERY)));
-        if (fastArchitecture) diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.fast-architecture",
-                "Architecture-focused profile skips non-boundary local expression attribution; declarations, hierarchy, annotations, written types and boundary calls remain exact",
-                Optional.empty(), Map.of("profile", "FAST_ARCHITECTURE")));
+        if (request.sourceRecovery())
+            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.source-recovery",
+                    "Available source, platform and artifact bindings are attributed individually; build closure remains incomplete",
+                    Optional.empty(), Map.of("mode", FrontendRequest.SOURCE_RECOVERY)));
+        if (fastArchitecture)
+            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.fast-architecture",
+                    "Architecture-focused profile skips non-boundary local expression attribution; declarations, hierarchy, annotations, written types and boundary calls remain exact",
+                    Optional.empty(), Map.of("profile", "FAST_ARCHITECTURE")));
         indexTypes();
-        // Materialize declaration identities before emitting edges, so collisions can be withheld.
+        // Materialize declaration identities before emitting edges, so collisions can
+        // be withheld.
         for (var unit : orderedUnits) {
             var docId = unit.input.document().identity();
             activeUnitDecls = headerDeclsByDoc.computeIfAbsent(docId, k -> new LinkedHashSet<>());
             activeUnitDerived = headerDerivedByDoc.computeIfAbsent(docId, k -> new ArrayList<>());
             for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) {
-                try { entity(node); } catch (RuntimeException | LinkageError | StackOverflowError exception) { /* Recorded in the declaration observation pass below. */ }
+                try {
+                    entity(node);
+                } catch (RuntimeException | LinkageError | StackOverflowError exception) {
+                    /* Recorded in the declaration observation pass below. */ }
             }
             activeUnitDecls = null;
             activeUnitDerived = null;
@@ -309,7 +353,8 @@ final class Extraction {
                     units.put(retained.ast, retained);
                     unit = retained;
                 } else {
-                    if (reuseParser == null) reuseParser = parser();
+                    if (reuseParser == null)
+                        reuseParser = parser();
                     unit = parse(reuseParser, header.input, Optional.empty()).orElseThrow();
                 }
             } else {
@@ -324,7 +369,8 @@ final class Extraction {
             var entry = extractSingleUnit(
                     header, unit, implicit, abi, shapes, members, constructorCandidates);
             nextUnitEntries.put(docId, entry);
-            if (compactBodies) releaseBody(unit);
+            if (compactBodies)
+                releaseBody(unit);
             doneBatch++;
             completedFiles++;
             if (doneBatch >= 8) {
@@ -341,7 +387,8 @@ final class Extraction {
             ModuleIncrementalCache.UnitEntry entry,
             List<Diagnostic> extraGlobalDiagnostics,
             Set<String> duplicateWarnings,
-            Set<EntityIdentity> duplicateDecls) {}
+            Set<EntityIdentity> duplicateDecls) {
+    }
 
     private void extractPass2Parallel(
             int extraPermits,
@@ -368,9 +415,11 @@ final class Extraction {
                 abi = SourceAbiFingerprinter.fingerprint(header.ast, header.input.document().path());
                 unitAbis.put(docId, abi);
             }
-            if (abi.hasLombokAnyAnnotation()) anyLombok = true;
+            if (abi.hasLombokAnyAnnotation())
+                anyLombok = true;
             for (TypeDeclaration<?> td : header.ast.findAll(TypeDeclaration.class)) {
-                if (td.getFullyQualifiedName().isEmpty() || hasLocalOwner(td)) continue;
+                if (td.getFullyQualifiedName().isEmpty() || hasLocalOwner(td))
+                    continue;
                 primaryFqnToDoc.putIfAbsent(td.getFullyQualifiedName().orElseThrow(), docId);
             }
             Unit retained = retainedFullUnits.remove(header);
@@ -389,7 +438,8 @@ final class Extraction {
             reactorByDoc.put(rDoc, ru);
             var slotMap = reactorFqnToDocBySlot.computeIfAbsent(ru.input().order(), k -> new HashMap<>());
             for (TypeDeclaration<?> td : ru.unit().ast.findAll(TypeDeclaration.class)) {
-                if (td.getFullyQualifiedName().isEmpty() || hasLocalOwner(td)) continue;
+                if (td.getFullyQualifiedName().isEmpty() || hasLocalOwner(td))
+                    continue;
                 slotMap.putIfAbsent(td.getFullyQualifiedName().orElseThrow(), rDoc);
             }
         }
@@ -416,31 +466,37 @@ final class Extraction {
             var workerImplicitRef = new ImplicitExtraction[1];
             var loadedPrimaryHeaders = new HashMap<SourceDocumentIdentity, Unit>();
 
-            LazySkeletonTypeSolver workerProjectSolver = new LazySkeletonTypeSolver(primaryFqnToDoc, (docId, publishEarly) -> {
-                Unit existingHeader = loadedPrimaryHeaders.get(docId);
-                if (existingHeader != null) {
-                    return new LazySkeletonTypeSolver.MaterializedUnit(
-                            docId, existingHeader.input, existingHeader.ast,
-                            LazySkeletonTypeSolver.indexSkeletonTypes(existingHeader.ast, worker::hasLocalOwner));
-                }
-                CompilationUnit cloned = cloneWithRangesAndSolver(primaryTemplates.get(docId), workerSymbolSolverRef[0]);
-                cloned.setData(ExplicitImportTypeSolver.UNIT_PATH_KEY, primaryInputs.get(docId).document().path());
-                Unit hUnit = new Unit(primaryInputs.get(docId), cloned, primaryTranslated.get(docId));
-                loadedPrimaryHeaders.put(docId, hUnit);
-                worker.units.put(cloned, hUnit);
-                cloned.stream().filter(worker::membershipNode).forEach(worker.sourceNodes::add);
-                var declsMap = LazySkeletonTypeSolver.indexSkeletonTypes(cloned, worker::hasLocalOwner);
-                var materialized = new LazySkeletonTypeSolver.MaterializedUnit(docId, hUnit.input, cloned, declsMap);
-                publishEarly.accept(materialized);
-                worker.materializeHeaderDeclarationsIsolated(hUnit, workerImplicitRef[0]);
-                return materialized;
-            });
+            LazySkeletonTypeSolver workerProjectSolver = new LazySkeletonTypeSolver(primaryFqnToDoc,
+                    (docId, publishEarly) -> {
+                        Unit existingHeader = loadedPrimaryHeaders.get(docId);
+                        if (existingHeader != null) {
+                            return new LazySkeletonTypeSolver.MaterializedUnit(
+                                    docId, existingHeader.input, existingHeader.ast,
+                                    LazySkeletonTypeSolver.indexSkeletonTypes(existingHeader.ast,
+                                            worker::hasLocalOwner));
+                        }
+                        CompilationUnit cloned = cloneWithRangesAndSolver(primaryTemplates.get(docId),
+                                workerSymbolSolverRef[0]);
+                        cloned.setData(ExplicitImportTypeSolver.UNIT_PATH_KEY,
+                                primaryInputs.get(docId).document().path());
+                        Unit hUnit = new Unit(primaryInputs.get(docId), cloned, primaryTranslated.get(docId));
+                        loadedPrimaryHeaders.put(docId, hUnit);
+                        worker.units.put(cloned, hUnit);
+                        cloned.stream().filter(worker::membershipNode).forEach(worker.sourceNodes::add);
+                        var declsMap = LazySkeletonTypeSolver.indexSkeletonTypes(cloned, worker::hasLocalOwner);
+                        var materialized = new LazySkeletonTypeSolver.MaterializedUnit(docId, hUnit.input, cloned,
+                                declsMap);
+                        publishEarly.accept(materialized);
+                        worker.materializeHeaderDeclarationsIsolated(hUnit, workerImplicitRef[0]);
+                        return materialized;
+                    });
 
             var workerReactorSolvers = new HashMap<Integer, com.github.javaparser.resolution.TypeSolver>();
             for (var slotEntry : reactorFqnToDocBySlot.entrySet()) {
                 workerReactorSolvers.put(slotEntry.getKey(), new LazySkeletonTypeSolver(slotEntry.getValue(), rDoc -> {
                     ReactorUnit ru = reactorByDoc.get(rDoc);
-                    CompilationUnit cloned = cloneWithRangesAndSolver(reactorTemplates.get(rDoc), workerSymbolSolverRef[0]);
+                    CompilationUnit cloned = cloneWithRangesAndSolver(reactorTemplates.get(rDoc),
+                            workerSymbolSolverRef[0]);
                     Unit rUnit = new Unit(ru.unit().input, cloned, ru.unit().translated);
                     worker.units.put(cloned, rUnit);
                     cloned.stream().filter(worker::membershipNode).forEach(worker.reactorNodes::add);
@@ -451,7 +507,8 @@ final class Extraction {
             }
 
             worker.activeSolver = environment.buildIsolatedWorkerSolver(
-                    workerProjectSolver, workerReactorSolvers, workerAndroidProject, workerAndroidPlatform, workerExplicitImports);
+                    workerProjectSolver, workerReactorSolvers, workerAndroidProject, workerAndroidPlatform,
+                    workerExplicitImports);
             worker.activeAndroidProject = workerAndroidProject;
             worker.activeAndroidPlatform = workerAndroidPlatform;
             worker.activeExplicitImports = workerExplicitImports;
@@ -467,14 +524,17 @@ final class Extraction {
             int doneBatch = 0;
 
             while (true) {
-                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
+                if (Thread.currentThread().isInterrupted())
+                    throw new java.util.concurrent.CancellationException();
                 int idx = nextIndex.getAndIncrement();
-                if (idx >= total) break;
+                if (idx >= total)
+                    break;
                 Unit mainHeader = orderedUnits.get(idx);
                 SourceDocumentIdentity docId = mainHeader.input.document().identity();
                 Unit workerHeader = loadedPrimaryHeaders.get(docId);
                 if (workerHeader == null) {
-                    CompilationUnit cloned = cloneWithRangesAndSolver(primaryTemplates.get(docId), workerSymbolSolverRef[0]);
+                    CompilationUnit cloned = cloneWithRangesAndSolver(primaryTemplates.get(docId),
+                            workerSymbolSolverRef[0]);
                     workerHeader = new Unit(primaryInputs.get(docId), cloned, primaryTranslated.get(docId));
                     loadedPrimaryHeaders.put(docId, workerHeader);
                     worker.units.put(cloned, workerHeader);
@@ -535,10 +595,14 @@ final class Extraction {
             duplicateDeclarations.addAll(out.duplicateDecls());
             duplicateTypeWarnings.addAll(out.duplicateWarnings());
             diagnostics.addAll(out.extraGlobalDiagnostics());
-            for (var d : entry.ownDeclarations()) declarations.put(d.entity().identity(), d);
-            for (var d : entry.reactorDeclarations()) declarations.putIfAbsent(d.entity().identity(), d);
-            for (var d : entry.externalDeclarations()) declarations.putIfAbsent(d.entity().identity(), d);
-            for (var o : entry.occurrences()) occurrences.putIfAbsent(o.identity(), o);
+            for (var d : entry.ownDeclarations())
+                declarations.put(d.entity().identity(), d);
+            for (var d : entry.reactorDeclarations())
+                declarations.putIfAbsent(d.entity().identity(), d);
+            for (var d : entry.externalDeclarations())
+                declarations.putIfAbsent(d.entity().identity(), d);
+            for (var o : entry.occurrences())
+                occurrences.putIfAbsent(o.identity(), o);
             observations.addAll(entry.observations());
             types.addAll(entry.types());
             annotations.addAll(entry.annotations());
@@ -563,7 +627,10 @@ final class Extraction {
             activeUnitDerived = headerDerivedByDoc.computeIfAbsent(docId, k -> new ArrayList<>());
             activeUnitOccurrences = null;
             for (var node : headerUnit.ast.stream().filter(this::isDeclaration).toList()) {
-                try { entity(node); } catch (RuntimeException | LinkageError | StackOverflowError ignored) {}
+                try {
+                    entity(node);
+                } catch (RuntimeException | LinkageError | StackOverflowError ignored) {
+                }
             }
             if (implicit != null) {
                 implicit.declarations(headerUnit.ast);
@@ -610,8 +677,10 @@ final class Extraction {
             }
         }
         unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
-        if (compactBodies) implicit.declarations(unit.ast, true);
-        for (var node : unit.ast.stream().filter(this::isDeclaration).toList()) observe(node, "declares", () -> entity(node), () -> owner(node));
+        if (compactBodies)
+            implicit.declarations(unit.ast, true);
+        for (var node : unit.ast.stream().filter(this::isDeclaration).toList())
+            observe(node, "declares", () -> entity(node), () -> owner(node));
         if (fastArchitecture) {
             Set<String> injectedNames = collectUnitBoundaryMemberNames(unit.ast);
             for (var node : unit.ast.findAll(MethodCallExpr.class)) {
@@ -629,20 +698,27 @@ final class Extraction {
                 observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
             }
         } else {
-            for (var node : unit.ast.findAll(MethodCallExpr.class)) observe(node, "calls", () -> resolveCall(node), () -> owner(node));
+            for (var node : unit.ast.findAll(MethodCallExpr.class))
+                observe(node, "calls", () -> resolveCall(node), () -> owner(node));
             httpClientCalls.addAll(httpClientCalls(unit));
-            for (var node : unit.ast.findAll(ObjectCreationExpr.class)) observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
-            for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class)) observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
+            for (var node : unit.ast.findAll(ObjectCreationExpr.class))
+                observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
+            for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class))
+                observe(node, "constructor-calls", () -> callable(node.resolve()), () -> owner(node));
             var references = new ReferenceResolution(activeSolver);
-            for (var node : unit.ast.findAll(MethodReferenceExpr.class)) observe(node, "method-references", () -> {
-                var generated = lombok.resolveReference(node, references); if (generated.isPresent()) return generated.orElseThrow();
-                var selected = references.resolve(node);
-                if (request.sourceRecovery() && selected instanceof ResolvedMethodDeclaration method) {
-                    var receiver = recoveryReceiver(node, Optional.of(node.getScope()));
-                    if (!ownZeroArgumentMethod(method, receiver)) requireRecoveryHierarchy(receiver);
-                }
-                return callable(selected, node);
-            }, () -> owner(node));
+            for (var node : unit.ast.findAll(MethodReferenceExpr.class))
+                observe(node, "method-references", () -> {
+                    var generated = lombok.resolveReference(node, references);
+                    if (generated.isPresent())
+                        return generated.orElseThrow();
+                    var selected = references.resolve(node);
+                    if (request.sourceRecovery() && selected instanceof ResolvedMethodDeclaration method) {
+                        var receiver = recoveryReceiver(node, Optional.of(node.getScope()));
+                        if (!ownZeroArgumentMethod(method, receiver))
+                            requireRecoveryHierarchy(receiver);
+                    }
+                    return callable(selected, node);
+                }, () -> owner(node));
         }
         var unitTypes = new TypeExtraction(this).extract(unit.ast);
         types.addAll(unitTypes);
@@ -655,12 +731,14 @@ final class Extraction {
         }
         new AnnotationExtraction(this).extract(unit.ast);
         implicit.relationships(unit.ast);
-        if (compactBodies) lombok.relationships(header.ast);
+        if (compactBodies)
+            lombok.relationships(header.ast);
         lombok.relationships(unit.ast);
         shapes.addAll(typeDeclarations(unit));
         members.addAll(memberDeclarations(unit));
         constructorCandidates.addAll(LombokCandidates.extract(this, List.of(unit.ast), unitTypes, sourceTypeNames));
-        if (compactBodies && unit != header) header.diagnostics.addAll(unit.diagnostics);
+        if (compactBodies && unit != header)
+            header.diagnostics.addAll(unit.diagnostics);
 
         var unitOccs = List.copyOf(activeUnitOccurrences);
         var unitObs = List.copyOf(observations.subList(obsStart, observations.size()));
@@ -680,7 +758,8 @@ final class Extraction {
         var partitioned = IncrementalAndParallelSupport.partitionUnitDeclarations(
                 docId, request.module(), touchedIds, declarations);
         var allUnitDecls = new ArrayList<DeclarationRecord>(
-                partitioned.ownDeclarations().size() + partitioned.reactorDeclarations().size() + partitioned.externalDeclarations().size());
+                partitioned.ownDeclarations().size() + partitioned.reactorDeclarations().size()
+                        + partitioned.externalDeclarations().size());
         allUnitDecls.addAll(partitioned.ownDeclarations());
         allUnitDecls.addAll(partitioned.reactorDeclarations());
         allUnitDecls.addAll(partitioned.externalDeclarations());
@@ -734,10 +813,14 @@ final class Extraction {
     }
 
     /**
-     * Demand-driven incremental extraction using {@link SourceAbiFingerprinter}, unbounded
-     * {@link FileDependencyIndex}, {@link LazySkeletonTypeSolver} (0 unchanged files parsed unless queried),
-     * and O(k) Declaration-Span Rebinding. Returns {@link Optional#empty()} on any disqualifier to
-     * transparently fall back to full cold extraction (sharing the already-verified {@link ResolutionEnvironment}).
+     * Demand-driven incremental extraction using {@link SourceAbiFingerprinter},
+     * unbounded
+     * {@link FileDependencyIndex}, {@link LazySkeletonTypeSolver} (0 unchanged
+     * files parsed unless queried),
+     * and O(k) Declaration-Span Rebinding. Returns {@link Optional#empty()} on any
+     * disqualifier to
+     * transparently fall back to full cold extraction (sharing the already-verified
+     * {@link ResolutionEnvironment}).
      */
     private Optional<FrontendResult> tryIncrementalRun(
             ModuleIncrementalCache.ModuleEntry prevEntry,
@@ -762,7 +845,8 @@ final class Extraction {
         }
 
         // 1. Zero-parse diff of primary sources against prevEntry
-        var currentSourcesByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceInput>(request.sources().size() * 2 + 1);
+        var currentSourcesByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceInput>(
+                request.sources().size() * 2 + 1);
         var changedOrAddedInputs = new ArrayList<SourceInput>();
         var prevOwnPackages = new HashSet<String>();
         for (var u : prevEntry.units().values()) {
@@ -791,7 +875,8 @@ final class Extraction {
             }
         }
 
-        // 2. Diff upstream reactor sources using PublicCrossModuleAbiDigest (or ExternalAbiDigest for split packages)
+        // 2. Diff upstream reactor sources using PublicCrossModuleAbiDigest (or
+        // ExternalAbiDigest for split packages)
         var currentReactorInputByDoc = new LinkedHashMap<SourceDocumentIdentity, SourceInput>();
         var currentReactorSlotByDoc = new HashMap<SourceDocumentIdentity, ReactorSourceInput>();
         var reactorDocOrder = new ArrayList<SourceDocumentIdentity>();
@@ -833,7 +918,8 @@ final class Extraction {
                 incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "reactor-meta-file-changed");
                 return Optional.empty();
             }
-            if (rawReactorParser == null) rawReactorParser = IncrementalAndParallelSupport.newRawParser(languageLevel());
+            if (rawReactorParser == null)
+                rawReactorParser = IncrementalAndParallelSupport.newRawParser(languageLevel());
             var raw = IncrementalAndParallelSupport.parseSingleRaw(rawReactorParser, rIn);
             if (!raw.isSuccess()) {
                 incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "reactor-parse-error");
@@ -870,16 +956,19 @@ final class Extraction {
                     changedUpstreamReactorFqns.addAll(old.declaredFqns());
                     changedUpstreamReactorFqns.addAll(abi.declaredFqns());
                     for (String sn : old.declaredSimpleNames()) {
-                        if (!abi.declaredSimpleNames().contains(sn)) changedUpstreamReactorSimpleNames.add(sn);
+                        if (!abi.declaredSimpleNames().contains(sn))
+                            changedUpstreamReactorSimpleNames.add(sn);
                     }
                     for (String sn : abi.declaredSimpleNames()) {
-                        if (!old.declaredSimpleNames().contains(sn)) changedUpstreamReactorSimpleNames.add(sn);
+                        if (!old.declaredSimpleNames().contains(sn))
+                            changedUpstreamReactorSimpleNames.add(sn);
                     }
                 }
             }
         }
 
-        // Build full reactor FQN index across slots (for lazy resolution & duplicateExternal checks)
+        // Build full reactor FQN index across slots (for lazy resolution &
+        // duplicateExternal checks)
         var reactorFqnToDocBySlot = new HashMap<Integer, Map<String, SourceDocumentIdentity>>();
         var allReactorFqns = new HashSet<String>();
         var duplicateReactorFqns = new HashSet<String>();
@@ -911,7 +1000,8 @@ final class Extraction {
             var reboundCounter = new java.util.concurrent.atomic.AtomicInteger(0);
             Map<EntityIdentity, DeclarationRecord> freshReactorDecls = Map.of();
             if (!shiftedReactorDocs.isEmpty()) {
-                // Build lazy reactor solvers bound to boundSymRef AFTER activeSolver includes them (P1 fix).
+                // Build lazy reactor solvers bound to boundSymRef AFTER activeSolver includes
+                // them (P1 fix).
                 var boundSymRef = new JavaSymbolSolver[1];
                 var lazyReactorSolvers = buildLazyReactorSolvers(
                         reactorFqnToDocBySlot, currentReactorInputByDoc, parsedReactorChanges, boundSymRef);
@@ -920,14 +1010,17 @@ final class Extraction {
                         lazyReactorSolvers, null, null, null);
                 environment.installLazySolvers(null, lazyReactorSolvers, allReactorFqns, duplicateReactorFqns);
                 boundSymRef[0] = new JavaSymbolSolver(activeSolver);
-                freshReactorDecls = extractShiftedReactorDeclarations(shiftedReactorDocs, parsedReactorChanges, boundSymRef[0]);
+                freshReactorDecls = extractShiftedReactorDeclarations(shiftedReactorDocs, parsedReactorChanges,
+                        boundSymRef[0]);
                 if (freshReactorDecls == null) {
-                    incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "shifted-reactor-extract-failed");
+                    incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0,
+                            "shifted-reactor-extract-failed");
                     return Optional.empty();
                 }
             }
 
-            var updatedEntries = new LinkedHashMap<SourceDocumentIdentity, ModuleIncrementalCache.UnitEntry>(request.sources().size() * 2 + 1);
+            var updatedEntries = new LinkedHashMap<SourceDocumentIdentity, ModuleIncrementalCache.UnitEntry>(
+                    request.sources().size() * 2 + 1);
             for (var input : request.sources()) {
                 var docId = input.document().identity();
                 var cached = prevEntry.units().get(docId);
@@ -976,7 +1069,8 @@ final class Extraction {
             return assembled;
         }
 
-        // 4. CASE A (Early Cutoff) & CASE B (Unbounded Fixpoint + LazySkeletonTypeSolver)
+        // 4. CASE A (Early Cutoff) & CASE B (Unbounded Fixpoint +
+        // LazySkeletonTypeSolver)
         // Parse ONLY changedOrAddedInputs first!
         int parsePermits = IncrementalAndParallelSupport.acquireExtraPermits(changedOrAddedInputs.size());
         IncrementalAndParallelSupport.RawParsedSource[] rawChanged;
@@ -1029,7 +1123,8 @@ final class Extraction {
         // Verify no FQN collision between changed/added units and unchanged clean units
         for (var prev : prevEntry.units().entrySet()) {
             SourceDocumentIdentity docId = prev.getKey();
-            if (changedFullByDoc.containsKey(docId) || removedDocs.contains(docId)) continue;
+            if (changedFullByDoc.containsKey(docId) || removedDocs.contains(docId))
+                continue;
             for (String fqn : prev.getValue().declaredFqns()) {
                 if (changedFqns.contains(fqn)) {
                     incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "duplicate-type-vs-clean");
@@ -1038,13 +1133,16 @@ final class Extraction {
             }
         }
 
-        // If a newly added primary unit created a split package matching a previously "shifted" reactor file,
-        // verify whether the reactor file's package-private externalAbiDigest also matches!
+        // If a newly added primary unit created a split package matching a previously
+        // "shifted" reactor file,
+        // verify whether the reactor file's package-private externalAbiDigest also
+        // matches!
         for (var rDoc : new ArrayList<>(shiftedReactorDocs)) {
             var oldR = prevEntry.reactorAbis().get(rDoc);
             var curR = nextReactorAbis.get(rDoc);
             boolean newlySplit = changedAbiByDoc.values().stream()
-                    .anyMatch(a -> a.packageName().equals(curR.packageName()) || a.packageName().equals(oldR.packageName()));
+                    .anyMatch(a -> a.packageName().equals(curR.packageName())
+                            || a.packageName().equals(oldR.packageName()));
             if (newlySplit && !oldR.externalAbiDigest().equals(curR.externalAbiDigest())) {
                 shiftedReactorDocs.remove(rDoc);
                 changedUpstreamReactorFqns.addAll(oldR.declaredFqns());
@@ -1054,8 +1152,10 @@ final class Extraction {
             }
         }
 
-        // S6: Under SOURCE_RECOVERY, reconstruct exact ExplicitImportTypeSolver state from cached UnitObservations
-        // + changed ASTs (zero clean files parsed!) and feed any changed recovery declaration FQNs into dirty closure!
+        // S6: Under SOURCE_RECOVERY, reconstruct exact ExplicitImportTypeSolver state
+        // from cached UnitObservations
+        // + changed ASTs (zero clean files parsed!) and feed any changed recovery
+        // declaration FQNs into dirty closure!
         ExplicitImportTypeSolver incrementalExplicitImports = null;
         Map<String, String> nextRecoverySignatures = Map.of();
         if (request.sourceRecovery()) {
@@ -1068,11 +1168,13 @@ final class Extraction {
                     var obs = incrementalExplicitImports.observeUnitWithSummary(raw.ast(), input.document().path());
                     unitRecoveryObservations.put(docId, obs);
                     var abi = changedAbiByDoc.get(docId);
-                    if (abi != null) allKnownSourceAndReactor.addAll(abi.declaredFqns());
+                    if (abi != null)
+                        allKnownSourceAndReactor.addAll(abi.declaredFqns());
                 } else {
                     var cached = prevEntry.units().get(docId);
                     if (cached == null) {
-                        incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "missing-clean-recovery-obs");
+                        incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0,
+                                "missing-clean-recovery-obs");
                         return Optional.empty();
                     }
                     incrementalExplicitImports.replayObservation(cached.recoveryObservation());
@@ -1106,7 +1208,8 @@ final class Extraction {
             }
         }
 
-        var previousNodes = new LinkedHashMap<SourceDocumentIdentity, FileDependencyIndex.UnitNode>(prevEntry.units().size() * 2 + 1);
+        var previousNodes = new LinkedHashMap<SourceDocumentIdentity, FileDependencyIndex.UnitNode>(
+                prevEntry.units().size() * 2 + 1);
         for (var e : prevEntry.units().entrySet()) {
             previousNodes.put(e.getKey(), e.getValue().toIndexNode());
         }
@@ -1122,23 +1225,34 @@ final class Extraction {
         }
         Set<SourceDocumentIdentity> dirtyDocs = new LinkedHashSet<>(closure.dirtyDocuments());
         if (request.sourceRecovery() && !changedUpstreamReactorFqns.isEmpty()) {
-            // Also invalidate any clean unit whose cached recovery observation imported/used a changed recovery FQN.
+            // Also invalidate any clean unit whose cached recovery observation
+            // imported/used a changed recovery FQN.
             for (var e : prevEntry.units().entrySet()) {
                 SourceDocumentIdentity docId = e.getKey();
-                if (dirtyDocs.contains(docId) || removedDocs.contains(docId)) continue;
+                if (dirtyDocs.contains(docId) || removedDocs.contains(docId))
+                    continue;
                 var obs = e.getValue().recoveryObservation();
                 boolean touchesChanged = false;
                 for (String f : obs.explicitFqns()) {
-                    if (changedUpstreamReactorFqns.contains(f)) { touchesChanged = true; break; }
+                    if (changedUpstreamReactorFqns.contains(f)) {
+                        touchesChanged = true;
+                        break;
+                    }
                 }
                 if (!touchesChanged) {
                     for (String q : obs.qualifiedTypes()) {
-                        if (changedUpstreamReactorFqns.contains(q)) { touchesChanged = true; break; }
+                        if (changedUpstreamReactorFqns.contains(q)) {
+                            touchesChanged = true;
+                            break;
+                        }
                     }
                 }
                 if (!touchesChanged) {
                     for (String v : obs.localSimpleToFqn().values()) {
-                        if (changedUpstreamReactorFqns.contains(v)) { touchesChanged = true; break; }
+                        if (changedUpstreamReactorFqns.contains(v)) {
+                            touchesChanged = true;
+                            break;
+                        }
                     }
                 }
                 if (!touchesChanged) {
@@ -1149,14 +1263,17 @@ final class Extraction {
                                 break;
                             }
                         }
-                        if (touchesChanged) break;
+                        if (touchesChanged)
+                            break;
                     }
                 }
-                if (touchesChanged) dirtyDocs.add(docId);
+                if (touchesChanged)
+                    dirtyDocs.add(docId);
             }
             int ceiling = request.sources().size() <= 5
                     ? Math.max(1, request.sources().size() - 1)
-                    : Math.max(2, (int) Math.floor(request.sources().size() * ModuleIncrementalCache.safetyCeilingRatio()));
+                    : Math.max(2,
+                            (int) Math.floor(request.sources().size() * ModuleIncrementalCache.safetyCeilingRatio()));
             if (request.sources().size() > 1 && dirtyDocs.size() > ceiling) {
                 incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "DIRTY_RATIO_EXCEEDED");
                 return Optional.empty();
@@ -1168,7 +1285,8 @@ final class Extraction {
         for (var docId : dirtyDocs) {
             if (!changedFullByDoc.containsKey(docId)) {
                 SourceInput inp = currentSourcesByDoc.get(docId);
-                if (inp != null) extraDirtyInputs.add(inp);
+                if (inp != null)
+                    extraDirtyInputs.add(inp);
             }
         }
         if (!extraDirtyInputs.isEmpty()) {
@@ -1192,11 +1310,13 @@ final class Extraction {
                 }
                 SourceDocumentIdentity docId = raw.input().document().identity();
                 changedFullByDoc.put(docId, raw);
-                changedAbiByDoc.put(docId, SourceAbiFingerprinter.fingerprint(raw.ast(), raw.input().document().path()));
+                changedAbiByDoc.put(docId,
+                        SourceAbiFingerprinter.fingerprint(raw.ast(), raw.input().document().path()));
             }
         }
 
-        // Build clean primary FQN index (0 clean files parsed!) + sourceTypeNames + architecturalSimpleTypeNames + Lombok flag
+        // Build clean primary FQN index (0 clean files parsed!) + sourceTypeNames +
+        // architecturalSimpleTypeNames + Lombok flag
         var cleanFqnToDoc = new HashMap<String, SourceDocumentIdentity>();
         boolean anyLombokInModule = false;
         for (var input : request.sources()) {
@@ -1205,8 +1325,8 @@ final class Extraction {
                 var abi = changedAbiByDoc.get(docId);
                 if (abi != null) {
                     sourceTypeNames.addAll(abi.declaredFqns());
-                    if (fastArchitecture) architecturalSimpleTypeNames.addAll(abi.declaredSimpleNames());
-                    if (abi.hasLombokAnyAnnotation()) anyLombokInModule = true;
+                    if (abi.hasLombokAnyAnnotation())
+                        anyLombokInModule = true;
                 }
             } else {
                 var cached = prevEntry.units().get(docId);
@@ -1218,18 +1338,28 @@ final class Extraction {
                     cleanFqnToDoc.put(fqn, docId);
                     sourceTypeNames.add(fqn);
                 }
-                if (fastArchitecture) architecturalSimpleTypeNames.addAll(cached.declaredSimpleNames());
-                if (cached.hasLombokClassAnnotation()) anyLombokInModule = true;
+                if (cached.hasLombokClassAnnotation())
+                    anyLombokInModule = true;
             }
         }
         if (fastArchitecture) {
+            // Match cold indexTypes(): populate ONLY declared type simple names (never field/method/enum/record
+            // names from AbiSummary.declaredSimpleNames(), which would spuriously match local-variable receivers).
+            for (String fqn : sourceTypeNames) {
+                int dot = fqn.lastIndexOf('.');
+                architecturalSimpleTypeNames.add(dot >= 0 ? fqn.substring(dot + 1) : fqn);
+            }
             for (var rAbi : nextReactorAbis.values()) {
-                architecturalSimpleTypeNames.addAll(rAbi.declaredSimpleNames());
+                for (String fqn : rAbi.declaredFqns()) {
+                    int dot = fqn.lastIndexOf('.');
+                    architecturalSimpleTypeNames.add(dot >= 0 ? fqn.substring(dot + 1) : fqn);
+                }
             }
         }
         lombok.setHasPotentialLombokInModule(anyLombokInModule);
 
-        // Install LazySkeletonTypeSolvers so clean files are ONLY parsed if queried by SymbolSolver!
+        // Install LazySkeletonTypeSolvers so clean files are ONLY parsed if queried by
+        // SymbolSolver!
         var symSolverRef = new JavaSymbolSolver[1];
         var implicitRef = new ImplicitExtraction[1];
         var rawLazyParserRef = new JavaParser[1];
@@ -1243,10 +1373,13 @@ final class Extraction {
                         LazySkeletonTypeSolver.indexSkeletonTypes(existingHeader.ast, this::hasLocalOwner));
             }
             SourceInput inp = currentSourcesByDoc.get(docId);
-            if (inp == null) return null;
-            if (rawLazyParserRef[0] == null) rawLazyParserRef[0] = IncrementalAndParallelSupport.newRawParser(languageLevel());
+            if (inp == null)
+                return null;
+            if (rawLazyParserRef[0] == null)
+                rawLazyParserRef[0] = IncrementalAndParallelSupport.newRawParser(languageLevel());
             var raw = IncrementalAndParallelSupport.parseSingleRaw(rawLazyParserRef[0], inp);
-            if (!raw.isSuccess()) return null;
+            if (!raw.isSuccess())
+                return null;
             skeleton(raw.ast());
             raw.ast().setData(Node.SYMBOL_RESOLVER_KEY, symSolverRef[0]);
             raw.ast().setData(ExplicitImportTypeSolver.UNIT_PATH_KEY, inp.document().path());
@@ -1256,8 +1389,10 @@ final class Extraction {
             raw.ast().stream().filter(this::membershipNode).forEach(sourceNodes::add);
             var indexedMap = LazySkeletonTypeSolver.indexSkeletonTypes(raw.ast(), this::hasLocalOwner);
             var materialized = new LazySkeletonTypeSolver.MaterializedUnit(docId, inp, raw.ast(), indexedMap);
-            // Publish indexed types BEFORE materializeHeaderDeclarationsIsolated so self-referential generics
-            // (e.g. class B<T extends B<T>>) or Lombok @Builder resolve immediately without StackOverflowError!
+            // Publish indexed types BEFORE materializeHeaderDeclarationsIsolated so
+            // self-referential generics
+            // (e.g. class B<T extends B<T>>) or Lombok @Builder resolve immediately without
+            // StackOverflowError!
             publishEarly.accept(materialized);
             materializeHeaderDeclarationsIsolated(hUnit, implicitRef[0]);
             return materialized;
@@ -1275,23 +1410,29 @@ final class Extraction {
                     units.put(cloned, rUnit);
                     cloned.stream().filter(this::membershipNode).forEach(reactorNodes::add);
                     return new LazySkeletonTypeSolver.MaterializedUnit(
-                            rDoc, rUnit.input, cloned, LazySkeletonTypeSolver.indexSkeletonTypes(cloned, this::hasLocalOwner));
+                            rDoc, rUnit.input, cloned,
+                            LazySkeletonTypeSolver.indexSkeletonTypes(cloned, this::hasLocalOwner));
                 }
                 SourceInput rIn = currentReactorInputByDoc.get(rDoc);
-                if (rIn == null) return null;
+                if (rIn == null)
+                    return null;
                 String ktName = kotlinCacheFileName(rIn.document().path());
-                var cacheKey = new SkeletonCacheKey(ktName.isEmpty() ? syntaxKey : 0, rIn.document().contentDigest(), ktName);
+                var cacheKey = new SkeletonCacheKey(ktName.isEmpty() ? syntaxKey : 0, rIn.document().contentDigest(),
+                        ktName);
                 var cachedSkel = REACTOR_SKELETON_CACHE.get(cacheKey);
                 CompilationUnit skelAst;
                 UnicodeSource translated;
                 if (cachedSkel != null) {
-                    if (!ktName.isEmpty()) KOTLIN_SKELETON_CACHE_HITS.incrementAndGet();
+                    if (!ktName.isEmpty())
+                        KOTLIN_SKELETON_CACHE_HITS.incrementAndGet();
                     skelAst = cloneWithRangesAndSolver(cachedSkel.template(), symSolverRef[0]);
                     translated = cachedSkel.translated();
                 } else {
-                    if (rawLazyParserRef[0] == null) rawLazyParserRef[0] = IncrementalAndParallelSupport.newRawParser(languageLevel());
+                    if (rawLazyParserRef[0] == null)
+                        rawLazyParserRef[0] = IncrementalAndParallelSupport.newRawParser(languageLevel());
                     var raw = IncrementalAndParallelSupport.parseSingleRaw(rawLazyParserRef[0], rIn);
-                    if (!raw.isSuccess()) return null;
+                    if (!raw.isSuccess())
+                        return null;
                     skeleton(raw.ast());
                     CompilationUnit template = cloneWithRangesAndSolver(raw.ast(), null);
                     long weight = (long) raw.translated().text.length() * 4 + 1024L;
@@ -1310,23 +1451,29 @@ final class Extraction {
 
         activeSolver = environment.buildIsolatedWorkerSolver(
                 lazyProject, lazyReactorSolvers, null, null, incrementalExplicitImports);
-        activeExplicitImports = incrementalExplicitImports != null ? incrementalExplicitImports : environment.explicitImports;
+        activeExplicitImports = incrementalExplicitImports != null ? incrementalExplicitImports
+                : environment.explicitImports;
         symSolverRef[0] = new JavaSymbolSolver(activeSolver);
         environment.installLazySolvers(lazyProject, lazyReactorSolvers, allReactorFqns, duplicateReactorFqns);
         nativeMembers = new NativeMemberExtraction(this, request, environment);
         implicitRef[0] = new ImplicitExtraction(this);
 
-        // Register dirty primary units eagerly into lazyProject (header skeleton + retained full AST)
+        // Register dirty primary units eagerly into lazyProject (header skeleton +
+        // retained full AST)
         var dirtyHeaders = new LinkedHashMap<SourceDocumentIdentity, Unit>();
         var dirtyFulls = new LinkedHashMap<SourceDocumentIdentity, Unit>();
         for (var input : request.sources()) {
             SourceDocumentIdentity docId = input.document().identity();
-            if (!dirtyDocs.contains(docId)) continue;
+            if (!dirtyDocs.contains(docId))
+                continue;
             var raw = changedFullByDoc.get(docId);
-            if (raw == null) continue;
+            if (raw == null)
+                continue;
             CompilationUnit fullAst = raw.ast();
             fullAst.setData(Node.SYMBOL_RESOLVER_KEY, symSolverRef[0]);
+            fullAst.setData(ExplicitImportTypeSolver.UNIT_PATH_KEY, input.document().path());
             CompilationUnit headerAst = extractSkeletonClone(fullAst, symSolverRef[0]);
+            headerAst.setData(ExplicitImportTypeSolver.UNIT_PATH_KEY, input.document().path());
             Unit headerUnit = new Unit(input, headerAst, raw.translated());
             Unit fullUnit = new Unit(input, fullAst, raw.translated());
             units.put(headerAst, headerUnit);
@@ -1343,11 +1490,13 @@ final class Extraction {
             materializeHeaderDeclarationsIsolated(hUnit, implicitRef[0]);
         }
 
-        // Extract fresh reactor DeclarationRecords for O(k) span rebinding on any shifted reactor docs
+        // Extract fresh reactor DeclarationRecords for O(k) span rebinding on any
+        // shifted reactor docs
         var reboundCounter = new java.util.concurrent.atomic.AtomicInteger(0);
         Map<EntityIdentity, DeclarationRecord> freshReactorDecls = Map.of();
         if (!shiftedReactorDocs.isEmpty()) {
-            freshReactorDecls = extractShiftedReactorDeclarations(shiftedReactorDocs, parsedReactorChanges, symSolverRef[0]);
+            freshReactorDecls = extractShiftedReactorDeclarations(shiftedReactorDocs, parsedReactorChanges,
+                    symSolverRef[0]);
             if (freshReactorDecls == null) {
                 incrementalStats = ModuleIncrementalCache.IncrementalStats.cold(0, "shifted-reactor-extract-failed");
                 return Optional.empty();
@@ -1395,8 +1544,10 @@ final class Extraction {
             return Optional.empty();
         }
 
-        // Assemble final ordered UnitEntries (clean reused + O(k) reactor rebinding + dirty fresh)
-        var nextUnitEntries = new LinkedHashMap<SourceDocumentIdentity, ModuleIncrementalCache.UnitEntry>(request.sources().size() * 2 + 1);
+        // Assemble final ordered UnitEntries (clean reused + O(k) reactor rebinding +
+        // dirty fresh)
+        var nextUnitEntries = new LinkedHashMap<SourceDocumentIdentity, ModuleIncrementalCache.UnitEntry>(
+                request.sources().size() * 2 + 1);
         for (var input : request.sources()) {
             SourceDocumentIdentity docId = input.document().identity();
             var fresh = extractedDirtyEntries.get(docId);
@@ -1477,20 +1628,26 @@ final class Extraction {
                     units.put(cloned, rUnit);
                     cloned.stream().filter(this::membershipNode).forEach(reactorNodes::add);
                     return new LazySkeletonTypeSolver.MaterializedUnit(
-                            rDoc, rUnit.input, cloned, LazySkeletonTypeSolver.indexSkeletonTypes(cloned, this::hasLocalOwner));
+                            rDoc, rUnit.input, cloned,
+                            LazySkeletonTypeSolver.indexSkeletonTypes(cloned, this::hasLocalOwner));
                 }
                 SourceInput rIn = currentReactorInputByDoc.get(rDoc);
-                if (rIn == null) return null;
-                if (rawParserRef[0] == null) rawParserRef[0] = IncrementalAndParallelSupport.newRawParser(languageLevel());
+                if (rIn == null)
+                    return null;
+                if (rawParserRef[0] == null)
+                    rawParserRef[0] = IncrementalAndParallelSupport.newRawParser(languageLevel());
                 var raw = IncrementalAndParallelSupport.parseSingleRaw(rawParserRef[0], rIn);
-                if (!raw.isSuccess()) return null;
+                if (!raw.isSuccess())
+                    return null;
                 skeleton(raw.ast());
-                if (symSolverRef[0] != null) raw.ast().setData(Node.SYMBOL_RESOLVER_KEY, symSolverRef[0]);
+                if (symSolverRef[0] != null)
+                    raw.ast().setData(Node.SYMBOL_RESOLVER_KEY, symSolverRef[0]);
                 Unit rUnit = new Unit(rIn, raw.ast(), raw.translated());
                 units.put(raw.ast(), rUnit);
                 raw.ast().stream().filter(this::membershipNode).forEach(reactorNodes::add);
                 return new LazySkeletonTypeSolver.MaterializedUnit(
-                        rDoc, rIn, raw.ast(), LazySkeletonTypeSolver.indexSkeletonTypes(raw.ast(), this::hasLocalOwner));
+                        rDoc, rIn, raw.ast(),
+                        LazySkeletonTypeSolver.indexSkeletonTypes(raw.ast(), this::hasLocalOwner));
             }));
         }
         return solvers;
@@ -1508,7 +1665,8 @@ final class Extraction {
             activeUnitDerived = null;
             for (var rDoc : shiftedReactorDocs) {
                 ParsedReactorChange change = parsedReactorChanges.get(rDoc);
-                if (change == null) return null;
+                if (change == null)
+                    return null;
                 CompilationUnit cloned = cloneWithRangesAndSolver(change.skeletonAst(), symSolver);
                 Unit rUnit = new Unit(change.input(), cloned, change.translated());
                 units.put(cloned, rUnit);
@@ -1517,8 +1675,10 @@ final class Extraction {
                     try {
                         Entity e = entity(node);
                         DeclarationRecord rec = declarations.get(e.identity());
-                        if (rec != null) fresh.put(e.identity(), rec);
-                    } catch (RuntimeException | LinkageError | StackOverflowError ignored) {}
+                        if (rec != null)
+                            fresh.put(e.identity(), rec);
+                    } catch (RuntimeException | LinkageError | StackOverflowError ignored) {
+                    }
                 }
             }
             return fresh;
@@ -1571,7 +1731,8 @@ final class Extraction {
         var seenObs = new HashSet<ObservationRecord>(Math.max(16, observations.size() * 2));
         var distinctObservations = new ArrayList<ObservationRecord>(observations.size());
         for (var obs : observations) {
-            if (seenObs.add(obs)) distinctObservations.add(obs);
+            if (seenObs.add(obs))
+                distinctObservations.add(obs);
         }
         var obsCountByCategory = new HashMap<RelationshipKind, Long>();
         for (var obs : distinctObservations) {
@@ -1585,34 +1746,46 @@ final class Extraction {
             var kind = new RelationshipKind("java." + c);
             long attempted = obsCountByCategory.getOrDefault(kind, 0L);
             long emitted = occCountByCategory.getOrDefault(kind, 0L);
-            return new CategoryCoverage(kind, !fastArchitecture && c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED : CategoryCoverage.Support.PARTIAL, attempted, emitted, attempted - emitted);
+            return new CategoryCoverage(kind,
+                    !fastArchitecture && c.equals("calls") ? CategoryCoverage.Support.IMPLEMENTED
+                            : CategoryCoverage.Support.PARTIAL,
+                    attempted, emitted, attempted - emitted);
         }).toList();
         var distinctTypes = new ArrayList<TypeUseRecord>(new TreeSet<>(types));
         var distinctAnnotations = new ArrayList<AnnotationUseRecord>(new TreeSet<>(annotations));
         var shapesByType = new LinkedHashMap<EntityIdentity, TypeDeclarationRecord>();
-        for (var s : shapes) shapesByType.putIfAbsent(s.type(), s);
+        for (var s : shapes)
+            shapesByType.putIfAbsent(s.type(), s);
         var distinctShapes = new ArrayList<TypeDeclarationRecord>(new TreeSet<>(shapesByType.values()));
         var membersById = new LinkedHashMap<EntityIdentity, MemberDeclarationRecord>();
-        for (var m : members) membersById.putIfAbsent(m.member(), m);
+        for (var m : members)
+            membersById.putIfAbsent(m.member(), m);
         var distinctMembers = new ArrayList<MemberDeclarationRecord>(new TreeSet<>(membersById.values()));
         var distinctCandidates = new ArrayList<LombokConstructorCandidate>(new TreeSet<>(constructorCandidates));
         var distinctHttp = new ArrayList<HttpClientCallRecord>(new TreeSet<>(httpClientCalls));
         return new FrontendResult(request.manifest().identity(), VERSION,
-                !fastArchitecture && !request.sourceRecovery() && !reactorResolutionDegraded && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
-                        ? FrontendResult.State.COMPLETED : FrontendResult.State.PARTIAL,
-                declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity())).toList(),
-                List.copyOf(occurrences.values()), distinctObservations, outcomes, coverage, List.copyOf(diagnostics), distinctTypes, distinctAnnotations,
+                !fastArchitecture && !request.sourceRecovery() && !reactorResolutionDegraded
+                        && outcomes.stream().allMatch(s -> s.state() == SourceOutcome.State.PROCESSED)
+                                ? FrontendResult.State.COMPLETED
+                                : FrontendResult.State.PARTIAL,
+                declarations.values().stream().filter(d -> !duplicateDeclarations.contains(d.entity().identity()))
+                        .toList(),
+                List.copyOf(occurrences.values()), distinctObservations, outcomes, coverage, List.copyOf(diagnostics),
+                distinctTypes, distinctAnnotations,
                 List.copyOf(derived), distinctShapes, distinctMembers, distinctCandidates, distinctHttp);
     }
 
     private Set<String> collectUnitBoundaryMemberNames(CompilationUnit ast) {
         var names = new HashSet<String>();
         for (var field : ast.findAll(FieldDeclaration.class)) {
-            if (field.isStatic() && field.isFinal()) continue;
-            for (var v : field.getVariables()) names.add(v.getNameAsString());
+            if (field.isStatic() && field.isFinal())
+                continue;
+            for (var v : field.getVariables())
+                names.add(v.getNameAsString());
         }
         for (var record : ast.findAll(RecordDeclaration.class)) {
-            for (var p : record.getParameters()) names.add(p.getNameAsString());
+            for (var p : record.getParameters())
+                names.add(p.getNameAsString());
         }
         return names;
     }
@@ -1621,11 +1794,13 @@ final class Extraction {
         for (Node cur = node.getParentNode().orElse(null); cur != null; cur = cur.getParentNode().orElse(null)) {
             if (cur instanceof MethodDeclaration m) {
                 for (var a : m.getAnnotations()) {
-                    if (SPRING_CONFIG_ANNOTATIONS.contains(a.getName().getIdentifier())) return true;
+                    if (SPRING_CONFIG_ANNOTATIONS.contains(a.getName().getIdentifier()))
+                        return true;
                 }
             } else if (cur instanceof ClassOrInterfaceDeclaration c) {
                 for (var a : c.getAnnotations()) {
-                    if (SPRING_CONFIG_ANNOTATIONS.contains(a.getName().getIdentifier())) return true;
+                    if (SPRING_CONFIG_ANNOTATIONS.contains(a.getName().getIdentifier()))
+                        return true;
                 }
             }
         }
@@ -1639,7 +1814,8 @@ final class Extraction {
                 || SPRING_BOUNDARY_METHODS.contains(method)) {
             return true;
         }
-        if (isInSpringConfigContext(call)) return true;
+        if (isInSpringConfigContext(call))
+            return true;
         if (call.getScope().isEmpty()) {
             return true;
         }
@@ -1654,7 +1830,8 @@ final class Extraction {
             }
             root = fa.getScope();
         }
-        if (root instanceof ThisExpr || root instanceof SuperExpr) return true;
+        if (root instanceof ThisExpr || root instanceof SuperExpr)
+            return true;
         if (root instanceof NameExpr ne) {
             String id = ne.getNameAsString();
             return unitBoundaryMemberNames.contains(id) || architecturalSimpleTypeNames.contains(id);
@@ -1669,8 +1846,10 @@ final class Extraction {
     }
 
     private boolean isArchitecturalCreation(ObjectCreationExpr creation) {
-        if (creation.getAnonymousClassBody().isPresent()) return true;
-        if (architecturalSimpleTypeNames.contains(creation.getType().getNameAsString())) return true;
+        if (creation.getAnonymousClassBody().isPresent())
+            return true;
+        if (architecturalSimpleTypeNames.contains(creation.getType().getNameAsString()))
+            return true;
         return isInSpringConfigContext(creation);
     }
 
@@ -1681,26 +1860,182 @@ final class Extraction {
                 candidates.add(call);
             }
         }
-        if (candidates.isEmpty()) return List.of();
+        if (candidates.isEmpty())
+            return List.of();
         var bindings = resolvedCallsByDoc.getOrDefault(unit.input.document().identity(), Map.of());
-        if (bindings.isEmpty()) return List.of();
+        if (bindings.isEmpty())
+            return List.of();
         var result = new ArrayList<HttpClientCallRecord>();
         for (var call : candidates) {
             String method = call.getNameAsString();
             try {
-                var selected=call.resolve();String type=selected.declaringType().getQualifiedName();
-                boolean rest=Set.of("org.springframework.web.client.RestTemplate","org.springframework.web.client.RestOperations").contains(type);
-                boolean reactive=method.equals("uri")&&type.startsWith("org.springframework.web.reactive.function.client.WebClient.");
-                if(!rest&&!reactive||typeEntity(selected.declaringType()).origin()!=EntityOrigin.DEPENDENCY)continue;
-                var bound=callable(selected,call);var span=source(call).span(call);var caller=owner(call);
-                var binding=bindings.get(span);if(binding==null||!(binding.relationship().target() instanceof RelationshipTarget.Resolved r)||!r.target().equals(bound.identity()))continue;
-                String uri=call.getArguments().isEmpty()?"":HttpClientConstants.uri(call.getArgument(0));
-                String verb=method.startsWith("getFor")?"GET":method.startsWith("postFor")?"POST":method.equals("put")?"PUT":method.equals("patchForObject")?"PATCH":method.equals("delete")?"DELETE":method.equals("headForHeaders")?"HEAD":method.equals("optionsForAllow")?"OPTIONS":"";
-                if(reactive)verb=reactiveVerb(call,bindings);
-                result.add(new HttpClientCallRecord(caller.identity(),bound.identity(),span,uri,verb.isEmpty()?List.of():List.of(verb)));
-            }catch(RuntimeException | LinkageError | StackOverflowError unavailable){/* The original attribution ledger retains unavailable bindings. */}
+                var selected = call.resolve();
+                String type = selected.declaringType().getQualifiedName();
+                boolean rest = Set.of(
+                        "org.springframework.web.client.RestTemplate",
+                        "org.springframework.web.client.RestOperations",
+                        "org.springframework.security.oauth2.client.OAuth2RestTemplate",
+                        "org.springframework.security.oauth2.client.OAuth2RestOperations").contains(type);
+                boolean reactive=method.equals("uri")&&(type.startsWith("org.springframework.web.reactive.function.client.WebClient.")
+                        ||type.startsWith("org.springframework.web.client.RestClient."));
+                boolean jaxRsRequest = method.equals("request")
+                        && Set.of("javax.ws.rs.client.WebTarget", "jakarta.ws.rs.client.WebTarget").contains(type);
+                boolean discovery=(method.equals("getInstances")&&type.equals("org.springframework.cloud.client.discovery.DiscoveryClient"))
+                        ||(method.equals("choose")&&Set.of(
+                                "org.springframework.cloud.client.loadbalancer.LoadBalancerClient",
+                                "org.springframework.cloud.client.loadbalancer.ServiceInstanceChooser").contains(type));
+                if (!rest && !reactive && !discovery && !jaxRsRequest
+                        || typeEntity(selected.declaringType()).origin() != EntityOrigin.DEPENDENCY)
+                    continue;
+                var bound = callable(selected, call);
+                var span = source(call).span(call);
+                var caller = owner(call);
+                var binding = bindings.get(span);
+                if (binding == null || !(binding.relationship().target() instanceof RelationshipTarget.Resolved r)
+                        || !r.target().equals(bound.identity()))
+                    continue;
+                if (jaxRsRequest) {
+                    String jaxRsUri = resolveJaxRsWebTargetUri(call);
+                    String jaxRsVerb = jaxRsInvocationVerb(call);
+                    result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span,
+                            jaxRsUri, jaxRsVerb.isEmpty() ? List.of() : List.of(jaxRsVerb)));
+                    continue;
+                }
+                String rawArg = call.getArguments().isEmpty() ? "" : HttpClientConstants.uri(call.getArgument(0));
+                if (discovery) {
+                    String svc = rawArg.trim();
+                    if (!svc.isEmpty())
+                        result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span,
+                                "lb://" + svc + "/", List.of()));
+                    continue;
+                }
+                String baseUrl = reactive ? fluentChainBaseUrl(call) : "";
+                String uri = (!baseUrl.isEmpty() && rawArg.startsWith("/")) ? combineBaseUri(baseUrl, rawArg) : rawArg;
+                String verb = method.startsWith("getFor") ? "GET"
+                        : method.startsWith("postFor") ? "POST"
+                                : method.equals("put") ? "PUT"
+                                        : method.equals("patchForObject") ? "PATCH"
+                                                : method.equals("delete") ? "DELETE"
+                                                        : method.equals("headForHeaders") ? "HEAD"
+                                                                : method.equals("optionsForAllow") ? "OPTIONS" : "";
+                if (reactive)
+                    verb = reactiveVerb(call, bindings);
+                result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span, uri,
+                        verb.isEmpty() ? List.of() : List.of(verb)));
+            } catch (RuntimeException | LinkageError | StackOverflowError unavailable) {
+                /* The original attribution ledger retains unavailable bindings. */}
         }
         return result;
+    }
+
+    private String resolveJaxRsWebTargetUri(MethodCallExpr requestCall) {
+        var pathSegments = new ArrayList<String>();
+        String baseUri = "";
+        Expression cur = requestCall.getScope().orElse(null);
+        var visitedVars = new HashSet<String>();
+        int steps = 0;
+        while (cur != null && steps++ < 16) {
+            if (cur instanceof MethodCallExpr mc) {
+                String name = mc.getNameAsString();
+                if (name.equals("path") && !mc.getArguments().isEmpty()) {
+                    String seg = HttpClientConstants.uri(mc.getArgument(0)).trim();
+                    pathSegments.addFirst(seg.isEmpty() ? "{param}" : seg);
+                    cur = mc.getScope().orElse(null);
+                    continue;
+                }
+                if (name.equals("target") && !mc.getArguments().isEmpty()) {
+                    baseUri = HttpClientConstants.uri(mc.getArgument(0)).trim();
+                    break;
+                }
+                cur = mc.getScope().orElse(null);
+                continue;
+            }
+            if (cur instanceof NameExpr n && visitedVars.add(n.getNameAsString())) {
+                cur = findTargetInitializer(requestCall, n.getNameAsString()).orElse(null);
+                continue;
+            }
+            if (cur instanceof FieldAccessExpr f && f.getScope() instanceof ThisExpr
+                    && visitedVars.add(f.getNameAsString())) {
+                cur = findTargetInitializer(requestCall, f.getNameAsString()).orElse(null);
+                continue;
+            }
+            break;
+        }
+        if (baseUri.isEmpty() && pathSegments.isEmpty()) return "";
+        String uri = baseUri;
+        for (String seg : pathSegments) {
+            String cleanSeg = seg.startsWith("/") ? seg : "/" + seg;
+            uri = uri.isEmpty() ? cleanSeg : combineBaseUri(uri, cleanSeg);
+        }
+        return uri;
+    }
+
+    private static Optional<Expression> findTargetInitializer(Node from, String varName) {
+        Node ancestor = from.getParentNode().orElse(null);
+        while (ancestor != null) {
+            if (ancestor instanceof CallableDeclaration<?> callable) {
+                for (VariableDeclarator vd : callable.findAll(VariableDeclarator.class)) {
+                    if (vd.getNameAsString().equals(varName) && vd.getInitializer().isPresent()
+                            && from.getRange().map(fr -> vd.getRange().map(vr -> vr.isBefore(fr.begin)).orElse(true))
+                                    .orElse(true)) {
+                        return vd.getInitializer();
+                    }
+                }
+            } else if (ancestor instanceof ClassOrInterfaceDeclaration cls) {
+                for (FieldDeclaration fd : cls.getFields()) {
+                    for (VariableDeclarator vd : fd.getVariables()) {
+                        if (vd.getNameAsString().equals(varName) && vd.getInitializer().isPresent()) {
+                            return vd.getInitializer();
+                        }
+                    }
+                }
+            }
+            ancestor = ancestor.getParentNode().orElse(null);
+        }
+        return Optional.empty();
+    }
+
+    private static String jaxRsInvocationVerb(MethodCallExpr requestCall) {
+        Node cur = requestCall;
+        for (int depth = 0; depth < 6; depth++) {
+            Node parent = cur.getParentNode().orElse(null);
+            if (!(parent instanceof MethodCallExpr parentCall)) break;
+            Node expectedScope = cur;
+            if (parentCall.getScope().filter(s -> s == expectedScope).isEmpty()) break;
+            String n = parentCall.getNameAsString();
+            if (WEB_CLIENT_VERB_METHODS.contains(n)) {
+                return n.toUpperCase(Locale.ROOT);
+            }
+            if (Set.of("buildGet", "buildPost", "buildPut", "buildDelete").contains(n)) {
+                return n.substring(5).toUpperCase(Locale.ROOT);
+            }
+            if (n.equals("method") && !parentCall.getArguments().isEmpty()) {
+                String v = HttpClientConstants.uri(parentCall.getArgument(0)).trim().toUpperCase(Locale.ROOT);
+                if (Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS").contains(v)) {
+                    return v;
+                }
+            }
+            cur = parentCall;
+        }
+        return "";
+    }
+
+    private String fluentChainBaseUrl(MethodCallExpr uriCall) {
+        Expression scope = uriCall.getScope().orElse(null);
+        while (scope instanceof MethodCallExpr call) {
+            if (call.getNameAsString().equals("baseUrl") && !call.getArguments().isEmpty()) {
+                String base = HttpClientConstants.uri(call.getArgument(0)).trim();
+                if (!base.isEmpty())
+                    return base;
+            }
+            scope = call.getScope().orElse(null);
+        }
+        return "";
+    }
+
+    private static String combineBaseUri(String base, String path) {
+        String cleanBase = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        return path.startsWith("/") ? cleanBase + path : cleanBase + "/" + path;
     }
 
     private static SourceOutcome mergeOutcome(SourceOutcome a, SourceOutcome b) {
@@ -1718,86 +2053,116 @@ final class Extraction {
         }
         return new SourceOutcome(a.document(), mergedState, List.copyOf(mergedDiagnostics));
     }
-    private String reactiveVerb(MethodCallExpr uri,Map<SourceSpan,RelationshipOccurrence> bindings) {
-        Expression scope=uri.getScope().orElse(null);
-        while(scope instanceof MethodCallExpr call) {
-            if(Set.of("get","post","put","patch","delete","head","options").contains(call.getNameAsString())) {
-                var selected=call.resolve();var binding=bindings.get(source(call).span(call));
-                if(selected.declaringType().getQualifiedName().equals("org.springframework.web.reactive.function.client.WebClient")
-                        &&typeEntity(selected.declaringType()).origin()==EntityOrigin.DEPENDENCY&&binding!=null
-                        &&binding.relationship().target() instanceof RelationshipTarget.Resolved target&&target.target().equals(callable(selected,call).identity()))
+
+    private String reactiveVerb(MethodCallExpr uri, Map<SourceSpan, RelationshipOccurrence> bindings) {
+        Expression scope = uri.getScope().orElse(null);
+        while (scope instanceof MethodCallExpr call) {
+            if (Set.of("get", "post", "put", "patch", "delete", "head", "options").contains(call.getNameAsString())) {
+                var selected = call.resolve();
+                var binding = bindings.get(source(call).span(call));
+                String declaring = selected.declaringType().getQualifiedName();
+                if (Set.of("org.springframework.web.reactive.function.client.WebClient",
+                        "org.springframework.web.client.RestClient").contains(declaring)
+                        && typeEntity(selected.declaringType()).origin() == EntityOrigin.DEPENDENCY && binding != null
+                        && binding.relationship().target() instanceof RelationshipTarget.Resolved target
+                        && target.target().equals(callable(selected, call).identity()))
                     return call.getNameAsString().toUpperCase(Locale.ROOT);
             }
-            scope=call.getScope().orElse(null);
+            scope = call.getScope().orElse(null);
         }
         return "";
     }
 
     private void releaseBody(Unit unit) {
-        unit.ast.walk(node->{sourceNodes.remove(node);nodes.remove(node);names.remove(node);});
-        units.remove(unit.ast);recoveryCallInputs.clear();lombok.releaseBody(unit.ast);
+        unit.ast.walk(node -> {
+            sourceNodes.remove(node);
+            nodes.remove(node);
+            names.remove(node);
+        });
+        units.remove(unit.ast);
+        recoveryCallInputs.clear();
+        lombok.releaseBody(unit.ast);
     }
-    long retainedBodyStatements(){return units.keySet().stream().flatMap(ast->ast.findAll(com.github.javaparser.ast.stmt.Statement.class).stream()).count();}
-    long retainedCalls(){return units.keySet().stream().mapToLong(ast->ast.findAll(MethodCallExpr.class).size()).sum();}
+
+    long retainedBodyStatements() {
+        return units.keySet().stream()
+                .flatMap(ast -> ast.findAll(com.github.javaparser.ast.stmt.Statement.class).stream()).count();
+    }
+
+    long retainedCalls() {
+        return units.keySet().stream().mapToLong(ast -> ast.findAll(MethodCallExpr.class).size()).sum();
+    }
 
     private List<MemberDeclarationRecord> memberDeclarations(Unit unit) {
-        var result=new ArrayList<MemberDeclarationRecord>();
-        for(var node:unit.ast.stream().toList()) {
-            var entity=nodes.get(node);
-            if(entity==null||duplicateDeclarations.contains(entity.identity()))continue;
-            if(node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration field) {
-                Node parentType=field.getParentNode().orElse(null);
-                boolean implicitStatic=parentType instanceof AnnotationDeclaration
-                        ||parentType instanceof ClassOrInterfaceDeclaration c&&(c.isInterface()||lombok.isUtilityClass(c));
-                result.add(new MemberDeclarationRecord(entity.identity(),semanticIdentifier(variable.getNameAsString()),
-                        field.isStatic()||implicitStatic,false,false));
-            } else if(node instanceof MethodDeclaration method) {
-                boolean utilityStatic=method.getParentNode().orElse(null) instanceof ClassOrInterfaceDeclaration c&&lombok.isUtilityClass(c);
-                result.add(new MemberDeclarationRecord(entity.identity(),semanticIdentifier(method.getNameAsString()),
-                        method.isStatic()||utilityStatic,method.isAbstract()||method.getBody().isEmpty(),!method.getTypeParameters().isEmpty()));
+        var result = new ArrayList<MemberDeclarationRecord>();
+        for (var node : unit.ast.stream().toList()) {
+            var entity = nodes.get(node);
+            if (entity == null || duplicateDeclarations.contains(entity.identity()))
+                continue;
+            if (node instanceof VariableDeclarator variable
+                    && variable.getParentNode().orElse(null) instanceof FieldDeclaration field) {
+                Node parentType = field.getParentNode().orElse(null);
+                boolean implicitStatic = parentType instanceof AnnotationDeclaration
+                        || parentType instanceof ClassOrInterfaceDeclaration c
+                                && (c.isInterface() || lombok.isUtilityClass(c));
+                result.add(
+                        new MemberDeclarationRecord(entity.identity(), semanticIdentifier(variable.getNameAsString()),
+                                field.isStatic() || implicitStatic, false, false));
+            } else if (node instanceof MethodDeclaration method) {
+                boolean utilityStatic = method.getParentNode().orElse(null) instanceof ClassOrInterfaceDeclaration c
+                        && lombok.isUtilityClass(c);
+                result.add(new MemberDeclarationRecord(entity.identity(), semanticIdentifier(method.getNameAsString()),
+                        method.isStatic() || utilityStatic, method.isAbstract() || method.getBody().isEmpty(),
+                        !method.getTypeParameters().isEmpty()));
             }
         }
         return result;
     }
+
     private List<TypeDeclarationRecord> typeDeclarations(Unit unit) {
-        var result=new ArrayList<TypeDeclarationRecord>();
-        for(var type:unit.ast.findAll(TypeDeclaration.class)) {
-            var entity=nodes.get(type);
-            if(entity==null || duplicateDeclarations.contains(entity.identity()))continue;
-            TypeDeclarationRecord.Kind kind=type instanceof AnnotationDeclaration?TypeDeclarationRecord.Kind.ANNOTATION
-                    :type instanceof RecordDeclaration?TypeDeclarationRecord.Kind.RECORD
-                    :type instanceof EnumDeclaration?TypeDeclarationRecord.Kind.ENUM
-                    :type instanceof ClassOrInterfaceDeclaration c && c.isInterface()?TypeDeclarationRecord.Kind.INTERFACE:TypeDeclarationRecord.Kind.CLASS;
-            Node parent=type.getParentNode().orElse(null);
-            boolean member=parent instanceof TypeDeclaration<?>;
-            boolean implicitStatic=kind!=TypeDeclarationRecord.Kind.CLASS || parent instanceof AnnotationDeclaration
+        var result = new ArrayList<TypeDeclarationRecord>();
+        for (var type : unit.ast.findAll(TypeDeclaration.class)) {
+            var entity = nodes.get(type);
+            if (entity == null || duplicateDeclarations.contains(entity.identity()))
+                continue;
+            TypeDeclarationRecord.Kind kind = type instanceof AnnotationDeclaration
+                    ? TypeDeclarationRecord.Kind.ANNOTATION
+                    : type instanceof RecordDeclaration ? TypeDeclarationRecord.Kind.RECORD
+                            : type instanceof EnumDeclaration ? TypeDeclarationRecord.Kind.ENUM
+                                    : type instanceof ClassOrInterfaceDeclaration c && c.isInterface()
+                                            ? TypeDeclarationRecord.Kind.INTERFACE
+                                            : TypeDeclarationRecord.Kind.CLASS;
+            Node parent = type.getParentNode().orElse(null);
+            boolean member = parent instanceof TypeDeclaration<?>;
+            boolean implicitStatic = kind != TypeDeclarationRecord.Kind.CLASS || parent instanceof AnnotationDeclaration
                     || parent instanceof ClassOrInterfaceDeclaration c && c.isInterface();
-            boolean independent=parent instanceof CompilationUnit || member && (type.isStatic() || implicitStatic);
-            boolean abstractType=type instanceof ClassOrInterfaceDeclaration c && (c.isAbstract() || c.isInterface())
-                    || kind==TypeDeclarationRecord.Kind.ANNOTATION;
-            result.add(new TypeDeclarationRecord(entity.identity(),kind,abstractType,independent));
+            boolean independent = parent instanceof CompilationUnit || member && (type.isStatic() || implicitStatic);
+            boolean abstractType = type instanceof ClassOrInterfaceDeclaration c && (c.isAbstract() || c.isInterface())
+                    || kind == TypeDeclarationRecord.Kind.ANNOTATION;
+            result.add(new TypeDeclarationRecord(entity.identity(), kind, abstractType, independent));
         }
         return result;
     }
 
     private static long totalPrimaryChars(List<SourceInput> sources) {
         long total = 0L;
-        for (var s : sources) total += s.text().length();
+        for (var s : sources)
+            total += s.text().length();
         return total;
     }
 
-    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, List<com.github.javaparser.metamodel.PropertyMetaModel>> NODE_PROPERTIES_CACHE =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, List<com.github.javaparser.metamodel.PropertyMetaModel>> NODE_PROPERTIES_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static List<com.github.javaparser.metamodel.PropertyMetaModel> nodeProperties(Node node) {
-        return NODE_PROPERTIES_CACHE.computeIfAbsent(node.getClass(), cls ->
-                node.getMetaModel().getAllPropertyMetaModels().stream()
+        return NODE_PROPERTIES_CACHE.computeIfAbsent(node.getClass(),
+                cls -> node.getMetaModel().getAllPropertyMetaModels().stream()
                         .filter(pm -> pm.isNode() || pm.isNodeList())
                         .toList());
     }
 
     private static void copyRanges(Node src, Node dst) {
-        if (src == null || dst == null) return;
+        if (src == null || dst == null)
+            return;
         src.getRange().ifPresent(dst::setRange);
         for (var pm : nodeProperties(src)) {
             Object sv = pm.getValue(src);
@@ -1829,8 +2194,10 @@ final class Extraction {
             CompilationUnit fullAst, JavaSymbolSolver symbolSolver) {
         record SavedBlock(
                 com.github.javaparser.ast.stmt.BlockStmt block,
-                NodeList<com.github.javaparser.ast.stmt.Statement> statements) {}
-        record SavedLambda(LambdaExpr lambda, com.github.javaparser.ast.stmt.Statement body) {}
+                NodeList<com.github.javaparser.ast.stmt.Statement> statements) {
+        }
+        record SavedLambda(LambdaExpr lambda, com.github.javaparser.ast.stmt.Statement body) {
+        }
         var savedBlocks = new ArrayList<SavedBlock>();
         var savedLambdas = new ArrayList<SavedLambda>();
         for (var method : fullAst.findAll(MethodDeclaration.class)) {
@@ -1886,18 +2253,21 @@ final class Extraction {
                 ? 1024L << 20
                 : maxHeapBytes;
         long headroom = Math.max(0L, effectiveMax - Math.max(0L, usedHeapBytes));
-        if (headroom < (96L << 20)) return 0L;
+        if (headroom < (96L << 20))
+            return 0L;
         long maxAstBytes = Math.min(64L << 20, Math.min(effectiveMax / 20L, (headroom * 3L) / 20L));
         return maxAstBytes / 16L;
     }
 
     static int primaryBodyRetentionFileLimit(long charBudget) {
-        if (charBudget <= 0L) return 0;
+        if (charBudget <= 0L)
+            return 0;
         return (int) Math.min(500L, Math.max(32L, charBudget / 8192L));
     }
 
     private static String kotlinCacheFileName(String path) {
-        if (path == null || !path.endsWith(".kt")) return "";
+        if (path == null || !path.endsWith(".kt"))
+            return "";
         int slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
         return slash >= 0 ? path.substring(slash + 1) : path;
     }
@@ -1913,7 +2283,8 @@ final class Extraction {
         var sources = request.sources();
         int extraPermits = IncrementalAndParallelSupport.acquireExtraPermits(sources.size());
 
-        // Parallel Pass 1 parsing (when sources >= threshold and permits available) or fast serial parsing
+        // Parallel Pass 1 parsing (when sources >= threshold and permits available) or
+        // fast serial parsing
         if (extraPermits > 0) {
             IncrementalAndParallelSupport.RawParsedSource[] rawParsed;
             try {
@@ -1953,7 +2324,8 @@ final class Extraction {
                         if (REACTOR_SKELETON_CACHE.get(ktKey) == null) {
                             CompilationUnit template = cloneWithRangesAndSolver(headerAst, null);
                             long weight = (long) unit.translated.text.length() * 4 + 1024L;
-                            REACTOR_SKELETON_CACHE.put(ktKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                            REACTOR_SKELETON_CACHE.put(ktKey,
+                                    new CachedReactorSkeleton(unit.translated, template, weight));
                         }
                     }
                     units.remove(unit.ast);
@@ -1971,7 +2343,8 @@ final class Extraction {
                             var ktKey = new SkeletonCacheKey(0, input.document().contentDigest(), ktName);
                             CompilationUnit template = cloneWithRangesAndSolver(unit.ast, null);
                             long weight = (long) unit.translated.text.length() * 4 + 1024L;
-                            REACTOR_SKELETON_CACHE.put(ktKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                            REACTOR_SKELETON_CACHE.put(ktKey,
+                                    new CachedReactorSkeleton(unit.translated, template, weight));
                         }
                     }
                     orderedUnits.add(unit);
@@ -1985,7 +2358,8 @@ final class Extraction {
         } else {
             var parser = parser();
             for (var input : sources) {
-                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
+                if (Thread.currentThread().isInterrupted())
+                    throw new java.util.concurrent.CancellationException();
                 long len = input.text().length();
                 boolean retainThisUnit = compactBodies
                         && charBudget > 0L
@@ -2002,9 +2376,10 @@ final class Extraction {
                         units.put(cloned, unit);
                         android.observeUnit(unit.ast);
                         if (request.sourceRecovery()) {
-                    unitRecoveryObservations.put(input.document().identity(),
-                            environment.explicitImports.observeUnitWithSummary(unit.ast, input.document().path()));
-                }
+                            unitRecoveryObservations.put(input.document().identity(),
+                                    environment.explicitImports.observeUnitWithSummary(unit.ast,
+                                            input.document().path()));
+                        }
                         orderedUnits.add(unit);
                         unit.ast.stream().filter(this::membershipNode).forEach(sourceNodes::add);
                         unitAbis.put(input.document().identity(),
@@ -2018,9 +2393,9 @@ final class Extraction {
                     var unit = parsedOpt.orElseThrow();
                     android.observeUnit(unit.ast);
                     if (request.sourceRecovery()) {
-                    unitRecoveryObservations.put(input.document().identity(),
-                            environment.explicitImports.observeUnitWithSummary(unit.ast, input.document().path()));
-                }
+                        unitRecoveryObservations.put(input.document().identity(),
+                                environment.explicitImports.observeUnitWithSummary(unit.ast, input.document().path()));
+                    }
                     if (retainFinal) {
                         retainedChars += len;
                         retainedFiles++;
@@ -2030,7 +2405,8 @@ final class Extraction {
                             if (REACTOR_SKELETON_CACHE.get(ktKey) == null) {
                                 CompilationUnit template = cloneWithRangesAndSolver(headerAst, null);
                                 long weight = (long) unit.translated.text.length() * 4 + 1024L;
-                                REACTOR_SKELETON_CACHE.put(ktKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                                REACTOR_SKELETON_CACHE.put(ktKey,
+                                        new CachedReactorSkeleton(unit.translated, template, weight));
                             }
                         }
                         units.remove(unit.ast);
@@ -2048,7 +2424,8 @@ final class Extraction {
                                 var ktKey = new SkeletonCacheKey(0, input.document().contentDigest(), ktName);
                                 CompilationUnit template = cloneWithRangesAndSolver(unit.ast, null);
                                 long weight = (long) unit.translated.text.length() * 4 + 1024L;
-                                REACTOR_SKELETON_CACHE.put(ktKey, new CachedReactorSkeleton(unit.translated, template, weight));
+                                REACTOR_SKELETON_CACHE.put(ktKey,
+                                        new CachedReactorSkeleton(unit.translated, template, weight));
                             }
                         }
                         orderedUnits.add(unit);
@@ -2073,7 +2450,8 @@ final class Extraction {
                             ktName);
                     var cached = REACTOR_SKELETON_CACHE.get(cacheKey);
                     if (cached != null) {
-                        if (!ktName.isEmpty()) KOTLIN_SKELETON_CACHE_HITS.incrementAndGet();
+                        if (!ktName.isEmpty())
+                            KOTLIN_SKELETON_CACHE_HITS.incrementAndGet();
                         CompilationUnit cloned = cloneWithRangesAndSolver(cached.template(), symbolSolver);
                         var unit = new Unit(input, cloned, cached.translated());
                         units.put(cloned, unit);
@@ -2120,15 +2498,26 @@ final class Extraction {
                 .setStoreTokens(true).setAttributeComments(false).setPreprocessUnicodeEscapes(false)
                 .setSymbolResolver(new JavaSymbolSolver(activeSolver)));
     }
-    /** Preserve signatures, annotations, constants, ranges and member shape for cross-file
-     * resolution. No method/constructor/initializer executable body enters the global index. */
+
+    /**
+     * Preserve signatures, annotations, constants, ranges and member shape for
+     * cross-file
+     * resolution. No method/constructor/initializer executable body enters the
+     * global index.
+     */
     private static void skeleton(CompilationUnit ast) {
-        for(var method:ast.findAll(MethodDeclaration.class))method.getBody().ifPresent(body->body.getStatements().clear());
-        for(var constructor:ast.findAll(ConstructorDeclaration.class))constructor.getBody().getStatements().clear();
-        for(var constructor:ast.findAll(CompactConstructorDeclaration.class))constructor.getBody().getStatements().clear();
-        for(var initializer:ast.findAll(InitializerDeclaration.class))initializer.getBody().getStatements().clear();
-        for(var lambda:ast.findAll(LambdaExpr.class)){
-            var body=new com.github.javaparser.ast.stmt.BlockStmt();lambda.getBody().getRange().ifPresent(body::setRange);lambda.setBody(body);
+        for (var method : ast.findAll(MethodDeclaration.class))
+            method.getBody().ifPresent(body -> body.getStatements().clear());
+        for (var constructor : ast.findAll(ConstructorDeclaration.class))
+            constructor.getBody().getStatements().clear();
+        for (var constructor : ast.findAll(CompactConstructorDeclaration.class))
+            constructor.getBody().getStatements().clear();
+        for (var initializer : ast.findAll(InitializerDeclaration.class))
+            initializer.getBody().getStatements().clear();
+        for (var lambda : ast.findAll(LambdaExpr.class)) {
+            var body = new com.github.javaparser.ast.stmt.BlockStmt();
+            lambda.getBody().getRange().ifPresent(body::setRange);
+            lambda.setBody(body);
         }
     }
 
@@ -2142,15 +2531,18 @@ final class Extraction {
             if (node instanceof SimpleName n) {
                 String raw = n.getIdentifier();
                 String norm = semanticIdentifier(raw);
-                if (!norm.equals(raw)) n.setIdentifier(norm);
+                if (!norm.equals(raw))
+                    n.setIdentifier(norm);
             } else if (node instanceof Name n) {
                 String raw = n.getIdentifier();
                 String norm = semanticIdentifier(raw);
-                if (!norm.equals(raw)) n.setIdentifier(norm);
+                if (!norm.equals(raw))
+                    n.setIdentifier(norm);
             } else if (node instanceof MethodReferenceExpr n) {
                 String raw = n.getIdentifier();
                 String norm = semanticIdentifier(raw);
-                if (!norm.equals(raw)) n.setIdentifier(norm);
+                if (!norm.equals(raw))
+                    n.setIdentifier(norm);
             }
         });
     }
@@ -2172,11 +2564,18 @@ final class Extraction {
             return Optional.of(unit);
         }
         UnicodeSource translated;
-        try{translated=UnicodeSource.translate(input.text());}
-        catch(IllegalArgumentException invalid){
-            var diagnostic=new Diagnostic(DiagnosticSeverity.ERROR,"java.unicode-escape-error","Invalid eligible Unicode escape",Optional.empty(),Map.of("document",input.document().identity().value()));
-            diagnostics.add(diagnostic);rejected.add(new SourceOutcome(input.document().identity(),SourceOutcome.State.ERROR,List.of(diagnostic)));
-            if(reactor.isPresent())reactorResolutionDegraded=true;return Optional.empty();
+        try {
+            translated = UnicodeSource.translate(input.text());
+        } catch (IllegalArgumentException invalid) {
+            var diagnostic = new Diagnostic(DiagnosticSeverity.ERROR, "java.unicode-escape-error",
+                    "Invalid eligible Unicode escape", Optional.empty(),
+                    Map.of("document", input.document().identity().value()));
+            diagnostics.add(diagnostic);
+            rejected.add(
+                    new SourceOutcome(input.document().identity(), SourceOutcome.State.ERROR, List.of(diagnostic)));
+            if (reactor.isPresent())
+                reactorResolutionDegraded = true;
+            return Optional.empty();
         }
         parser.getParserConfiguration().setPreprocessUnicodeEscapes(false);
         var parsed = parser.parse(translated.text);
@@ -2190,7 +2589,8 @@ final class Extraction {
             diagnostics.add(diagnostic);
             rejected.add(new SourceOutcome(
                     input.document().identity(), SourceOutcome.State.ERROR, List.of(diagnostic)));
-            if (reactor.isPresent()) reactorResolutionDegraded = true;
+            if (reactor.isPresent())
+                reactorResolutionDegraded = true;
             return Optional.empty();
         }
         var ast = parsed.getResult().orElseThrow();
@@ -2198,14 +2598,15 @@ final class Extraction {
         // token stream only after preserving those ranges, so headers cannot retain
         // every token from discarded bodies and raw source spans remain exact.
         detachTokensAndNormalizeIdentifiers(ast, true);
-        var unit = new Unit(input, ast,translated);
+        var unit = new Unit(input, ast, translated);
         units.put(ast, unit);
         return Optional.of(unit);
     }
 
     private ParserConfiguration.LanguageLevel languageLevel() {
         if (request.plan().preview()) {
-            throw new FrontendInputException("frontend.preview", "Preview syntax is not supported by this frontend version");
+            throw new FrontendInputException("frontend.preview",
+                    "Preview syntax is not supported by this frontend version");
         }
         int level = request.plan().syntaxLevel().orElseThrow(
                 () -> new FrontendInputException("frontend.syntax-level", "A supported syntax level is required"));
@@ -2236,9 +2637,11 @@ final class Extraction {
             case 24 -> ParserConfiguration.LanguageLevel.JAVA_24;
             case 25 -> ParserConfiguration.LanguageLevel.JAVA_25;
             case 26 -> ParserConfiguration.LanguageLevel.JAVA_26;
-            default -> throw new FrontendInputException("frontend.syntax-level", "Syntax level is outside this parser's Java 1-26 capability; a newer syntax provider is required");
+            default -> throw new FrontendInputException("frontend.syntax-level",
+                    "Syntax level is outside this parser's Java 1-26 capability; a newer syntax provider is required");
         };
     }
+
     private static String semanticIdentifier(String raw) {
         boolean purePrintableAscii = true;
         for (int i = 0; i < raw.length(); i++) {
@@ -2248,12 +2651,14 @@ final class Extraction {
                 break;
             }
         }
-        if (purePrintableAscii) return raw;
+        if (purePrintableAscii)
+            return raw;
         var result = new StringBuilder(raw.length());
         raw.codePoints().filter(c -> !Character.isIdentifierIgnorable(c)).forEach(result::appendCodePoint);
         String built = result.toString();
         return built.equals(raw) ? raw : built;
     }
+
     private static boolean isMainSourcePath(Unit unit) {
         String p = unit.input.document().path().replace('\\', '/');
         return p.startsWith("src/main/") || p.contains("/src/main/");
@@ -2262,9 +2667,11 @@ final class Extraction {
     private static int compareRecoveryPriority(Unit a, Unit b) {
         boolean mainA = isMainSourcePath(a);
         boolean mainB = isMainSourcePath(b);
-        if (mainA != mainB) return mainA ? -1 : 1;
+        if (mainA != mainB)
+            return mainA ? -1 : 1;
         int sizeCmp = Integer.compare(b.input.bytes().length, a.input.bytes().length);
-        if (sizeCmp != 0) return sizeCmp;
+        if (sizeCmp != 0)
+            return sizeCmp;
         return a.input.document().path().compareTo(b.input.document().path());
     }
 
@@ -2273,10 +2680,11 @@ final class Extraction {
         if (request.sourceRecovery()) {
             for (var unit : orderedUnits) {
                 for (TypeDeclaration<?> type : unit.ast.findAll(TypeDeclaration.class)) {
-                    if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
+                    if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type))
+                        continue;
                     String name = type.getFullyQualifiedName().orElseThrow();
-                    recoveryWinners.merge(name, unit, (existing, candidate) ->
-                            compareRecoveryPriority(existing, candidate) <= 0 ? existing : candidate);
+                    recoveryWinners.merge(name, unit, (existing,
+                            candidate) -> compareRecoveryPriority(existing, candidate) <= 0 ? existing : candidate);
                 }
             }
         }
@@ -2289,7 +2697,8 @@ final class Extraction {
             String duplicateName = null;
             for (TypeDeclaration<?> type : unit.ast.findAll(TypeDeclaration.class)) {
                 type.getFullyQualifiedName().ifPresent(sourceTypeNames::add);
-                if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
+                if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type))
+                    continue;
                 String name = type.getFullyQualifiedName().orElseThrow();
                 boolean lostRecoveryPriority = request.sourceRecovery() && recoveryWinners.get(name) != unit;
                 if (!unitSeen.add(name) || indexed.contains(name) || lostRecoveryPriority) {
@@ -2300,13 +2709,16 @@ final class Extraction {
             }
             if (duplicateName != null) {
                 if (!request.sourceRecovery()) {
-                    throw new FrontendInputException("frontend.duplicate-type", "Duplicate source type definitions in the supplied environment");
+                    throw new FrontendInputException("frontend.duplicate-type",
+                            "Duplicate source type definitions in the supplied environment");
                 }
                 var warning = new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-source-type",
                         "Duplicate source type definition in recovery mode; colliding source document is withheld",
-                        Optional.empty(), Map.of("type", duplicateName, "document", unit.input.document().identity().value()));
+                        Optional.empty(),
+                        Map.of("type", duplicateName, "document", unit.input.document().identity().value()));
                 diagnostics.add(warning);
-                rejected.add(new SourceOutcome(unit.input.document().identity(), SourceOutcome.State.PARTIAL, List.of(warning)));
+                rejected.add(new SourceOutcome(unit.input.document().identity(), SourceOutcome.State.PARTIAL,
+                        List.of(warning)));
                 retainedFullUnits.remove(unit);
                 releaseBody(unit);
                 unitIterator.remove();
@@ -2326,7 +2738,8 @@ final class Extraction {
             var unitSeen = new HashSet<String>();
             String duplicateName = null;
             for (TypeDeclaration<?> type : reactor.unit().ast.findAll(TypeDeclaration.class)) {
-                if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type)) continue;
+                if (type.getFullyQualifiedName().isEmpty() || hasLocalOwner(type))
+                    continue;
                 String name = type.getFullyQualifiedName().orElseThrow();
                 if (!unitSeen.add(name) || names.contains(name)) {
                     duplicateName = name;
@@ -2342,9 +2755,11 @@ final class Extraction {
                 }
                 var warning = new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-reactor-source-type",
                         "Duplicate sibling-module source type in recovery mode; colliding source document is withheld",
-                        Optional.empty(), Map.of("type", duplicateName, "document", reactor.unit().input.document().identity().value()));
+                        Optional.empty(),
+                        Map.of("type", duplicateName, "document", reactor.unit().input.document().identity().value()));
                 diagnostics.add(warning);
-                rejected.add(new SourceOutcome(reactor.unit().input.document().identity(), SourceOutcome.State.PARTIAL, List.of(warning)));
+                rejected.add(new SourceOutcome(reactor.unit().input.document().identity(), SourceOutcome.State.PARTIAL,
+                        List.of(warning)));
                 releaseBody(reactor.unit());
                 reactorIterator.remove();
                 continue;
@@ -2384,154 +2799,249 @@ final class Extraction {
         }
         environment.invalidateSolverCaches();
     }
+
     private boolean isSourceOrReactorNode(Node node) {
         return sourceNodes.contains(node) || reactorNodes.contains(node);
     }
+
     boolean hasLocalOwner(Node node) {
         for (Node current = node; current != null; current = current.getParentNode().orElse(null)) {
-            if (current instanceof TypeDeclaration<?> t && !(t.getParentNode().orElse(null) instanceof CompilationUnit) && !(t.getParentNode().orElse(null) instanceof TypeDeclaration<?>)) return true;
-            if (current instanceof ObjectCreationExpr) return true;
+            if (current instanceof TypeDeclaration<?> t && !(t.getParentNode().orElse(null) instanceof CompilationUnit)
+                    && !(t.getParentNode().orElse(null) instanceof TypeDeclaration<?>))
+                return true;
+            if (current instanceof ObjectCreationExpr)
+                return true;
         }
         return false;
     }
+
     private boolean isDeclaration(Node node) {
-        return node instanceof TypeDeclaration<?> || node instanceof CallableDeclaration<?> || node instanceof CompactConstructorDeclaration || node instanceof AnnotationMemberDeclaration
+        return node instanceof TypeDeclaration<?> || node instanceof CallableDeclaration<?>
+                || node instanceof CompactConstructorDeclaration || node instanceof AnnotationMemberDeclaration
                 || node instanceof VariableDeclarator v && v.getParentNode().orElse(null) instanceof FieldDeclaration
                 || node instanceof Parameter || node instanceof TypeParameter || node instanceof EnumConstantDeclaration
                 || node instanceof InitializerDeclaration || node instanceof LambdaExpr
                 || node instanceof ObjectCreationExpr o && o.getAnonymousClassBody().isPresent();
     }
-    // Only declaration-shaped nodes can cross the resolver's toAst boundary. Retaining
-    // every expression/token in a second identity hash table scales with the entire AST.
-    private boolean membershipNode(Node node) {return node instanceof CompilationUnit||node instanceof FieldDeclaration||isDeclaration(node);}
+
+    // Only declaration-shaped nodes can cross the resolver's toAst boundary.
+    // Retaining
+    // every expression/token in a second identity hash table scales with the entire
+    // AST.
+    private boolean membershipNode(Node node) {
+        return node instanceof CompilationUnit || node instanceof FieldDeclaration || isDeclaration(node);
+    }
 
     JavaSymbolName name(Node node) {
-        var existing = names.get(node); if (existing != null) return existing;
+        var existing = names.get(node);
+        if (existing != null)
+            return existing;
         JavaSymbolName result;
-        if (node instanceof CompilationUnit cu) result = JavaSymbolName.packageName(cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse(""));
+        if (node instanceof CompilationUnit cu)
+            result = JavaSymbolName.packageName(cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse(""));
         else if (node instanceof TypeDeclaration<?> type) {
             Node parent = type.getParentNode().orElseThrow();
-            if (parent instanceof CompilationUnit cu) result = JavaSymbolName.topLevelType(cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse(""), type.getNameAsString());
-            else if (parent instanceof TypeDeclaration<?> || parent instanceof ObjectCreationExpr || parent instanceof EnumConstantDeclaration) result = JavaSymbolName.memberType(typeOwnerName(parent), type.getNameAsString());
-            else result = JavaSymbolName.localType(ownerName(type), unit(type).input.document().identity(), unit(type).source.start(type), type.getNameAsString(), false);
-        } else if (node instanceof MethodDeclaration method) result = JavaSymbolName.method(typeOwnerName(enclosingType(node)), method.getNameAsString(), parameters(method));
-        else if (node instanceof ConstructorDeclaration constructor) result = JavaSymbolName.constructor(typeOwnerName(enclosingType(node)), parameters(constructor));
-        else if (node instanceof CompactConstructorDeclaration) result = JavaSymbolName.constructor(typeOwnerName(enclosingType(node)), parameters(((RecordDeclaration)enclosingType(node)).getParameters()));
-        else if (node instanceof AnnotationMemberDeclaration member) result = JavaSymbolName.method(typeOwnerName(enclosingType(node)), member.getNameAsString(), List.of());
-        else if (node instanceof VariableDeclarator variable) result = JavaSymbolName.field(typeOwnerName(enclosingType(node)), variable.getNameAsString());
-        else if (node instanceof EnumConstantDeclaration constant) result = JavaSymbolName.field(name(enclosingType(node)), constant.getNameAsString());
+            if (parent instanceof CompilationUnit cu)
+                result = JavaSymbolName.topLevelType(
+                        cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse(""), type.getNameAsString());
+            else if (parent instanceof TypeDeclaration<?> || parent instanceof ObjectCreationExpr
+                    || parent instanceof EnumConstantDeclaration)
+                result = JavaSymbolName.memberType(typeOwnerName(parent), type.getNameAsString());
+            else
+                result = JavaSymbolName.localType(ownerName(type), unit(type).input.document().identity(),
+                        unit(type).source.start(type), type.getNameAsString(), false);
+        } else if (node instanceof MethodDeclaration method)
+            result = JavaSymbolName.method(typeOwnerName(enclosingType(node)), method.getNameAsString(),
+                    parameters(method));
+        else if (node instanceof ConstructorDeclaration constructor)
+            result = JavaSymbolName.constructor(typeOwnerName(enclosingType(node)), parameters(constructor));
+        else if (node instanceof CompactConstructorDeclaration)
+            result = JavaSymbolName.constructor(typeOwnerName(enclosingType(node)),
+                    parameters(((RecordDeclaration) enclosingType(node)).getParameters()));
+        else if (node instanceof AnnotationMemberDeclaration member)
+            result = JavaSymbolName.method(typeOwnerName(enclosingType(node)), member.getNameAsString(), List.of());
+        else if (node instanceof VariableDeclarator variable)
+            result = JavaSymbolName.field(typeOwnerName(enclosingType(node)), variable.getNameAsString());
+        else if (node instanceof EnumConstantDeclaration constant)
+            result = JavaSymbolName.field(name(enclosingType(node)), constant.getNameAsString());
         else if (node instanceof Parameter parameter) {
             Node parent = parameter.getParentNode().orElseThrow();
-            if (parent instanceof CallableDeclaration<?> callable) result = JavaSymbolName.parameter(name(callable), callable.getParameters().indexOf(parameter));
-            else if (parent instanceof RecordDeclaration record) result = JavaSymbolName.recordComponent(name(record), parameter.getNameAsString());
-            else if (parent instanceof LambdaExpr lambda) result = JavaSymbolName.parameter(name(lambda), lambda.getParameters().indexOf(parameter));
-            else if (parent instanceof com.github.javaparser.ast.stmt.CatchClause) result = JavaSymbolName.catchParameter(
-                    ownerName(parameter), unit(parameter).input.document().identity(), unit(parameter).source.start(parameter), parameter.getNameAsString());
-            else throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.parameter-owner");
+            if (parent instanceof CallableDeclaration<?> callable)
+                result = JavaSymbolName.parameter(name(callable), callable.getParameters().indexOf(parameter));
+            else if (parent instanceof RecordDeclaration record)
+                result = JavaSymbolName.recordComponent(name(record), parameter.getNameAsString());
+            else if (parent instanceof LambdaExpr lambda)
+                result = JavaSymbolName.parameter(name(lambda), lambda.getParameters().indexOf(parameter));
+            else if (parent instanceof com.github.javaparser.ast.stmt.CatchClause)
+                result = JavaSymbolName.catchParameter(
+                        ownerName(parameter), unit(parameter).input.document().identity(),
+                        unit(parameter).source.start(parameter), parameter.getNameAsString());
+            else
+                throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.parameter-owner");
         } else if (node instanceof TypeParameter parameter) {
             Node parent = parameter.getParentNode().orElseThrow();
             var siblings = parent.getChildNodes().stream().filter(n -> n instanceof TypeParameter).toList();
             result = JavaSymbolName.typeParameter(name(parent), siblings.indexOf(parameter));
-        } else if (node instanceof LambdaExpr) result = executionName("lambda", node, "lambda", ownerName(node));
-        else if (node instanceof InitializerDeclaration initializer) result = executionName("initializer", node, initializer.isStatic() ? "static" : "instance", typeOwnerName(enclosingType(node)));
-        else if (node instanceof ObjectCreationExpr creation && creation.getAnonymousClassBody().isPresent()) result = JavaSymbolName.localType(ownerName(node), unit(node).input.document().identity(), unit(node).source.start(node), "", true);
-        else throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.declaration-kind");
-        names.put(node, result); return result;
+        } else if (node instanceof LambdaExpr)
+            result = executionName("lambda", node, "lambda", ownerName(node));
+        else if (node instanceof InitializerDeclaration initializer)
+            result = executionName("initializer", node, initializer.isStatic() ? "static" : "instance",
+                    typeOwnerName(enclosingType(node)));
+        else if (node instanceof ObjectCreationExpr creation && creation.getAnonymousClassBody().isPresent())
+            result = JavaSymbolName.localType(ownerName(node), unit(node).input.document().identity(),
+                    unit(node).source.start(node), "", true);
+        else
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.declaration-kind");
+        names.put(node, result);
+        return result;
     }
+
     private JavaSymbolName executionName(String kind, Node node, String syntax, JavaSymbolName owner) {
-        return JavaSymbolName.execution(kind, owner, unit(node).input.document().identity(), unit(node).source.start(node), syntax);
+        return JavaSymbolName.execution(kind, owner, unit(node).input.document().identity(),
+                unit(node).source.start(node), syntax);
     }
+
     private List<ErasedType> parameters(CallableDeclaration<?> callable) {
         return parameters(callable.getParameters());
     }
+
     List<ErasedType> parameters(List<Parameter> parameters) {
         return parameters.stream().map(p -> {
             var type = erasedParameter(p.getType());
             return p.isVarArgs() ? ErasedType.array(type, 1) : type;
         }).toList();
     }
+
     ErasedType erasedParameter(com.github.javaparser.ast.type.Type type) {
-        if (type.isArrayType()) return ErasedType.array(erasedParameter(type.asArrayType().getComponentType()), 1);
+        if (type.isArrayType())
+            return ErasedType.array(erasedParameter(type.asArrayType().getComponentType()), 1);
         if (type.isClassOrInterfaceType()) {
             var declaration = resolveNamed(type.asClassOrInterfaceType());
-            // Identity needs declaration erasure, not successful attribution of every generic argument.
-            if (!declaration.isTypeParameter()) return ErasedType.declared(typeName(declaration.asReferenceType()));
+            // Identity needs declaration erasure, not successful attribution of every
+            // generic argument.
+            if (!declaration.isTypeParameter())
+                return ErasedType.declared(typeName(declaration.asReferenceType()));
         }
         return erased(type.resolve(), new HashSet<>());
     }
+
     private ErasedType erased(ResolvedType type, Set<String> visiting) {
-        if (type.isPrimitive()) return ErasedType.primitive(type.describe());
-        if (type.isArray()) return ErasedType.array(erased(type.asArrayType().getComponentType(), visiting), 1);
-        if (type.isReferenceType()) return ErasedType.declared(typeName(type.asReferenceType().getTypeDeclaration().orElseThrow()));
+        if (type.isPrimitive())
+            return ErasedType.primitive(type.describe());
+        if (type.isArray())
+            return ErasedType.array(erased(type.asArrayType().getComponentType(), visiting), 1);
+        if (type.isReferenceType())
+            return ErasedType.declared(typeName(type.asReferenceType().getTypeDeclaration().orElseThrow()));
         if (type.isTypeVariable()) {
             var variable = type.asTypeVariable().asTypeParameter();
-            if (!visiting.add(variable.getContainerId() + ":" + variable.getName())) throw new MappingFailure(SemanticStatus.ERROR, "java.cyclic-erasure");
+            if (!visiting.add(variable.getContainerId() + ":" + variable.getName()))
+                throw new MappingFailure(SemanticStatus.ERROR, "java.cyclic-erasure");
             var bounds = variable.getBounds();
-            return bounds.isEmpty() ? ErasedType.declared(JavaSymbolName.topLevelType("java.lang", "Object")) : erased(bounds.getFirst().getType(), visiting);
+            return bounds.isEmpty() ? ErasedType.declared(JavaSymbolName.topLevelType("java.lang", "Object"))
+                    : erased(bounds.getFirst().getType(), visiting);
         }
         throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.erasure");
     }
+
     JavaSymbolName typeName(ResolvedReferenceTypeDeclaration type) {
         if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
-            Node ast = type.toAst().orElseThrow(); unit(ast); return typeOwnerName(ast);
+            Node ast = type.toAst().orElseThrow();
+            unit(ast);
+            return typeOwnerName(ast);
         }
         if (environment.isRecoveryScaffold(type, activeAndroidProject, activeAndroidPlatform))
-            throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.declaration-evidence-required");
-        // ReflectionAnnotationDeclaration does not implement containerType(). Its verified
+            throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.declaration-evidence-required");
+        // ReflectionAnnotationDeclaration does not implement containerType(). Its
+        // verified
         // canonical name still distinguishes package and nested declaration components.
         if (type.isAnnotation()) {
             String pkg = type.getPackageName();
-            String[] parts = type.getQualifiedName().substring(pkg.isEmpty() ? 0 : pkg.length()+1).split("\\.");
-            var symbol = JavaSymbolName.topLevelType(pkg,parts[0]);
-            for (int i=1;i<parts.length;i++) symbol = JavaSymbolName.memberType(symbol,parts[i]);
+            String[] parts = type.getQualifiedName().substring(pkg.isEmpty() ? 0 : pkg.length() + 1).split("\\.");
+            var symbol = JavaSymbolName.topLevelType(pkg, parts[0]);
+            for (int i = 1; i < parts.length; i++)
+                symbol = JavaSymbolName.memberType(symbol, parts[i]);
             return symbol;
         }
         return type.containerType().map(t -> JavaSymbolName.memberType(typeName(t), type.getName()))
-                .orElseGet(() -> {String pkg=type.getPackageName();if(pkg==null){if(!type.getQualifiedName().equals(type.getName()))throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.binary-package-evidence");pkg="";}return JavaSymbolName.topLevelType(pkg,type.getName());});
+                .orElseGet(() -> {
+                    String pkg = type.getPackageName();
+                    if (pkg == null) {
+                        if (!type.getQualifiedName().equals(type.getName()))
+                            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.binary-package-evidence");
+                        pkg = "";
+                    }
+                    return JavaSymbolName.topLevelType(pkg, type.getName());
+                });
     }
+
     private Node enclosingType(Node node) {
-        for (Node parent = node.getParentNode().orElse(null); parent != null; parent = parent.getParentNode().orElse(null))
-            if (parent instanceof TypeDeclaration<?> || parent instanceof ObjectCreationExpr o && o.getAnonymousClassBody().isPresent()
-                    || parent instanceof EnumConstantDeclaration e && !e.getClassBody().isEmpty()) return parent;
+        for (Node parent = node.getParentNode().orElse(null); parent != null; parent = parent.getParentNode()
+                .orElse(null))
+            if (parent instanceof TypeDeclaration<?>
+                    || parent instanceof ObjectCreationExpr o && o.getAnonymousClassBody().isPresent()
+                    || parent instanceof EnumConstantDeclaration e && !e.getClassBody().isEmpty())
+                return parent;
         throw new MappingFailure(SemanticStatus.ERROR, "java.type-owner");
     }
+
     private Node ownerNode(Node node) {
         Node child = node;
-        for (Node parent = node.getParentNode().orElse(null); parent != null; child = parent, parent = parent.getParentNode().orElse(null)) {
-            if (parent instanceof VariableDeclarator v && v.getParentNode().orElse(null) instanceof FieldDeclaration) return parent;
+        for (Node parent = node.getParentNode().orElse(null); parent != null; child = parent, parent = parent
+                .getParentNode().orElse(null)) {
+            if (parent instanceof VariableDeclarator v && v.getParentNode().orElse(null) instanceof FieldDeclaration)
+                return parent;
             if (parent instanceof ObjectCreationExpr creation) {
-                if (creation.getAnonymousClassBody().isPresent() && child instanceof BodyDeclaration<?>) return parent;
+                if (creation.getAnonymousClassBody().isPresent() && child instanceof BodyDeclaration<?>)
+                    return parent;
                 continue;
             }
-            if (isDeclaration(parent) || parent instanceof CompilationUnit) return parent;
+            if (isDeclaration(parent) || parent instanceof CompilationUnit)
+                return parent;
         }
         throw new MappingFailure(SemanticStatus.ERROR, "java.owner");
     }
+
     private Entity owner(Node node) {
         Node owner = ownerNode(node);
-        if (owner instanceof VariableDeclarator variable && !(node instanceof VariableDeclarator)) return fieldInitializer(variable);
-        if (owner instanceof EnumConstantDeclaration constant) return inEnumConstantBody(node) ? enumBody(constant) : enumInitializer(constant);
+        if (owner instanceof VariableDeclarator variable && !(node instanceof VariableDeclarator))
+            return fieldInitializer(variable);
+        if (owner instanceof EnumConstantDeclaration constant)
+            return inEnumConstantBody(node) ? enumBody(constant) : enumInitializer(constant);
         return entity(owner);
     }
+
     private JavaSymbolName ownerName(Node node) {
         Node owner = ownerNode(node);
-        if (owner instanceof VariableDeclarator variable) return fieldInitializerName(variable);
-        if (owner instanceof EnumConstantDeclaration constant) return inEnumConstantBody(node) ? typeOwnerName(constant) : executionName("initializer", constant, "enum-constant", name(constant));
+        if (owner instanceof VariableDeclarator variable)
+            return fieldInitializerName(variable);
+        if (owner instanceof EnumConstantDeclaration constant)
+            return inEnumConstantBody(node) ? typeOwnerName(constant)
+                    : executionName("initializer", constant, "enum-constant", name(constant));
         return name(owner);
     }
+
     private JavaSymbolName fieldInitializerName(VariableDeclarator variable) {
-        boolean isStatic = ((FieldDeclaration)variable.getParentNode().orElseThrow()).isStatic();
-        return executionName("initializer", variable.getInitializer().orElseThrow(), isStatic ? "field-static" : "field-instance", name(variable));
+        boolean isStatic = ((FieldDeclaration) variable.getParentNode().orElseThrow()).isStatic();
+        return executionName("initializer", variable.getInitializer().orElseThrow(),
+                isStatic ? "field-static" : "field-instance", name(variable));
     }
+
     private static boolean inEnumConstantBody(Node node) {
         Node child = node;
-        for (Node parent = node.getParentNode().orElse(null); parent != null; child = parent, parent = parent.getParentNode().orElse(null))
-            if (parent instanceof EnumConstantDeclaration && child instanceof BodyDeclaration<?>) return true;
+        for (Node parent = node.getParentNode().orElse(null); parent != null; child = parent, parent = parent
+                .getParentNode().orElse(null))
+            if (parent instanceof EnumConstantDeclaration && child instanceof BodyDeclaration<?>)
+                return true;
         return false;
     }
+
     JavaSymbolName typeOwnerName(Node node) {
-        return node instanceof EnumConstantDeclaration ? JavaSymbolName.localType(name(node),unit(node).input.document().identity(),source(node).start(node),"",true) : name(node);
+        return node instanceof EnumConstantDeclaration
+                ? JavaSymbolName.localType(name(node), unit(node).input.document().identity(), source(node).start(node),
+                        "", true)
+                : name(node);
     }
+
     private static final int COMPACT_SLICE_THRESHOLD = 1024;
 
     static String compactSourceSlice(Node node, String raw) {
@@ -2561,13 +3071,15 @@ final class Extraction {
                 char next = raw.charAt(i + 1);
                 if (next == '/') {
                     int nl = raw.indexOf('\n', i + 2);
-                    if (nl < 0) return -1;
+                    if (nl < 0)
+                        return -1;
                     i = nl;
                     continue;
                 }
                 if (next == '*') {
                     int end = raw.indexOf("*/", i + 2);
-                    if (end < 0) return -1;
+                    if (end < 0)
+                        return -1;
                     i = end + 1;
                     continue;
                 }
@@ -2581,85 +3093,139 @@ final class Extraction {
                         i += 2;
                         continue;
                     }
-                    if (q == quote) break;
+                    if (q == quote)
+                        break;
                     i++;
                 }
                 continue;
             }
-            if (c == '(') parens++;
-            else if (c == ')' && parens > 0) parens--;
-            else if (c == '{' && parens == 0) return i;
+            if (c == '(')
+                parens++;
+            else if (c == ')' && parens > 0)
+                parens--;
+            else if (c == '{' && parens == 0)
+                return i;
         }
         return -1;
     }
 
     Entity enumBody(EnumConstantDeclaration constant) {
-        return register(typeOwnerName(constant),EntityKind.TYPE,Optional.of(source(constant).span(constant)),compactSourceSlice(constant, source(constant).slice(source(constant).span(constant))),DIRECT);
+        return register(typeOwnerName(constant), EntityKind.TYPE, Optional.of(source(constant).span(constant)),
+                compactSourceSlice(constant, source(constant).slice(source(constant).span(constant))), DIRECT);
     }
+
     private Entity fieldInitializer(VariableDeclarator variable) {
         var initializer = variable.getInitializer().orElseThrow();
         return register(fieldInitializerName(variable), EntityKind.INITIALIZER,
-                Optional.of(unit(variable).source.span(initializer)), compactSourceSlice(initializer, unit(variable).source.slice(unit(variable).source.span(initializer))), DIRECT);
+                Optional.of(unit(variable).source.span(initializer)),
+                compactSourceSlice(initializer, unit(variable).source.slice(unit(variable).source.span(initializer))),
+                DIRECT);
     }
+
     Entity enumInitializer(EnumConstantDeclaration constant) {
         return register(executionName("initializer", constant, "enum-constant", name(constant)), EntityKind.INITIALIZER,
                 Optional.of(unit(constant).source.span(constant)), constant.getNameAsString(), DIRECT);
     }
+
     Entity entity(Node node) {
         if (!sourceNodes.contains(node) && !reactorNodes.contains(node)) {
-            throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.generated-ast");
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.generated-ast");
         }
         Entity cached = nodes.get(node);
-        if (cached != null) { if (duplicateDeclarations.contains(cached.identity())) throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration"); return cached; }
+        if (cached != null) {
+            if (duplicateDeclarations.contains(cached.identity()))
+                throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");
+            return cached;
+        }
         JavaSymbolName symbol = name(node);
-        EntityKind kind = node instanceof CompilationUnit ? EntityKind.PACKAGE : node instanceof TypeDeclaration<?> || node instanceof ObjectCreationExpr ? EntityKind.TYPE
-                : node instanceof MethodDeclaration || node instanceof AnnotationMemberDeclaration ? EntityKind.METHOD : node instanceof ConstructorDeclaration || node instanceof CompactConstructorDeclaration ? EntityKind.CONSTRUCTOR
-                : node instanceof Parameter p ? p.getParentNode().orElse(null) instanceof RecordDeclaration ? EntityKind.RECORD_COMPONENT : EntityKind.PARAMETER
-                : node instanceof TypeParameter ? EntityKind.TYPE_PARAMETER : node instanceof LambdaExpr ? EntityKind.LAMBDA
-                : node instanceof InitializerDeclaration ? EntityKind.INITIALIZER : EntityKind.FIELD;
-        Optional<SourceSpan> span = node instanceof CompilationUnit ? Optional.empty() : Optional.of(unit(node).source.span(node));
-        Derivation derivation = node instanceof CompilationUnit ? new Derivation(DerivationKind.DERIVED, new VersionedIdentifier("java.package-scope", "1"), List.of(request.module().value())) : DIRECT;
-        String overlay=request.manifest().configuration().values().get("java.generated-overlay");
-        var document=unit(node).input.document();
-        if(!(node instanceof CompilationUnit)&&overlay!=null&&Set.of(SourceClassification.GENERATED_MAIN,SourceClassification.GENERATED_TEST).contains(document.classification()))
-            derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.generated-source-import","m8.4-v1"),List.of(overlay,document.contentDigest().value()));
+        EntityKind kind = node instanceof CompilationUnit ? EntityKind.PACKAGE
+                : node instanceof TypeDeclaration<?> || node instanceof ObjectCreationExpr ? EntityKind.TYPE
+                        : node instanceof MethodDeclaration || node instanceof AnnotationMemberDeclaration
+                                ? EntityKind.METHOD
+                                : node instanceof ConstructorDeclaration
+                                        || node instanceof CompactConstructorDeclaration ? EntityKind.CONSTRUCTOR
+                                                : node instanceof Parameter p
+                                                        ? p.getParentNode().orElse(null) instanceof RecordDeclaration
+                                                                ? EntityKind.RECORD_COMPONENT
+                                                                : EntityKind.PARAMETER
+                                                        : node instanceof TypeParameter ? EntityKind.TYPE_PARAMETER
+                                                                : node instanceof LambdaExpr ? EntityKind.LAMBDA
+                                                                        : node instanceof InitializerDeclaration
+                                                                                ? EntityKind.INITIALIZER
+                                                                                : EntityKind.FIELD;
+        Optional<SourceSpan> span = node instanceof CompilationUnit ? Optional.empty()
+                : Optional.of(unit(node).source.span(node));
+        Derivation derivation = node instanceof CompilationUnit
+                ? new Derivation(DerivationKind.DERIVED, new VersionedIdentifier("java.package-scope", "1"),
+                        List.of(request.module().value()))
+                : DIRECT;
+        String overlay = request.manifest().configuration().values().get("java.generated-overlay");
+        var document = unit(node).input.document();
+        if (!(node instanceof CompilationUnit) && overlay != null
+                && Set.of(SourceClassification.GENERATED_MAIN, SourceClassification.GENERATED_TEST)
+                        .contains(document.classification()))
+            derivation = new Derivation(DerivationKind.DERIVED,
+                    new VersionedIdentifier("java.generated-source-import", "m8.4-v1"),
+                    List.of(overlay, document.contentDigest().value()));
         ModuleIdentity module = sourceNodes.contains(node) ? request.module() : unit(node).input.document().module();
-        var entity = register(symbol, kind, span, span.map(s -> compactSourceSlice(node, unit(node).source.slice(s))).orElse(""), derivation, module);
+        var entity = register(symbol, kind, span,
+                span.map(s -> compactSourceSlice(node, unit(node).source.slice(s))).orElse(""), derivation, module);
         checkDeclarationTypes(node, entity);
-        nodes.put(node, entity); return entity;
+        nodes.put(node, entity);
+        return entity;
     }
+
     private void checkDeclarationTypes(Node node, Entity entity) {
         try {
-            if (node instanceof MethodDeclaration method && !method.getType().isVoidType()) method.getType().resolve();
-            if (node instanceof VariableDeclarator variable) variable.getType().resolve();
-            if (node instanceof Parameter parameter && !parameter.getType().isUnknownType()) parameter.getType().resolve();
+            if (node instanceof MethodDeclaration method && !method.getType().isVoidType())
+                method.getType().resolve();
+            if (node instanceof VariableDeclarator variable)
+                variable.getType().resolve();
+            if (node instanceof Parameter parameter && !parameter.getType().isUnknownType())
+                parameter.getType().resolve();
             if (node instanceof CallableDeclaration<?> callable) {
-                for (var parameter : callable.getParameters()) parameter.getType().resolve();
-                for (var thrown : callable.getThrownExceptions()) thrown.resolve();
+                for (var parameter : callable.getParameters())
+                    parameter.getType().resolve();
+                for (var thrown : callable.getThrownExceptions())
+                    thrown.resolve();
             }
-            if (node instanceof TypeParameter parameter) for (var bound : parameter.getTypeBound()) bound.resolve();
+            if (node instanceof TypeParameter parameter)
+                for (var bound : parameter.getTypeBound())
+                    bound.resolve();
             if (node instanceof ClassOrInterfaceDeclaration type) {
-                for (var extended : type.getExtendedTypes()) extended.resolve();
-                for (var implemented : type.getImplementedTypes()) implemented.resolve();
+                for (var extended : type.getExtendedTypes())
+                    extended.resolve();
+                for (var implemented : type.getImplementedTypes())
+                    implemented.resolve();
             }
         } catch (RuntimeException | LinkageError | StackOverflowError exception) {
             boolean unresolved = exception instanceof UnsolvedSymbolException;
-            var diagnostic = diagnostic(unresolved ? "java.declaration-type-unresolved" : "java.declaration-type-error", unresolved ? SemanticStatus.UNRESOLVED : SemanticStatus.ERROR, entity.declaration());
+            var diagnostic = diagnostic(unresolved ? "java.declaration-type-unresolved" : "java.declaration-type-error",
+                    unresolved ? SemanticStatus.UNRESOLVED : SemanticStatus.ERROR, entity.declaration());
             var prior = declarations.get(entity.identity());
-            declarations.put(entity.identity(), new DeclarationRecord(entity, prior.spelling(), SemanticStatus.PARTIAL, prior.derivation(),
-                    List.of(new Uncertainty("java.declaration-type", "Declaration identity is known but type information is incomplete", List.of("verified declaration type"))), List.of(diagnostic)));
-            unit(node).diagnostics.add(diagnostic); diagnostics.add(diagnostic);
-        }
-    }
-    private void recordProjectCanonical(Entity entity) {
-        if (entity.origin() == EntityOrigin.PROJECT) {
-            projectIdsByCanonical.computeIfAbsent(entity.canonicalName(), k -> new ArrayList<>(2)).add(entity.identity());
+            declarations.put(entity.identity(),
+                    new DeclarationRecord(entity, prior.spelling(), SemanticStatus.PARTIAL, prior.derivation(),
+                            List.of(new Uncertainty("java.declaration-type",
+                                    "Declaration identity is known but type information is incomplete",
+                                    List.of("verified declaration type"))),
+                            List.of(diagnostic)));
+            unit(node).diagnostics.add(diagnostic);
+            diagnostics.add(diagnostic);
         }
     }
 
-    private Entity register(JavaSymbolName name, EntityKind kind, Optional<SourceSpan> span, String spelling, Derivation derivation) {
+    private void recordProjectCanonical(Entity entity) {
+        if (entity.origin() == EntityOrigin.PROJECT) {
+            projectIdsByCanonical.computeIfAbsent(entity.canonicalName(), k -> new ArrayList<>(2))
+                    .add(entity.identity());
+        }
+    }
+
+    private Entity register(JavaSymbolName name, EntityKind kind, Optional<SourceSpan> span, String spelling,
+            Derivation derivation) {
         return register(name, kind, span, spelling, derivation, request.module());
     }
+
     private Entity register(JavaSymbolName name, EntityKind kind, Optional<SourceSpan> span, String spelling,
             Derivation derivation, ModuleIdentity module) {
         var entity = Entity.create(EntityOrigin.PROJECT, EntityScope.project(module), kind, name.canonicalName(), span);
@@ -2668,32 +3234,41 @@ final class Extraction {
         if (prior == null) {
             recordProjectCanonical(entity);
         } else if (!prior.entity().declaration().equals(span)) {
-            duplicateDeclarations.add(entity.identity()); throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");
+            duplicateDeclarations.add(entity.identity());
+            throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");
         }
         return entity;
     }
+
     private Entity callable(ResolvedMethodLikeDeclaration resolved, Node site) {
-        // JavaParser 3.27.1 exposes implicit record Object methods through java.lang.Record.
+        // JavaParser 3.27.1 exposes implicit record Object methods through
+        // java.lang.Record.
         // Java's record rule declares these overrides on the receiver record itself.
         if (resolved instanceof ResolvedMethodDeclaration method && !method.isStatic()
-                && Set.of("java.lang.Record","java.lang.Object").contains(method.declaringType().getQualifiedName())
-                && Set.of("equals","hashCode","toString").contains(method.getName())) {
-            RecordDeclaration record=null;
-            Expression scope=site instanceof MethodCallExpr call ? call.getScope().orElse(null) : ((MethodReferenceExpr)site).getScope();
-            if (scope==null) {
-                if (enclosingType(site) instanceof RecordDeclaration r) record=r;
+                && Set.of("java.lang.Record", "java.lang.Object").contains(method.declaringType().getQualifiedName())
+                && Set.of("equals", "hashCode", "toString").contains(method.getName())) {
+            RecordDeclaration record = null;
+            Expression scope = site instanceof MethodCallExpr call ? call.getScope().orElse(null)
+                    : ((MethodReferenceExpr) site).getScope();
+            if (scope == null) {
+                if (enclosingType(site) instanceof RecordDeclaration r)
+                    record = r;
             } else if (!(scope instanceof SuperExpr)) {
                 ResolvedType receiver;
                 if (site instanceof MethodReferenceExpr reference && scope instanceof TypeExpr type) {
-                    var value=ReferenceResolution.value(reference,scope.toString());
-                    receiver=value.isPresent() ? value.orElseThrow().getType() : type.getType().resolve();
-                } else receiver=scope.calculateResolvedType();
-                if (receiver.isReferenceType() && receiver.asReferenceType().getTypeDeclaration().orElseThrow().toAst().filter(this::isSourceOrReactorNode).orElse(null) instanceof RecordDeclaration r) record=r;
+                    var value = ReferenceResolution.value(reference, scope.toString());
+                    receiver = value.isPresent() ? value.orElseThrow().getType() : type.getType().resolve();
+                } else
+                    receiver = scope.calculateResolvedType();
+                if (receiver.isReferenceType() && receiver.asReferenceType().getTypeDeclaration().orElseThrow().toAst()
+                        .filter(this::isSourceOrReactorNode).orElse(null) instanceof RecordDeclaration r)
+                    record = r;
             }
-            if (record!=null) {
-                var parameters=new ArrayList<ErasedType>();
-                for (int i=0;i<method.getNumberOfParams();i++) parameters.add(erased(method.getParam(i).getType(),new HashSet<>()));
-                var symbol = JavaSymbolName.method(name(record),method.getName(),parameters);
+            if (record != null) {
+                var parameters = new ArrayList<ErasedType>();
+                for (int i = 0; i < method.getNumberOfParams(); i++)
+                    parameters.add(erased(method.getParam(i).getType(), new HashSet<>()));
+                var symbol = JavaSymbolName.method(name(record), method.getName(), parameters);
                 if (reactorNodes.contains(record)) {
                     warnDuplicateExternal(record.resolve().getQualifiedName());
                     return reactorImplicit(symbol, EntityKind.METHOD, record, record,
@@ -2704,160 +3279,352 @@ final class Extraction {
         }
         return callable(resolved);
     }
+
     private Entity resolveCall(Expression expression) {
-        var nativeCall=nativeMembers.resolve(expression);if(nativeCall.isPresent())return nativeCall.orElseThrow();
-        var generated=lombok.resolve(expression);
-        if(generated.isPresent()){if(expression instanceof MethodCallExpr call)recoveryCallInputs.add(call);return generated.orElseThrow();}
-        if(request.sourceRecovery()&&expression instanceof MethodCallExpr call)requireRecoveryReceiver(call);
-        if(expression instanceof MethodCallExpr call) {
-            if(!request.sourceRecovery()&&boundedReceiver(call.getScope()))requireRecoverySelected(call,recoveryReceiver(call,call.getScope()));
-            var result=callable(call.resolve(),call);if(request.sourceRecovery())recoveryCallInputs.add(call);return result;
+        var nativeCall = nativeMembers.resolve(expression);
+        if (nativeCall.isPresent())
+            return nativeCall.orElseThrow();
+        var generated = lombok.resolve(expression);
+        if (generated.isPresent()) {
+            if (expression instanceof MethodCallExpr call)
+                recoveryCallInputs.add(call);
+            return generated.orElseThrow();
         }
-        return callable(((ObjectCreationExpr)expression).resolve());
+        if (request.sourceRecovery() && expression instanceof MethodCallExpr call)
+            requireRecoveryReceiver(call);
+        if (expression instanceof MethodCallExpr call) {
+            if (!request.sourceRecovery() && boundedReceiver(call.getScope()))
+                requireRecoverySelected(call, recoveryReceiver(call, call.getScope()));
+            try {
+                var result = callable(call.resolve(), call);
+                if (request.sourceRecovery())
+                    recoveryCallInputs.add(call);
+                return result;
+            } catch (UnsolvedSymbolException missing) {
+                var screened = screenDeclaredMethodByArity(call, recoveryReceiver(call, call.getScope()));
+                if (screened.isPresent()) {
+                    var result = callable(screened.orElseThrow(), call);
+                    if (request.sourceRecovery())
+                        recoveryCallInputs.add(call);
+                    return result;
+                }
+                throw missing;
+            }
+        }
+        return callable(((ObjectCreationExpr) expression).resolve());
     }
+
     private boolean boundedReceiver(Optional<Expression> scope) {
-        if(scope.isEmpty())return false;
+        if (scope.isEmpty())
+            return false;
         try {
-            Expression receiver=scope.orElseThrow();while(receiver instanceof EnclosedExpr enclosed)receiver=enclosed.getInner();
-            if(receiver.containsData(LambdaParameterInference.INPUT))return true;
-            var type=scope.orElseThrow().calculateResolvedType();
-            return type.isConstraint()||type.isWildcard()||type.isTypeVariable()||type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType;
-        }catch(UnsolvedSymbolException typeQualifier){return false;} // Static type qualifiers need not have a value type.
+            Expression receiver = scope.orElseThrow();
+            while (receiver instanceof EnclosedExpr enclosed)
+                receiver = enclosed.getInner();
+            if (receiver.containsData(LambdaParameterInference.INPUT))
+                return true;
+            var type = scope.orElseThrow().calculateResolvedType();
+            return type.isConstraint() || type.isWildcard() || type.isTypeVariable()
+                    || type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType;
+        } catch (UnsolvedSymbolException typeQualifier) {
+            return false;
+        } // Static type qualifiers need not have a value type.
     }
-    /** A missing parent may introduce a more specific overload even when resolve() picks
-     * a local method. Close only this receiver hierarchy, never the entire module. */
+
+    /**
+     * A missing parent may introduce a more specific overload even when resolve()
+     * picks
+     * a local method. Close only this receiver hierarchy, never the entire module.
+     */
     private void requireRecoveryReceiver(MethodCallExpr call) {
-        if(recoveryCallInputs.contains(call))return;
-        // Resolve inputs before using their inferred return types for an outer overload.
-        // An uncertain nested call cannot manufacture an exact outer receiver/argument type.
-        requireRecoveryInputs(call,call);
+        if (recoveryCallInputs.contains(call))
+            return;
+        // Resolve inputs before using their inferred return types for an outer
+        // overload.
+        // An uncertain nested call cannot manufacture an exact outer receiver/argument
+        // type.
+        requireRecoveryInputs(call, call);
     }
-    private void requireRecoveryInputs(Node input,MethodCallExpr deferred) {
-        if(input instanceof MethodCallExpr call&&recoveryCallInputs.contains(call))return;
-        input.walk(Node.TreeTraversal.POSTORDER,node->{
-            if(node instanceof MethodCallExpr nested&&!recoveryCallInputs.contains(nested)) {
-                if(lombok.resolve(nested).isPresent()){recoveryCallInputs.add(nested);return;}
+
+    private void requireRecoveryInputs(Node input, MethodCallExpr deferred) {
+        if (input instanceof MethodCallExpr call && recoveryCallInputs.contains(call))
+            return;
+        input.walk(Node.TreeTraversal.POSTORDER, node -> {
+            if (node instanceof MethodCallExpr nested && !recoveryCallInputs.contains(nested)) {
+                if (lombok.resolve(nested).isPresent()) {
+                    recoveryCallInputs.add(nested);
+                    return;
+                }
                 requireRecoveryReceiverType(nested);
-                if(nested!=deferred){nested.resolve();recoveryCallInputs.add(nested);}
+                if (nested != deferred) {
+                    nested.resolve();
+                    recoveryCallInputs.add(nested);
+                }
             }
         });
     }
+
     private void requireRecoveryReceiverType(MethodCallExpr call) {
-        requireRecoverySelected(call,recoveryReceiver(call,call.getScope()));
+        requireRecoverySelected(call, recoveryReceiver(call, call.getScope()));
     }
-    private ResolvedReferenceTypeDeclaration recoveryReceiver(Node site,Optional<Expression> receiverScope) {
+
+    private ResolvedReferenceTypeDeclaration recoveryReceiver(Node site, Optional<Expression> receiverScope) {
         ResolvedReferenceTypeDeclaration receiver;
-        if(receiverScope.isEmpty()) {
-            Node owner=enclosingType(site);
-            if(owner instanceof TypeDeclaration<?> type)receiver=type.resolve();
-            else if(owner instanceof ObjectCreationExpr creation)receiver=creation.getType().resolve().asReferenceType().getTypeDeclaration().orElseThrow();
-            else if(owner instanceof EnumConstantDeclaration constant)receiver=constant.resolve().getType().asReferenceType().getTypeDeclaration().orElseThrow();
-            else throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.receiver-shape-unsupported");
+        if (receiverScope.isEmpty()) {
+            Node owner = enclosingType(site);
+            if (owner instanceof TypeDeclaration<?> type)
+                receiver = type.resolve();
+            else if (owner instanceof ObjectCreationExpr creation)
+                receiver = creation.getType().resolve().asReferenceType().getTypeDeclaration().orElseThrow();
+            else if (owner instanceof EnumConstantDeclaration constant)
+                receiver = constant.resolve().getType().asReferenceType().getTypeDeclaration().orElseThrow();
+            else
+                throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.receiver-shape-unsupported");
         } else {
-            var scope=receiverScope.orElseThrow();requireRecoveryInputs(scope,null);ResolvedType type;
-            try{
-                var value=site instanceof MethodReferenceExpr reference?ReferenceResolution.value(reference,scope.toString()):Optional.<ResolvedValueDeclaration>empty();
-                type=value.isPresent()?value.orElseThrow().getType():scope instanceof TypeExpr expression?expression.getType().resolve():scope.calculateResolvedType();
-            }
-            catch(UnsolvedSymbolException missing) {
-                var context=com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope,activeSolver);
-                if(scope instanceof NameExpr name&&context.solveSymbol(name.getNameAsString()).isSolved())throw missing;
-                if(!(scope instanceof NameExpr||scope instanceof FieldAccessExpr||scope instanceof TypeExpr))throw missing;
-                var named=context.solveType(scope.toString());if(!named.isSolved())throw missing;
+            var scope = receiverScope.orElseThrow();
+            requireRecoveryInputs(scope, null);
+            ResolvedType type;
+            try {
+                var value = site instanceof MethodReferenceExpr reference
+                        ? ReferenceResolution.value(reference, scope.toString())
+                        : Optional.<ResolvedValueDeclaration>empty();
+                type = value.isPresent() ? value.orElseThrow().getType()
+                        : scope instanceof TypeExpr expression ? expression.getType().resolve()
+                                : scope.calculateResolvedType();
+            } catch (UnsolvedSymbolException missing) {
+                var context = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(scope,
+                        activeSolver);
+                if (scope instanceof NameExpr name && context.solveSymbol(name.getNameAsString()).isSolved())
+                    throw missing;
+                if (!(scope instanceof NameExpr || scope instanceof FieldAccessExpr || scope instanceof TypeExpr))
+                    throw missing;
+                var named = context.solveType(scope.toString());
+                if (!named.isSolved())
+                    throw missing;
                 return named.getCorrespondingDeclaration().asReferenceType();
             }
-            if(type.isConstraint())requireLambdaCaptureContext(site);
-            if(type.isArray())receiver=activeSolver.solveType("java.lang.Object");
-            else if(type.isReferenceType())receiver=type.asReferenceType().getTypeDeclaration().orElseThrow();
+            if (type.isConstraint())
+                requireLambdaCaptureContext(site);
+            if (type.isArray())
+                receiver = activeSolver.solveType("java.lang.Object");
+            else if (type.isReferenceType())
+                receiver = type.asReferenceType().getTypeDeclaration().orElseThrow();
             else {
-                var bounds=new ArrayList<ResolvedReferenceTypeDeclaration>();
-                recoveryUpperBounds(type,new HashSet<>(),bounds);
+                var bounds = new ArrayList<ResolvedReferenceTypeDeclaration>();
+                recoveryUpperBounds(type, new HashSet<>(), bounds);
                 // The solver still selects the actual member. This is a closure
                 // check over every bound, never an erasure-based target guess.
-                for(var bound:bounds)requireRecoveryHierarchy(bound);
-                if(bounds.isEmpty())throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
-                ResolvedMethodLikeDeclaration selected=site instanceof MethodCallExpr call?call.resolve()
-                        :site instanceof MethodReferenceExpr reference?new ReferenceResolution(activeSolver).resolve(reference):null;
-                ResolvedReferenceTypeDeclaration declaringType=selected==null?null:selected.declaringType();
-                if(site instanceof FieldAccessExpr access) {
-                    var value=access.resolve();if(value.isField())declaringType=value.asField().declaringType().asReferenceType();
+                for (var bound : bounds)
+                    requireRecoveryHierarchy(bound);
+                if (bounds.isEmpty())
+                    throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.receiver-type-required");
+                ResolvedMethodLikeDeclaration selected = site instanceof MethodCallExpr call ? call.resolve()
+                        : site instanceof MethodReferenceExpr reference
+                                ? new ReferenceResolution(activeSolver).resolve(reference)
+                                : null;
+                ResolvedReferenceTypeDeclaration declaringType = selected == null ? null : selected.declaringType();
+                if (site instanceof FieldAccessExpr access) {
+                    var value = access.resolve();
+                    if (value.isField())
+                        declaringType = value.asField().declaringType().asReferenceType();
                 }
-                if(declaringType!=null) {
-                    String declaring=hierarchyKey(declaringType);
-                    boolean member=declaring.equals(hierarchyKey(activeSolver.solveType("java.lang.Object")));
-                    for(var bound:bounds)if(hierarchyKey(bound).equals(declaring)
-                            ||bound.getAllAncestors().stream().anyMatch(parent->parent.getTypeDeclaration().map(this::hierarchyKey).filter(declaring::equals).isPresent()))member=true;
-                    if(!member)throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-bound-member-required");
+                if (declaringType != null) {
+                    String declaring = hierarchyKey(declaringType);
+                    boolean member = declaring.equals(hierarchyKey(activeSolver.solveType("java.lang.Object")));
+                    for (var bound : bounds)
+                        if (hierarchyKey(bound).equals(declaring)
+                                || bound.getAllAncestors().stream().anyMatch(parent -> parent.getTypeDeclaration()
+                                        .map(this::hierarchyKey).filter(declaring::equals).isPresent()))
+                            member = true;
+                    if (!member)
+                        throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.receiver-bound-member-required");
                 }
-                receiver=bounds.getFirst();
+                receiver = bounds.getFirst();
             }
         }
         return receiver;
     }
-    private void recoveryUpperBounds(ResolvedType type,Set<String> visiting,List<ResolvedReferenceTypeDeclaration> result) {
-        if(type.isConstraint()){recoveryUpperBounds(type.asConstraintType().getBound(),visiting,result);return;}
-        if(type.isReferenceType()){result.add(type.asReferenceType().getTypeDeclaration().orElseThrow());return;}
-        if(type.isArray()){result.add(activeSolver.solveType("java.lang.Object"));return;}
-        if(type.isWildcard()) {
-            var wildcard=type.asWildcard();
-            if(wildcard.isUpperBounded())recoveryUpperBounds(wildcard.getBoundedType(),visiting,result);
-            else result.add(activeSolver.solveType("java.lang.Object"));
+
+    private void recoveryUpperBounds(ResolvedType type, Set<String> visiting,
+            List<ResolvedReferenceTypeDeclaration> result) {
+        if (type.isConstraint()) {
+            recoveryUpperBounds(type.asConstraintType().getBound(), visiting, result);
             return;
         }
-        if(type.isTypeVariable()) {
-            var parameter=type.asTypeVariable().asTypeParameter();String key=parameter.getQualifiedName();
-            if(!visiting.add(key))throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-bound-cycle");
+        if (type.isReferenceType()) {
+            result.add(type.asReferenceType().getTypeDeclaration().orElseThrow());
+            return;
+        }
+        if (type.isArray()) {
+            result.add(activeSolver.solveType("java.lang.Object"));
+            return;
+        }
+        if (type.isWildcard()) {
+            var wildcard = type.asWildcard();
+            if (wildcard.isUpperBounded())
+                recoveryUpperBounds(wildcard.getBoundedType(), visiting, result);
+            else
+                result.add(activeSolver.solveType("java.lang.Object"));
+            return;
+        }
+        if (type.isTypeVariable()) {
+            var parameter = type.asTypeVariable().asTypeParameter();
+            String key = parameter.getQualifiedName();
+            if (!visiting.add(key))
+                throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.receiver-bound-cycle");
             try {
-                if(parameter.getBounds().isEmpty())result.add(activeSolver.solveType("java.lang.Object"));
-                else for(var bound:parameter.getBounds()) {
-                    if(!bound.isExtends())throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
-                    recoveryUpperBounds(bound.getType(),visiting,result);
-                }
-            } finally {visiting.remove(key);}
+                if (parameter.getBounds().isEmpty())
+                    result.add(activeSolver.solveType("java.lang.Object"));
+                else
+                    for (var bound : parameter.getBounds()) {
+                        if (!bound.isExtends())
+                            throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.receiver-type-required");
+                        recoveryUpperBounds(bound.getType(), visiting, result);
+                    }
+            } finally {
+                visiting.remove(key);
+            }
             return;
         }
-        if(type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType intersection) {
-            for(var bound:intersection.getElements())recoveryUpperBounds(bound,visiting,result);
+        if (type instanceof com.github.javaparser.resolution.types.ResolvedIntersectionType intersection) {
+            for (var bound : intersection.getElements())
+                recoveryUpperBounds(bound, visiting, result);
             return;
         }
-        throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-type-required");
+        throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.receiver-type-required");
     }
+
     private void requireLambdaCaptureContext(Node site) {
         // The parser constraint wrapper drops wildcard direction. A receiver capture
         // such as Iterable<? super Pet> cannot establish a Pet-typed lambda value.
         // Keep this case unknown until its actual capture/ground target is available.
-        for(Node node=site;node!=null;node=node.getParentNode().orElse(null))if(node instanceof LambdaExpr lambda) {
-            Node parent=lambda.getParentNode().orElse(null);while(parent instanceof EnclosedExpr)parent=parent.getParentNode().orElse(null);
-            if(parent instanceof MethodCallExpr call&&call.getScope().isPresent()&&hasLowerWildcard(call.getScope().orElseThrow().calculateResolvedType()))
-                throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.lambda-capture-context-required");
-        }
+        for (Node node = site; node != null; node = node.getParentNode().orElse(null))
+            if (node instanceof LambdaExpr lambda) {
+                Node parent = lambda.getParentNode().orElse(null);
+                while (parent instanceof EnclosedExpr)
+                    parent = parent.getParentNode().orElse(null);
+                if (parent instanceof MethodCallExpr call && call.getScope().isPresent()
+                        && hasLowerWildcard(call.getScope().orElseThrow().calculateResolvedType()))
+                    throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.lambda-capture-context-required");
+            }
     }
+
     private boolean hasLowerWildcard(ResolvedType type) {
-        if(type.isConstraint())return hasLowerWildcard(type.asConstraintType().getBound());
-        if(type.isWildcard())return type.asWildcard().isLowerBounded()||type.asWildcard().isUpperBounded()&&hasLowerWildcard(type.asWildcard().getBoundedType());
-        if(type.isArray())return hasLowerWildcard(type.asArrayType().getComponentType());
-        return type.isReferenceType()&&type.asReferenceType().typeParametersValues().stream().anyMatch(this::hasLowerWildcard);
+        if (type.isConstraint())
+            return hasLowerWildcard(type.asConstraintType().getBound());
+        if (type.isWildcard())
+            return type.asWildcard().isLowerBounded()
+                    || type.asWildcard().isUpperBounded() && hasLowerWildcard(type.asWildcard().getBoundedType());
+        if (type.isArray())
+            return hasLowerWildcard(type.asArrayType().getComponentType());
+        return type.isReferenceType()
+                && type.asReferenceType().typeParametersValues().stream().anyMatch(this::hasLowerWildcard);
     }
-    private void requireRecoverySelected(MethodCallExpr call,ResolvedReferenceTypeDeclaration receiver) {
+
+    private void requireRecoverySelected(MethodCallExpr call, ResolvedReferenceTypeDeclaration receiver) {
         for (var argument : call.getArguments())
             requireRecoveryArgumentType(argument.calculateResolvedType(), new HashSet<>());
         // A fixed own zero-argument declaration shadows any inherited alternative;
         // varargs and inherited selections still require the receiver hierarchy.
-        if(call.getArguments().isEmpty()) {
-            var selected=call.resolve();
-            if(ownZeroArgumentMethod(selected,receiver))return;
+        if (call.getArguments().isEmpty()) {
+            try {
+                var selected = call.resolve();
+                if (ownZeroArgumentMethod(selected, receiver))
+                    return;
+            } catch (UnsolvedSymbolException missing) {
+                var screened = screenDeclaredMethodByArity(call, receiver);
+                if (screened.isPresent() && ownZeroArgumentMethod(screened.orElseThrow(), receiver))
+                    return;
+                throw missing;
+            }
         }
         requireRecoveryHierarchy(receiver);
     }
+
+    /**
+     * Arity-first overload screening guard: when an unresolvable sibling overload
+     * causes
+     * JavaParser overload resolution to throw despite a unique declared exact-arity
+     * candidate,
+     * verify uniqueness across the declaring type (and closed hierarchy when arity
+     * > 0) and check
+     * argument assignability without weakening source-recovery closure
+     * requirements.
+     */
+    private Optional<ResolvedMethodDeclaration> screenDeclaredMethodByArity(MethodCallExpr call,
+            ResolvedReferenceTypeDeclaration receiver) {
+        if (!(receiver.toAst().filter(this::isSourceOrReactorNode)
+                .orElse(null) instanceof TypeDeclaration<?> ownerDecl)) {
+            return Optional.empty();
+        }
+        int argCount = call.getArguments().size();
+        String name = call.getNameAsString();
+        var exact = new ArrayList<MethodDeclaration>();
+        for (var member : ownerDecl.getMembers()) {
+            if (!(member instanceof MethodDeclaration method) || !method.getNameAsString().equals(name))
+                continue;
+            var params = method.getParameters();
+            boolean varargs = !params.isEmpty() && params.get(params.size() - 1).isVarArgs();
+            if (varargs && params.size() - 1 <= argCount)
+                return Optional.empty();
+            if (!varargs && params.size() == argCount)
+                exact.add(method);
+        }
+        if (exact.size() != 1)
+            return Optional.empty();
+        MethodDeclaration candidate = exact.getFirst();
+        if (argCount == 0) {
+            try {
+                ResolvedMethodDeclaration resolved = candidate.resolve();
+                return ownZeroArgumentMethod(resolved, receiver) ? Optional.of(resolved) : Optional.empty();
+            } catch (UnsolvedSymbolException ignored) {
+                return Optional.empty();
+            }
+        }
+        requireRecoveryHierarchy(receiver);
+        try {
+            for (var ancestor : receiver.getAllAncestors()) {
+                var ancDecl = ancestor.getTypeDeclaration().orElse(null);
+                if (ancDecl == null)
+                    return Optional.empty();
+                for (var ancMethod : ancDecl.getDeclaredMethods()) {
+                    if (!ancMethod.getName().equals(name))
+                        continue;
+                    int ancParams = ancMethod.getNumberOfParams();
+                    boolean ancVarargs = ancMethod.hasVariadicParameter();
+                    if ((ancVarargs && ancParams - 1 <= argCount) || (!ancVarargs && ancParams == argCount)) {
+                        return Optional.empty();
+                    }
+                }
+            }
+            ResolvedMethodDeclaration resolved = candidate.resolve();
+            for (int i = 0; i < argCount; i++) {
+                ResolvedType paramType = resolved.getParam(i).getType();
+                if (paramType.isTypeVariable() || paramType.isWildcard() || paramType.isConstraint()) {
+                    return Optional.empty();
+                }
+                ResolvedType argType = call.getArgument(i).calculateResolvedType();
+                if (!paramType.isAssignableBy(argType)) {
+                    return Optional.empty();
+                }
+            }
+            return Optional.of(resolved);
+        } catch (UnsolvedSymbolException | UnsupportedOperationException ignored) {
+            return Optional.empty();
+        }
+    }
+
     private void requireRecoveryArgumentType(ResolvedType type, Set<String> visited) {
-        if (!visited.add(type.describe())) return;
+        if (!visited.add(type.describe()))
+            return;
         if (type.isArray()) {
             requireRecoveryArgumentType(type.asArrayType().getComponentType(), visited);
         } else if (type.isReferenceType()) {
             var reference = type.asReferenceType();
             var declaration = reference.getTypeDeclaration().orElseThrow();
             if (declaration.toAst().filter(this::isSourceOrReactorNode).isEmpty())
-                environment.origin(declaration.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports);
+                environment.origin(declaration.getQualifiedName(), activeAndroidProject, activeAndroidPlatform,
+                        activeExplicitImports);
             for (var parameter : reference.typeParametersValues())
                 requireRecoveryArgumentType(parameter, visited);
         } else if (type.isTypeVariable()) {
@@ -2869,62 +3636,91 @@ final class Extraction {
             requireRecoveryArgumentType(type.asConstraintType().getBound(), visited);
         }
     }
-    private boolean ownZeroArgumentMethod(ResolvedMethodLikeDeclaration selected,ResolvedReferenceTypeDeclaration receiver) {
-        return selected.getNumberOfParams()==0&&selected.toAst().filter(this::isSourceOrReactorNode).filter(MethodDeclaration.class::isInstance).isPresent()
-                &&hierarchyKey(selected.declaringType()).equals(hierarchyKey(receiver));
+
+    private boolean ownZeroArgumentMethod(ResolvedMethodLikeDeclaration selected,
+            ResolvedReferenceTypeDeclaration receiver) {
+        return selected.getNumberOfParams() == 0
+                && selected.toAst().filter(this::isSourceOrReactorNode).filter(MethodDeclaration.class::isInstance)
+                        .isPresent()
+                && hierarchyKey(selected.declaringType()).equals(hierarchyKey(receiver));
     }
+
     private String hierarchyKey(ResolvedReferenceTypeDeclaration type) {
         return type.toAst().filter(this::isSourceOrReactorNode)
-                .map(n->unit(n).input.document().identity().value()+":"+unit(n).source.start(n)).orElse("external:"+type.getQualifiedName());
+                .map(n -> unit(n).input.document().identity().value() + ":" + unit(n).source.start(n))
+                .orElse("external:" + type.getQualifiedName());
     }
+
     private void requireRecoveryHierarchy(ResolvedReferenceTypeDeclaration receiver) {
-        String root=hierarchyKey(receiver);var cached=recoveryHierarchies.get(root);
-        if(cached!=null){if(cached.isPresent())throw new MappingFailure(cached.orElseThrow().status(),cached.orElseThrow().code());return;}
+        String root = hierarchyKey(receiver);
+        var cached = recoveryHierarchies.get(root);
+        if (cached != null) {
+            if (cached.isPresent())
+                throw new MappingFailure(cached.orElseThrow().status(), cached.orElseThrow().code());
+            return;
+        }
         try {
-            var pending=new ArrayDeque<ResolvedReferenceTypeDeclaration>();pending.add(receiver);var visited=new HashSet<String>();
-            while(!pending.isEmpty()) {
-                var type=pending.removeFirst();if(!visited.add(hierarchyKey(type)))continue;
-                if(type instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
+            var pending = new ArrayDeque<ResolvedReferenceTypeDeclaration>();
+            pending.add(receiver);
+            var visited = new HashSet<String>();
+            while (!pending.isEmpty()) {
+                var type = pending.removeFirst();
+                if (!visited.add(hierarchyKey(type)))
+                    continue;
+                if (type instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
                     throw new UnsolvedSymbolException(type.getQualifiedName());
                 }
                 // Some solver paths omit unknown ancestors. Inspect written source parents too.
-                if(type.toAst().filter(this::isSourceOrReactorNode).orElse(null) instanceof ClassOrInterfaceDeclaration declaration) {
-                    for(var parent:declaration.getExtendedTypes()) {
-                        var parentDecl=parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow();
-                        if(parentDecl instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
+                if (type.toAst().filter(this::isSourceOrReactorNode)
+                        .orElse(null) instanceof ClassOrInterfaceDeclaration declaration) {
+                    for (var parent : declaration.getExtendedTypes()) {
+                        var parentDecl = parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow();
+                        if (parentDecl instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
                             throw new UnsolvedSymbolException(parentDecl.getQualifiedName());
                         }
                         pending.add(parentDecl);
                     }
-                    for(var parent:declaration.getImplementedTypes()) {
-                        var parentDecl=parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow();
-                        if(parentDecl instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
+                    for (var parent : declaration.getImplementedTypes()) {
+                        var parentDecl = parent.resolve().asReferenceType().getTypeDeclaration().orElseThrow();
+                        if (parentDecl instanceof ExplicitImportTypeSolver.ExplicitImportTypeDeclaration) {
                             throw new UnsolvedSymbolException(parentDecl.getQualifiedName());
                         }
                         pending.add(parentDecl);
                     }
                 }
-                for(var parent:type.getAncestors(false))pending.add(parent.getTypeDeclaration().orElseThrow());
+                for (var parent : type.getAncestors(false))
+                    pending.add(parent.getTypeDeclaration().orElseThrow());
             }
-            recoveryHierarchies.put(root,Optional.empty());
-        }catch(UnsolvedSymbolException missing) {
-            recoveryHierarchies.put(root,Optional.of(new ClosureFailure(SemanticStatus.UNRESOLVED,"java.receiver-hierarchy-required")));
-            throw new MappingFailure(SemanticStatus.UNRESOLVED,"java.receiver-hierarchy-required");
+            recoveryHierarchies.put(root, Optional.empty());
+        } catch (UnsolvedSymbolException missing) {
+            recoveryHierarchies.put(root,
+                    Optional.of(new ClosureFailure(SemanticStatus.UNRESOLVED, "java.receiver-hierarchy-required")));
+            throw new MappingFailure(SemanticStatus.UNRESOLVED, "java.receiver-hierarchy-required");
         }
     }
+
     Entity callable(ResolvedMethodLikeDeclaration resolved) {
-        if(nativeMembers!=null){var nativeDeclaration=nativeMembers.callable(resolved);if(nativeDeclaration.isPresent())return nativeDeclaration.orElseThrow();}
+        if (nativeMembers != null) {
+            var nativeDeclaration = nativeMembers.callable(resolved);
+            if (nativeDeclaration.isPresent())
+                return nativeDeclaration.orElseThrow();
+        }
         if (resolved.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node node = resolved.toAst().orElseThrow();
-            if (node instanceof CallableDeclaration<?> || node instanceof CompactConstructorDeclaration || node instanceof AnnotationMemberDeclaration) {
-                if (reactorNodes.contains(node)) warnDuplicateExternal(resolved.declaringType().getQualifiedName());
+            if (node instanceof CallableDeclaration<?> || node instanceof CompactConstructorDeclaration
+                    || node instanceof AnnotationMemberDeclaration) {
+                if (reactorNodes.contains(node))
+                    warnDuplicateExternal(resolved.declaringType().getQualifiedName());
                 return entity(node);
             }
         }
         var type = resolved.declaringType();
         var parameters = new ArrayList<ErasedType>();
-        for (int i = 0; i < resolved.getNumberOfParams(); i++) parameters.add(erased(resolved.getParam(i).getType(), new HashSet<>()));
-        var symbol = resolved instanceof ResolvedConstructorDeclaration ? JavaSymbolName.constructor(typeName(type), parameters) : JavaSymbolName.method(typeName(type), resolved.getName(), parameters);
+        for (int i = 0; i < resolved.getNumberOfParams(); i++)
+            parameters.add(erased(resolved.getParam(i).getType(), new HashSet<>()));
+        var symbol = resolved instanceof ResolvedConstructorDeclaration
+                ? JavaSymbolName.constructor(typeName(type), parameters)
+                : JavaSymbolName.method(typeName(type), resolved.getName(), parameters);
         if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node declaration = type.toAst().orElseThrow();
             if (reactorNodes.contains(declaration)) {
@@ -2941,32 +3737,47 @@ final class Extraction {
                     }
                 }
                 EntityKind kind = resolved instanceof ResolvedConstructorDeclaration
-                        ? EntityKind.CONSTRUCTOR : EntityKind.METHOD;
+                        ? EntityKind.CONSTRUCTOR
+                        : EntityKind.METHOD;
                 return reactorImplicit(symbol, kind, declaration, declaration,
                         resolved.getName(), "java.reactor-source-symbol");
             }
             return existing(symbol);
         }
-        var origin = environment.origin(type.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports);
+        var origin = environment.origin(type.getQualifiedName(), activeAndroidProject, activeAndroidPlatform,
+                activeExplicitImports);
         if (environment.duplicateExternal(type.getQualifiedName())) {
             duplicateTypeWarnings.add(type.getQualifiedName());
-            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type", "Ordered classpath selected the first definition", Optional.empty(), Map.of("type", typeName(type).canonicalName())));
+            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type",
+                    "Ordered classpath selected the first definition", Optional.empty(),
+                    Map.of("type", typeName(type).canonicalName())));
         }
-        var entity = Entity.create(origin.kind(), origin.scope(), resolved instanceof ResolvedConstructorDeclaration ? EntityKind.CONSTRUCTOR : EntityKind.METHOD, symbol.canonicalName(), Optional.empty());
-        declarations.putIfAbsent(entity.identity(), new DeclarationRecord(entity, resolved.getName(), SemanticStatus.RESOLVED, environment.nativeDerivation(type.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports), List.of(), List.of()));
+        var entity = Entity.create(origin.kind(), origin.scope(),
+                resolved instanceof ResolvedConstructorDeclaration ? EntityKind.CONSTRUCTOR : EntityKind.METHOD,
+                symbol.canonicalName(), Optional.empty());
+        declarations
+                .putIfAbsent(entity.identity(), new DeclarationRecord(entity, resolved.getName(),
+                        SemanticStatus.RESOLVED, environment.nativeDerivation(type.getQualifiedName(),
+                                activeAndroidProject, activeAndroidPlatform, activeExplicitImports),
+                        List.of(), List.of()));
         return entity;
     }
 
-    Entity field(ResolvedValueDeclaration resolved,Node site) {
-        var scope=site instanceof FieldAccessExpr access?Optional.of(access.getScope()):Optional.<Expression>empty();
-        if(resolved.isField()&&(request.sourceRecovery()||boundedReceiver(scope))) {
-            var receiver=recoveryReceiver(site,scope);
-            if(!hierarchyKey(resolved.asField().declaringType().asReferenceType()).equals(hierarchyKey(receiver)))requireRecoveryHierarchy(receiver);
+    Entity field(ResolvedValueDeclaration resolved, Node site) {
+        var scope = site instanceof FieldAccessExpr access ? Optional.of(access.getScope())
+                : Optional.<Expression>empty();
+        if (resolved.isField() && (request.sourceRecovery() || boundedReceiver(scope))) {
+            var receiver = recoveryReceiver(site, scope);
+            if (!hierarchyKey(resolved.asField().declaringType().asReferenceType()).equals(hierarchyKey(receiver)))
+                requireRecoveryHierarchy(receiver);
         }
         return field(resolved);
     }
+
     Entity field(ResolvedValueDeclaration resolved) {
-        if (resolved.isField() && resolved.asField().declaringType().toAst().filter(this::isSourceOrReactorNode).orElse(null) instanceof RecordDeclaration record
+        if (resolved.isField()
+                && resolved.asField().declaringType().toAst().filter(this::isSourceOrReactorNode)
+                        .orElse(null) instanceof RecordDeclaration record
                 && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(resolved.getName()))) {
             var symbol = JavaSymbolName.field(name(record), resolved.getName());
             if (reactorNodes.contains(record)) {
@@ -2982,44 +3793,64 @@ final class Extraction {
         if (resolved.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node node = resolved.toAst().orElseThrow();
             if (node instanceof FieldDeclaration declaration) {
-                var matching = declaration.getVariables().stream().filter(v -> v.getNameAsString().equals(resolved.getName())).toList();
-                if (matching.size() != 1) throw new MappingFailure(SemanticStatus.ERROR,"java.field-declaration");
+                var matching = declaration.getVariables().stream()
+                        .filter(v -> v.getNameAsString().equals(resolved.getName())).toList();
+                if (matching.size() != 1)
+                    throw new MappingFailure(SemanticStatus.ERROR, "java.field-declaration");
                 node = matching.getFirst();
             }
-            if (node instanceof VariableDeclarator variable && variable.getParentNode().orElse(null) instanceof FieldDeclaration
+            if (node instanceof VariableDeclarator variable
+                    && variable.getParentNode().orElse(null) instanceof FieldDeclaration
                     || node instanceof EnumConstantDeclaration) {
                 if (reactorNodes.contains(node) && resolved.isField()) {
                     warnDuplicateExternal(resolved.asField().declaringType().getQualifiedName());
                 }
                 return entity(node);
             }
-            throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-declaration");
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.field-declaration");
         }
-        ResolvedReferenceTypeDeclaration type = resolved.isField() ? resolved.asField().declaringType().asReferenceType()
+        ResolvedReferenceTypeDeclaration type = resolved.isField()
+                ? resolved.asField().declaringType().asReferenceType()
                 : resolved.asEnumConstant().getType().asReferenceType().getTypeDeclaration().orElseThrow();
-        if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-field");
-        var origin = environment.origin(type.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports);
+        if (type.toAst().filter(this::isSourceOrReactorNode).isPresent())
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.implicit-field");
+        var origin = environment.origin(type.getQualifiedName(), activeAndroidProject, activeAndroidPlatform,
+                activeExplicitImports);
         if (environment.duplicateExternal(type.getQualifiedName())) {
             duplicateTypeWarnings.add(type.getQualifiedName());
-            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING,"java.duplicate-binary-type","Ordered classpath selected the first definition",Optional.empty(),Map.of("type",typeName(type).canonicalName())));
+            diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type",
+                    "Ordered classpath selected the first definition", Optional.empty(),
+                    Map.of("type", typeName(type).canonicalName())));
         }
-        var entity = Entity.create(origin.kind(),origin.scope(),EntityKind.FIELD,JavaSymbolName.field(typeName(type),resolved.getName()).canonicalName(),Optional.empty());
-        declarations.putIfAbsent(entity.identity(),new DeclarationRecord(entity,resolved.getName(),SemanticStatus.RESOLVED,environment.nativeDerivation(type.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports),List.of(),List.of()));
+        var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.FIELD,
+                JavaSymbolName.field(typeName(type), resolved.getName()).canonicalName(), Optional.empty());
+        declarations
+                .putIfAbsent(entity.identity(), new DeclarationRecord(entity, resolved.getName(),
+                        SemanticStatus.RESOLVED, environment.nativeDerivation(type.getQualifiedName(),
+                                activeAndroidProject, activeAndroidPlatform, activeExplicitImports),
+                        List.of(), List.of()));
         return entity;
     }
+
     Entity fieldOwner(Node node) {
-        for (Node ancestor = node.getParentNode().orElse(null); ancestor != null; ancestor = ancestor.getParentNode().orElse(null))
-            if (ancestor instanceof AnnotationExpr annotation) return typeUseOwner(annotation);
-            else if (ancestor instanceof AnnotationMemberDeclaration) return entity(ancestor);
+        for (Node ancestor = node.getParentNode().orElse(null); ancestor != null; ancestor = ancestor.getParentNode()
+                .orElse(null))
+            if (ancestor instanceof AnnotationExpr annotation)
+                return typeUseOwner(annotation);
+            else if (ancestor instanceof AnnotationMemberDeclaration)
+                return entity(ancestor);
         var owner = owner(node);
-        if (!Set.of(EntityKind.METHOD,EntityKind.CONSTRUCTOR,EntityKind.INITIALIZER,EntityKind.LAMBDA).contains(owner.kind()))
-            throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.field-execution-owner");
+        if (!Set.of(EntityKind.METHOD, EntityKind.CONSTRUCTOR, EntityKind.INITIALIZER, EntityKind.LAMBDA)
+                .contains(owner.kind()))
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.field-execution-owner");
         return owner;
     }
+
     ResolvedValueDeclaration resolveValueCached(Expression expression) {
         Object cached = unitValueCache.get(expression);
         if (cached != null) {
-            if (cached instanceof ResolvedValueDeclaration val) return val;
+            if (cached instanceof ResolvedValueDeclaration val)
+                return val;
             throw (RuntimeException) cached;
         }
         try {
@@ -3037,7 +3868,8 @@ final class Extraction {
     ResolvedTypeDeclaration resolveTypeNameCached(Expression expression, String name) {
         Object cached = unitTypeNameCache.get(expression);
         if (cached != null) {
-            if (cached instanceof ResolvedTypeDeclaration type) return type;
+            if (cached instanceof ResolvedTypeDeclaration type)
+                return type;
             throw (RuntimeException) cached;
         }
         try {
@@ -3056,33 +3888,50 @@ final class Extraction {
             if (context instanceof Expression expr) {
                 declaration = resolveTypeNameCached(expr, name);
             } else {
-                var selected = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(context,activeSolver).solveType(name);
-                if (!selected.isSolved()) return false;
+                var selected = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory
+                        .getContext(context, activeSolver).solveType(name);
+                if (!selected.isSolved())
+                    return false;
                 declaration = selected.getCorrespondingDeclaration();
             }
             if (declaration.toAst().filter(this::isSourceOrReactorNode).isEmpty())
-                environment.origin(declaration.asReferenceType().getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports);
+                environment.origin(declaration.asReferenceType().getQualifiedName(), activeAndroidProject,
+                        activeAndroidPlatform, activeExplicitImports);
             return true;
+        } catch (RuntimeException failure) {
+            return false;
         }
-        catch (RuntimeException failure) { return false; }
     }
-    ResolvedTypeDeclaration resolveTypeName(Node node,String name){
-        var result=com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(node,activeSolver).solveType(name);
-        if(!result.isSolved())throw new UnsolvedSymbolException(name);return result.getCorrespondingDeclaration();
+
+    ResolvedTypeDeclaration resolveTypeName(Node node, String name) {
+        var result = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(node, activeSolver)
+                .solveType(name);
+        if (!result.isSolved())
+            throw new UnsolvedSymbolException(name);
+        return result.getCorrespondingDeclaration();
     }
+
     void unmapped(Node node, String category, SemanticStatus status, String code) {
-        observe(node,category,() -> { throw new MappingFailure(status,code); },() -> { throw new MappingFailure(status,code); });
+        observe(node, category, () -> {
+            throw new MappingFailure(status, code);
+        }, () -> {
+            throw new MappingFailure(status, code);
+        });
     }
+
     ResolvedTypeDeclaration resolveNamed(com.github.javaparser.ast.type.ClassOrInterfaceType type) {
         Object cached = unitNamedTypeCache.get(type);
         if (cached != null) {
-            if (cached instanceof ResolvedTypeDeclaration resolved) return resolved;
+            if (cached instanceof ResolvedTypeDeclaration resolved)
+                return resolved;
             throw (RuntimeException) cached;
         }
         try {
-            var resolved = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory.getContext(type, activeSolver)
+            var resolved = com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory
+                    .getContext(type, activeSolver)
                     .solveType(type.getNameWithScope());
-            if (!resolved.isSolved()) throw new UnsolvedSymbolException(type.getNameWithScope());
+            if (!resolved.isSolved())
+                throw new UnsolvedSymbolException(type.getNameWithScope());
             var decl = resolved.getCorrespondingDeclaration();
             unitNamedTypeCache.put(type, decl);
             return decl;
@@ -3091,6 +3940,7 @@ final class Extraction {
             throw failure;
         }
     }
+
     Entity typeEntity(ResolvedTypeDeclaration type) {
         if (type.toAst().filter(this::isSourceOrReactorNode).isPresent()) {
             Node declaration = type.toAst().orElseThrow();
@@ -3099,14 +3949,25 @@ final class Extraction {
             }
             return entity(declaration);
         }
-        if (type.isTypeParameter()) throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.external-type-parameter");
+        if (type.isTypeParameter())
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.external-type-parameter");
         var reference = type.asReferenceType();
-        var origin = environment.origin(reference.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports);
-        var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.TYPE, typeName(reference).canonicalName(), Optional.empty());
-        declarations.putIfAbsent(entity.identity(), new DeclarationRecord(entity, reference.getQualifiedName(), SemanticStatus.RESOLVED, environment.nativeDerivation(reference.getQualifiedName(), activeAndroidProject, activeAndroidPlatform, activeExplicitImports), List.of(), List.of()));
+        var origin = environment.origin(reference.getQualifiedName(), activeAndroidProject, activeAndroidPlatform,
+                activeExplicitImports);
+        var entity = Entity.create(origin.kind(), origin.scope(), EntityKind.TYPE, typeName(reference).canonicalName(),
+                Optional.empty());
+        declarations
+                .putIfAbsent(entity.identity(), new DeclarationRecord(entity, reference.getQualifiedName(),
+                        SemanticStatus.RESOLVED, environment.nativeDerivation(reference.getQualifiedName(),
+                                activeAndroidProject, activeAndroidPlatform, activeExplicitImports),
+                        List.of(), List.of()));
         return entity;
     }
-    OriginalSource source(Node node) { return unit(node).source; }
+
+    OriginalSource source(Node node) {
+        return unit(node).source;
+    }
+
     Entity existing(JavaSymbolName symbol) {
         String canonical = symbol.canonicalName();
         List<EntityIdentity> ids = projectIdsByCanonical.get(canonical);
@@ -3120,34 +3981,92 @@ final class Extraction {
                 found = declarations.get(sorted.get(0));
             }
         }
-        if (found==null || duplicateDeclarations.contains(found.entity().identity())) throw new MappingFailure(SemanticStatus.UNSUPPORTED,"java.implicit-callable");
+        if (found == null || duplicateDeclarations.contains(found.entity().identity()))
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.implicit-callable");
         return found.entity();
     }
-    Entity sourceDeclaration(Entity expected){var value=declarations.get(expected.identity());if(value==null||duplicateDeclarations.contains(expected.identity())||!value.entity().equals(expected))throw new FrontendInputException("frontend.native-source-declaration","Correspondence does not match the actual handwritten declaration");return value.entity();}
-    Node sourceDeclarationNode(Entity entity){sourceDeclaration(entity);var matches=nodes.entrySet().stream().filter(e->e.getValue().equals(entity)).map(Map.Entry::getKey).toList();if(matches.size()!=1)throw new FrontendInputException("frontend.native-source-declaration","Correspondence source node is missing or ambiguous");return matches.getFirst();}
-    List<Entity> sourceMembers(JavaSymbolName type){return nodes.entrySet().stream().filter(e->{try{return typeNameOfOwner(e.getKey()).equals(type);}catch(RuntimeException absent){return false;}}).map(Map.Entry::getValue).filter(e->Set.of(EntityKind.FIELD,EntityKind.METHOD,EntityKind.CONSTRUCTOR).contains(e.kind())).distinct().toList();}
-    private JavaSymbolName typeNameOfOwner(Node node){return name(enclosingType(node));}
-    boolean nativeOwner(TypeDeclaration<?> type){
-        if(nativeMembers==null||!nativeMembers.hasOwners())return false;
-        try{return nativeMembers.owns(name(type));}catch(RuntimeException unavailable){return false;}
+
+    Entity sourceDeclaration(Entity expected) {
+        var value = declarations.get(expected.identity());
+        if (value == null || duplicateDeclarations.contains(expected.identity()) || !value.entity().equals(expected))
+            throw new FrontendInputException("frontend.native-source-declaration",
+                    "Correspondence does not match the actual handwritten declaration");
+        return value.entity();
     }
-    JavaSymbolName callableName(ResolvedMethodLikeDeclaration resolved){var parameters=new ArrayList<ErasedType>();for(int i=0;i<resolved.getNumberOfParams();i++)parameters.add(erased(resolved.getParam(i).getType(),new HashSet<>()));return resolved instanceof ResolvedConstructorDeclaration?JavaSymbolName.constructor(typeName(resolved.declaringType()),parameters):JavaSymbolName.method(typeName(resolved.declaringType()),resolved.getName(),parameters);}
-    Entity nativeDeclaration(JavaSymbolName symbol,EntityKind kind,JavaEvidenceMapping mapping){
-        var entity=Entity.create(EntityOrigin.PROJECT,EntityScope.project(request.module()),kind,symbol.canonicalName(),Optional.empty());
-        if(declarations.containsKey(entity.identity()))throw new FrontendInputException("frontend.native-member-conflict","An augmentation would overwrite an existing declaration");
-        var derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier("java.native-correspondence","m8.4-v1"),List.of(mapping.record().identity().value(),mapping.record().text("proof"),mapping.source().identity().value()));
-        declarations.put(entity.identity(),new DeclarationRecord(entity,mapping.spelling(),SemanticStatus.RESOLVED,derivation,List.of(),List.of()));
+
+    Node sourceDeclarationNode(Entity entity) {
+        sourceDeclaration(entity);
+        var matches = nodes.entrySet().stream().filter(e -> e.getValue().equals(entity)).map(Map.Entry::getKey)
+                .toList();
+        if (matches.size() != 1)
+            throw new FrontendInputException("frontend.native-source-declaration",
+                    "Correspondence source node is missing or ambiguous");
+        return matches.getFirst();
+    }
+
+    List<Entity> sourceMembers(JavaSymbolName type) {
+        return nodes.entrySet().stream().filter(e -> {
+            try {
+                return typeNameOfOwner(e.getKey()).equals(type);
+            } catch (RuntimeException absent) {
+                return false;
+            }
+        }).map(Map.Entry::getValue)
+                .filter(e -> Set.of(EntityKind.FIELD, EntityKind.METHOD, EntityKind.CONSTRUCTOR).contains(e.kind()))
+                .distinct().toList();
+    }
+
+    private JavaSymbolName typeNameOfOwner(Node node) {
+        return name(enclosingType(node));
+    }
+
+    boolean nativeOwner(TypeDeclaration<?> type) {
+        if (nativeMembers == null || !nativeMembers.hasOwners())
+            return false;
+        try {
+            return nativeMembers.owns(name(type));
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
+    }
+
+    JavaSymbolName callableName(ResolvedMethodLikeDeclaration resolved) {
+        var parameters = new ArrayList<ErasedType>();
+        for (int i = 0; i < resolved.getNumberOfParams(); i++)
+            parameters.add(erased(resolved.getParam(i).getType(), new HashSet<>()));
+        return resolved instanceof ResolvedConstructorDeclaration
+                ? JavaSymbolName.constructor(typeName(resolved.declaringType()), parameters)
+                : JavaSymbolName.method(typeName(resolved.declaringType()), resolved.getName(), parameters);
+    }
+
+    Entity nativeDeclaration(JavaSymbolName symbol, EntityKind kind, JavaEvidenceMapping mapping) {
+        var entity = Entity.create(EntityOrigin.PROJECT, EntityScope.project(request.module()), kind,
+                symbol.canonicalName(), Optional.empty());
+        if (declarations.containsKey(entity.identity()))
+            throw new FrontendInputException("frontend.native-member-conflict",
+                    "An augmentation would overwrite an existing declaration");
+        var derivation = new Derivation(DerivationKind.DERIVED,
+                new VersionedIdentifier("java.native-correspondence", "m8.4-v1"),
+                List.of(mapping.record().identity().value(), mapping.record().text("proof"),
+                        mapping.source().identity().value()));
+        declarations.put(entity.identity(), new DeclarationRecord(entity, mapping.spelling(), SemanticStatus.RESOLVED,
+                derivation, List.of(), List.of()));
         recordProjectCanonical(entity);
         return entity;
     }
-    record JavaEvidenceMapping(com.evolution.analysis.javaevidence.JavaEvidenceRecord record,Entity source,String spelling){}
+
+    record JavaEvidenceMapping(com.evolution.analysis.javaevidence.JavaEvidenceRecord record, Entity source,
+            String spelling) {
+    }
+
     private Entity reactorImplicit(JavaSymbolName symbol, EntityKind kind, Node ownerNode,
             Node evidenceNode, String spelling, String rule) {
         Entity owner = entity(ownerNode);
         Entity evidence = entity(evidenceNode);
         var identity = EntityIdentity.from(EntityOrigin.PROJECT, owner.stableScope(), kind, symbol.canonicalName());
         var prior = declarations.get(identity);
-        if (prior != null) return prior.entity();
+        if (prior != null)
+            return prior.entity();
         var member = Entity.create(EntityOrigin.PROJECT, owner.stableScope(), kind,
                 symbol.canonicalName(), Optional.empty());
         var derivation = new Derivation(DerivationKind.DERIVED,
@@ -3157,6 +4076,7 @@ final class Extraction {
         recordProjectCanonical(member);
         return member;
     }
+
     private void warnDuplicateExternal(String qualifiedName) {
         if (environment.duplicateExternal(qualifiedName) && duplicateTypeWarnings.add(qualifiedName)) {
             diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.duplicate-binary-type",
@@ -3164,123 +4084,179 @@ final class Extraction {
                     Map.of("type", qualifiedName)));
         }
     }
+
     Entity implicit(JavaSymbolName symbol, EntityKind kind, Node input, String rule) {
-        return implicit(symbol,kind,entity(input),input,rule);
+        return implicit(symbol, kind, entity(input), input, rule);
     }
+
     Entity implicit(JavaSymbolName symbol, EntityKind kind, Entity owner, Node input, String rule) {
-        var evidence=entity(input);
-        var identity=EntityIdentity.from(EntityOrigin.PROJECT,EntityScope.project(request.module()),kind,symbol.canonicalName());
-        if (declarations.containsKey(identity)) return existing(symbol);
-        var derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier(rule,"1"),List.of(evidence.identity().value()));
-        var result=register(symbol,kind,Optional.empty(),"",derivation);
-        derive(owner,result,"declares",input,rule);
+        var evidence = entity(input);
+        var identity = EntityIdentity.from(EntityOrigin.PROJECT, EntityScope.project(request.module()), kind,
+                symbol.canonicalName());
+        if (declarations.containsKey(identity))
+            return existing(symbol);
+        var derivation = new Derivation(DerivationKind.DERIVED, new VersionedIdentifier(rule, "1"),
+                List.of(evidence.identity().value()));
+        var result = register(symbol, kind, Optional.empty(), "", derivation);
+        derive(owner, result, "declares", input, rule);
         return result;
     }
+
     void derive(Entity owner, Entity target, String category, Node input, String rule) {
-        var evidence=entity(input);
-        var derivation=new Derivation(DerivationKind.DERIVED,new VersionedIdentifier(rule,"1"),List.of(evidence.identity().value()));
-        var rec = new DerivedRelationshipRecord(SemanticRelationship.create(owner.identity(),new RelationshipKind("java."+category),new RelationshipTarget.Resolved(target.identity())),
-                SemanticStatus.RESOLVED,derivation,List.of(source(input).span(input)),List.of(),List.of());
+        var evidence = entity(input);
+        var derivation = new Derivation(DerivationKind.DERIVED, new VersionedIdentifier(rule, "1"),
+                List.of(evidence.identity().value()));
+        var rec = new DerivedRelationshipRecord(
+                SemanticRelationship.create(owner.identity(), new RelationshipKind("java." + category),
+                        new RelationshipTarget.Resolved(target.identity())),
+                SemanticStatus.RESOLVED, derivation, List.of(source(input).span(input)), List.of(), List.of());
         derived.add(rec);
-        if (activeUnitDerived != null) activeUnitDerived.add(rec);
+        if (activeUnitDerived != null)
+            activeUnitDerived.add(rec);
     }
+
     void implicitFailure(Node node, RuntimeException failure) {
-        var problem=diagnostic("java.implicit-member-incomplete",failureStatus(failure),Optional.of(source(node).span(node)));
-        unit(node).diagnostics.add(problem); diagnostics.add(problem);
+        var problem = diagnostic("java.implicit-member-incomplete", failureStatus(failure),
+                Optional.of(source(node).span(node)));
+        unit(node).diagnostics.add(problem);
+        diagnostics.add(problem);
     }
-    boolean isImplicit(Entity entity) { return declarations.get(entity.identity()).derivation().kind()==DerivationKind.DERIVED; }
+
+    boolean isImplicit(Entity entity) {
+        return declarations.get(entity.identity()).derivation().kind() == DerivationKind.DERIVED;
+    }
+
     boolean hasDeclaration(JavaSymbolName name) {
         String canonical = name.canonicalName();
         List<EntityIdentity> ids = projectIdsByCanonical.get(canonical);
-        if (ids == null || ids.isEmpty()) return false;
+        if (ids == null || ids.isEmpty())
+            return false;
         var scope = EntityScope.project(request.module());
         for (var id : ids) {
             var d = declarations.get(id);
-            if (d != null && d.entity().stableScope().equals(scope)) return true;
+            if (d != null && d.entity().stableScope().equals(scope))
+                return true;
         }
         return false;
     }
+
     LombokConfig.Effective lombokConfig(Node node) {
         if (lombokConfig == null) {
             lombokConfig = LombokConfig.from(request);
         }
-        if (lombokConfig.isEmpty()) return LombokConfig.Effective.DEFAULT;
+        if (lombokConfig.isEmpty())
+            return LombokConfig.Effective.DEFAULT;
         return lombokConfig.forDocumentPath(unit(node).input.document().path());
     }
+
     boolean hasLombokConfiguration(Node node) {
         return lombokConfig(node).requiresConfigurationGap(true, true, true, true);
     }
-    boolean isLombok(Entity entity,String name) {
-        if(entity.origin()!=EntityOrigin.DEPENDENCY)return false;
+
+    boolean isLombok(Entity entity, String name) {
+        if (entity.origin() != EntityOrigin.DEPENDENCY)
+            return false;
         String canonical = JavaTypeName.fromCanonical(entity.canonicalName())
                 .map(JavaTypeName::qualifiedName)
                 .orElse("");
-        if(!canonical.equals(name) && !canonical.replace('$', '.').equals(name))return false;
-        return request.dependencies().stream().anyMatch(b->environment.isVerifiedLombokArtifact(b)
-                &&entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,b.originEntry().logicalName(),b.originEntry().contentDigest())));
+        if (!canonical.equals(name) && !canonical.replace('$', '.').equals(name))
+            return false;
+        return request.dependencies().stream().anyMatch(b -> environment.isVerifiedLombokArtifact(b)
+                && entity.stableScope().equals(EntityScope.external(EntityOrigin.DEPENDENCY,
+                        b.originEntry().logicalName(), b.originEntry().contentDigest())));
     }
-    boolean isSourceRecoveryLombok(AnnotationExpr annotation,String name) {
-        return request.sourceRecovery()&&!environment.hasAnyLombokClassInDependencies()&&LombokCandidates.isLombok(annotation,name,sourceTypeNames);
+
+    boolean isSourceRecoveryLombok(AnnotationExpr annotation, String name) {
+        return request.sourceRecovery() && !environment.hasAnyLombokClassInDependencies()
+                && LombokCandidates.isLombok(annotation, name, sourceTypeNames);
     }
-    void synthesisGap(Node node,String code) {
-        var problem=new Diagnostic(DiagnosticSeverity.WARNING,code,"Generated-member evidence is incomplete",Optional.of(source(node).span(node)),Map.of());
-        unit(node).diagnostics.add(problem);diagnostics.add(problem);
+
+    void synthesisGap(Node node, String code) {
+        var problem = new Diagnostic(DiagnosticSeverity.WARNING, code, "Generated-member evidence is incomplete",
+                Optional.of(source(node).span(node)), Map.of());
+        unit(node).diagnostics.add(problem);
+        diagnostics.add(problem);
     }
+
     private void recordDirectTypes(List<TypeUseRecord> unitTypes) {
         for (var use : unitTypes) {
             use.owner().ifPresent(id -> directTypesByOwner.computeIfAbsent(id, k -> new ArrayList<>(2)).add(use));
         }
     }
-    void derivedMemberTypes(Node input,Entity target,String role,String rule) {
-        var inputId=entity(input).identity();
+
+    void derivedMemberTypes(Node input, Entity target, String role, String rule) {
+        var inputId = entity(input).identity();
         var owned = directTypesByOwner.get(inputId);
-        if (owned == null || owned.isEmpty()) return;
+        if (owned == null || owned.isEmpty())
+            return;
         for (var use : List.copyOf(owned)) {
-            var derivedUse = new TypeUseRecord(Optional.of(target.identity()),new RelationshipKind("java."+role),use.span(),use.type(),use.variadic());
+            var derivedUse = new TypeUseRecord(Optional.of(target.identity()), new RelationshipKind("java." + role),
+                    use.span(), use.type(), use.variadic());
             types.add(derivedUse);
             directTypesByOwner.computeIfAbsent(target.identity(), k -> new ArrayList<>(2)).add(derivedUse);
-            for(var id:use.type().referencedEntities())derive(target,declarations.get(id).entity(),role,input,rule);
+            for (var id : use.type().referencedEntities())
+                derive(target, declarations.get(id).entity(), role, input, rule);
         }
     }
+
     void derivedComponentTypes(Parameter component, Entity target, String role) {
-        derivedMemberTypes(component,target,role,"java.record-component-type");
+        derivedMemberTypes(component, target, role, "java.record-component-type");
     }
+
     Entity enumConstructor(EnumConstantDeclaration constant) {
-        var type=(EnumDeclaration)constant.getParentNode().orElseThrow();
-        var selected=com.github.javaparser.resolution.logic.ConstructorResolutionLogic.findMostApplicable(type.resolve().getConstructors(),
-                constant.getArguments().stream().map(Expression::calculateResolvedType).toList(),activeSolver);
-        if (!selected.isSolved()) throw new UnsolvedSymbolException("enum constructor");
-        var target=callable(selected.getCorrespondingDeclaration());
-        if (constant.getClassBody().isEmpty()) return target;
-        var parameters=new ArrayList<ErasedType>();
-        for (int i=0;i<selected.getCorrespondingDeclaration().getNumberOfParams();i++) parameters.add(erased(selected.getCorrespondingDeclaration().getParam(i).getType(),new HashSet<>()));
-        var anonymous=implicit(JavaSymbolName.constructor(typeOwnerName(constant),parameters),EntityKind.CONSTRUCTOR,enumBody(constant),constant,"java.enum-anonymous-constructor");
-        derive(anonymous,target,"constructor-calls",constant,"java.enum-anonymous-super");
+        var type = (EnumDeclaration) constant.getParentNode().orElseThrow();
+        var selected = com.github.javaparser.resolution.logic.ConstructorResolutionLogic.findMostApplicable(
+                type.resolve().getConstructors(),
+                constant.getArguments().stream().map(Expression::calculateResolvedType).toList(), activeSolver);
+        if (!selected.isSolved())
+            throw new UnsolvedSymbolException("enum constructor");
+        var target = callable(selected.getCorrespondingDeclaration());
+        if (constant.getClassBody().isEmpty())
+            return target;
+        var parameters = new ArrayList<ErasedType>();
+        for (int i = 0; i < selected.getCorrespondingDeclaration().getNumberOfParams(); i++)
+            parameters.add(erased(selected.getCorrespondingDeclaration().getParam(i).getType(), new HashSet<>()));
+        var anonymous = implicit(JavaSymbolName.constructor(typeOwnerName(constant), parameters),
+                EntityKind.CONSTRUCTOR, enumBody(constant), constant, "java.enum-anonymous-constructor");
+        derive(anonymous, target, "constructor-calls", constant, "java.enum-anonymous-super");
         return anonymous;
     }
+
     Entity typeUseOwner(Node node) {
-        for (Node parent=node.getParentNode().orElse(null); parent!=null; parent=parent.getParentNode().orElse(null))
-            if (parent instanceof Parameter parameter && !(parameter.getParentNode().orElse(null) instanceof CallableDeclaration<?> || parameter.getParentNode().orElse(null) instanceof RecordDeclaration)) return owner(parameter);
+        for (Node parent = node.getParentNode().orElse(null); parent != null; parent = parent.getParentNode()
+                .orElse(null))
+            if (parent instanceof Parameter parameter
+                    && !(parameter.getParentNode().orElse(null) instanceof CallableDeclaration<?>
+                            || parameter.getParentNode().orElse(null) instanceof RecordDeclaration))
+                return owner(parameter);
         return owner(node);
     }
+
     void annotation(AnnotationExpr node, Node declaration, String site) {
-        annotation(node,declaration,site,true);
+        annotation(node, declaration, site, true);
     }
+
     void annotation(AnnotationExpr node, Node declaration, String site, boolean direct) {
         Supplier<Entity> source = declaration == null ? () -> typeUseOwner(node) : () -> entity(declaration);
-        if (direct) observe(node,"annotated-with",() -> typeEntity(resolveAnnotation(node)),source);
-        observe(node.getName(),"type-uses",() -> typeEntity(resolveAnnotation(node)),source);
+        if (direct)
+            observe(node, "annotated-with", () -> typeEntity(resolveAnnotation(node)), source);
+        observe(node.getName(), "type-uses", () -> typeEntity(resolveAnnotation(node)), source);
         try {
             var entity = source.get();
             var symbol = declaration == null ? ownerName(node) : name(declaration);
-            var key = JavaSymbolName.annotationUse(symbol,unit(node).input.document().identity(),unit(node).source.start(node));
-            annotations.add(new AnnotationUseRecord(key.canonicalName(),entity.identity(),unit(node).source.span(node),site,unit(node).source.slice(unit(node).source.span(node))));
-        } catch (RuntimeException failure) { /* Missing owner remains in the observation ledger. */ }
+            var key = JavaSymbolName.annotationUse(symbol, unit(node).input.document().identity(),
+                    unit(node).source.start(node));
+            annotations.add(new AnnotationUseRecord(key.canonicalName(), entity.identity(),
+                    unit(node).source.span(node), site, unit(node).source.slice(unit(node).source.span(node))));
+        } catch (RuntimeException failure) {
+            /* Missing owner remains in the observation ledger. */ }
     }
+
     private ResolvedReferenceTypeDeclaration resolveAnnotation(AnnotationExpr node) {
         Object cached = unitAnnotationCache.get(node);
         if (cached != null) {
-            if (cached instanceof ResolvedReferenceTypeDeclaration resolved) return resolved;
+            if (cached instanceof ResolvedReferenceTypeDeclaration resolved)
+                return resolved;
             throw (RuntimeException) cached;
         }
         try {
@@ -3292,6 +4268,7 @@ final class Extraction {
             throw failure;
         }
     }
+
     private ResolvedReferenceTypeDeclaration resolveAnnotationUncached(AnnotationExpr node) {
         try {
             return node.resolve();
@@ -3302,85 +4279,137 @@ final class Extraction {
                 for (var imp : cu.getImports()) {
                     if (!imp.isStatic() && !imp.isAsterisk() && imp.getName().getIdentifier().equals(simple)) {
                         var solved = activeSolver.tryToSolveType(imp.getNameAsString());
-                        if (solved.isSolved()) return solved.getCorrespondingDeclaration();
+                        if (solved.isSolved())
+                            return solved.getCorrespondingDeclaration();
                     }
                 }
                 for (var imp : cu.getImports()) {
                     if (!imp.isStatic() && imp.isAsterisk()) {
                         var solved = activeSolver.tryToSolveType(imp.getNameAsString() + "." + simple);
-                        if (solved.isSolved()) return solved.getCorrespondingDeclaration();
+                        if (solved.isSolved())
+                            return solved.getCorrespondingDeclaration();
                     }
                 }
             }
             throw new UnsolvedSymbolException(simple);
         }
     }
+
     static SemanticStatus failureStatus(Throwable failure) {
-        if (failure instanceof MappingFailure mapping) return mapping.status;
-        if (failure instanceof UnsolvedSymbolException) return SemanticStatus.UNRESOLVED;
-        if (failure instanceof UnsupportedOperationException) return SemanticStatus.UNSUPPORTED;
-        if (providerInferenceCollision(failure)) return SemanticStatus.UNSUPPORTED;
-        return failure.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
+        if (failure instanceof MappingFailure mapping)
+            return mapping.status;
+        if (failure instanceof UnsolvedSymbolException)
+            return SemanticStatus.UNRESOLVED;
+        if (failure instanceof UnsupportedOperationException)
+            return SemanticStatus.UNSUPPORTED;
+        if (providerInferenceCollision(failure))
+            return SemanticStatus.UNSUPPORTED;
+        return failure.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS
+                : SemanticStatus.ERROR;
     }
+
     private static boolean providerInferenceCollision(Throwable failure) {
         // Pinned parser's name-keyed inference can conflate unrelated T parameters.
         // Recognize only its specific failure site; retain the observation as an
         // explicit provider capability gap, without choosing an equivalent type.
-        if(!(failure instanceof IllegalStateException)||failure.getMessage()==null||!failure.getMessage().startsWith("Equivalent types are: "))return false;
-        var frames=failure.getStackTrace();return frames.length>0&&frames[0].getClassName().equals("com.github.javaparser.resolution.logic.InferenceVariableType")&&frames[0].getMethodName().equals("equivalentType");
+        if (!(failure instanceof IllegalStateException) || failure.getMessage() == null
+                || !failure.getMessage().startsWith("Equivalent types are: "))
+            return false;
+        var frames = failure.getStackTrace();
+        return frames.length > 0
+                && frames[0].getClassName().equals("com.github.javaparser.resolution.logic.InferenceVariableType")
+                && frames[0].getMethodName().equals("equivalentType");
     }
 
     private Unit unit(Node node) {
-        var cu = node.findCompilationUnit().orElseThrow(() -> new MappingFailure(SemanticStatus.ERROR, "java.source-membership"));
+        var cu = node.findCompilationUnit()
+                .orElseThrow(() -> new MappingFailure(SemanticStatus.ERROR, "java.source-membership"));
         var unit = units.get(cu);
-        if (unit == null) throw new MappingFailure(SemanticStatus.ERROR, "java.source-membership");
+        if (unit == null)
+            throw new MappingFailure(SemanticStatus.ERROR, "java.source-membership");
         return unit;
     }
+
     private void unsupported(Node node, String category) {
-        observe(node, category, () -> { throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.category-unsupported"); }, () -> owner(node));
+        observe(node, category, () -> {
+            throw new MappingFailure(SemanticStatus.UNSUPPORTED, "java.category-unsupported");
+        }, () -> owner(node));
     }
+
     void observe(Node node, String category, Supplier<Entity> targetSupplier, Supplier<Entity> ownerSupplier) {
-        if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
-        var unit = unit(node); Optional<SourceSpan> span; Throwable spanFailure = null;
-        try { span = Optional.of(unit.source.span(node)); }
-        catch (RuntimeException exception) { span = Optional.empty(); spanFailure = exception; }
-        Entity source = null, target = null; SemanticStatus status = SemanticStatus.RESOLVED;
+        if (Thread.currentThread().isInterrupted())
+            throw new java.util.concurrent.CancellationException();
+        var unit = unit(node);
+        Optional<SourceSpan> span;
+        Throwable spanFailure = null;
+        try {
+            span = Optional.of(unit.source.span(node));
+        } catch (RuntimeException exception) {
+            span = Optional.empty();
+            spanFailure = exception;
+        }
+        Entity source = null, target = null;
+        SemanticStatus status = SemanticStatus.RESOLVED;
         var local = new ArrayList<Diagnostic>();
         try {
             source = observableDeclaration(ownerSupplier.get());
             target = observableDeclaration(targetSupplier.get());
+        } catch (UnsolvedSymbolException exception) {
+            status = SemanticStatus.UNRESOLVED;
+            local.add(diagnostic("java.unresolved", status, span));
+        } catch (MappingFailure failure) {
+            status = failure.status;
+            local.add(diagnostic(failure.code, status, span));
+        } catch (UnsupportedOperationException exception) {
+            status = SemanticStatus.UNSUPPORTED;
+            local.add(diagnostic("java.adapter-unsupported", status, span));
+        } catch (RuntimeException | LinkageError | StackOverflowError exception) {
+            boolean inferenceCollision = providerInferenceCollision(exception);
+            status = inferenceCollision ? SemanticStatus.UNSUPPORTED
+                    : exception.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS
+                            : SemanticStatus.ERROR;
+            local.add(new Diagnostic(
+                    status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING,
+                    inferenceCollision ? "java.parser-inference-collision"
+                            : status == SemanticStatus.ERROR ? "java.adapter-error" : "java.ambiguous",
+                    "Attribution did not produce a safely mapped fact", span,
+                    Map.of("exception", exception.getClass().getName())));
         }
-        catch (UnsolvedSymbolException exception) { status = SemanticStatus.UNRESOLVED; local.add(diagnostic("java.unresolved", status, span)); }
-        catch (MappingFailure failure) { status = failure.status; local.add(diagnostic(failure.code, status, span)); }
-        catch (UnsupportedOperationException exception) { status = SemanticStatus.UNSUPPORTED; local.add(diagnostic("java.adapter-unsupported", status, span)); }
-        catch (RuntimeException | LinkageError | StackOverflowError exception) {
-            boolean inferenceCollision=providerInferenceCollision(exception);
-            status = inferenceCollision?SemanticStatus.UNSUPPORTED:exception.getClass().getSimpleName().equals("MethodAmbiguityException") ? SemanticStatus.AMBIGUOUS : SemanticStatus.ERROR;
-            local.add(new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING,
-                    inferenceCollision?"java.parser-inference-collision":status == SemanticStatus.ERROR ? "java.adapter-error" : "java.ambiguous", "Attribution did not produce a safely mapped fact", span, Map.of("exception", exception.getClass().getName())));
-        }
-        if (span.isEmpty()) local.add(missingSpanDiagnostic(node, spanFailure));
+        if (span.isEmpty())
+            local.add(missingSpanDiagnostic(node, spanFailure));
         Optional<OccurrenceIdentity> mapped = Optional.empty();
         String reference = span.map(s -> compactSourceSlice(node, unit.source.slice(s))).orElse("");
-        if (source != null && span.isPresent() && status != SemanticStatus.AMBIGUOUS && (target != null || !category.equals("declares"))) {
-            RelationshipTarget targetState = target == null ? new RelationshipTarget.Unresolved("java:source:" + unit.input.document().identity().value() + ":" + unit.source.start(node)) : new RelationshipTarget.Resolved(target.identity());
-            var relation = SemanticRelationship.create(source.identity(), new RelationshipKind("java." + category), targetState);
-            var uncertainty = status == SemanticStatus.RESOLVED ? List.<Uncertainty>of() : List.of(new Uncertainty("java.attribution", "Attribution remains incomplete", List.of("verified declaration binding")));
-            var occurrence = RelationshipOccurrence.create(relation, span.orElseThrow(), 0, status, DIRECT, uncertainty, local);
+        if (source != null && span.isPresent() && status != SemanticStatus.AMBIGUOUS
+                && (target != null || !category.equals("declares"))) {
+            RelationshipTarget targetState = target == null
+                    ? new RelationshipTarget.Unresolved(
+                            "java:source:" + unit.input.document().identity().value() + ":" + unit.source.start(node))
+                    : new RelationshipTarget.Resolved(target.identity());
+            var relation = SemanticRelationship.create(source.identity(), new RelationshipKind("java." + category),
+                    targetState);
+            var uncertainty = status == SemanticStatus.RESOLVED ? List.<Uncertainty>of()
+                    : List.of(new Uncertainty("java.attribution", "Attribution remains incomplete",
+                            List.of("verified declaration binding")));
+            var occurrence = RelationshipOccurrence.create(relation, span.orElseThrow(), 0, status, DIRECT, uncertainty,
+                    local);
             if (occurrences.putIfAbsent(occurrence.identity(), occurrence) == null) {
                 mapped = Optional.of(occurrence.identity());
-                if (activeUnitOccurrences != null) activeUnitOccurrences.add(occurrence);
+                if (activeUnitOccurrences != null)
+                    activeUnitOccurrences.add(occurrence);
                 if (category.equals("calls") && status == SemanticStatus.RESOLVED) {
                     resolvedCallsByDoc
                             .computeIfAbsent(unit.input.document().identity(), k -> new HashMap<>())
                             .put(occurrence.span(), occurrence);
                 }
-            }
-            else local.add(diagnostic("java.duplicate-fact", SemanticStatus.ERROR, span));
+            } else
+                local.add(diagnostic("java.duplicate-fact", SemanticStatus.ERROR, span));
         }
-        if (mapped.isEmpty() && local.isEmpty()) local.add(diagnostic("java.mapping", SemanticStatus.ERROR, span));
-        unit.diagnostics.addAll(local); diagnostics.addAll(local);
-        observations.add(new ObservationRecord(unit.input.document().identity(), new RelationshipKind("java." + category), span, status,
+        if (mapped.isEmpty() && local.isEmpty())
+            local.add(diagnostic("java.mapping", SemanticStatus.ERROR, span));
+        unit.diagnostics.addAll(local);
+        diagnostics.addAll(local);
+        observations.add(new ObservationRecord(unit.input.document().identity(),
+                new RelationshipKind("java." + category), span, status,
                 target != null ? ObservationRecord.EvidenceState.VERIFIED : ObservationRecord.EvidenceState.MISSING,
                 span.isPresent() ? ObservationRecord.EvidenceState.VERIFIED : ObservationRecord.EvidenceState.MISSING,
                 mapped, reference, local));
@@ -3389,28 +4418,35 @@ final class Extraction {
     int reextractedUnitCount() {
         return reextractedUnitCount;
     }
+
     private void collectDeclarationIfPresent(
             List<DeclarationRecord> list, Set<EntityIdentity> seen, EntityIdentity id) {
         if (id != null && seen.add(id)) {
             var rec = declarations.get(id);
-            if (rec != null) list.add(rec);
+            if (rec != null)
+                list.add(rec);
         }
     }
+
     private Entity observableDeclaration(Entity entity) {
         if (entity != null && duplicateDeclarations.contains(entity.identity()))
             throw new MappingFailure(SemanticStatus.ERROR, "java.duplicate-declaration");
         return entity;
     }
+
     private static Diagnostic diagnostic(String code, SemanticStatus status, Optional<SourceSpan> span) {
-        return new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING, code,
+        return new Diagnostic(status == SemanticStatus.ERROR ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARNING,
+                code,
                 "Semantic observation requires additional evidence or support", span, Map.of());
     }
+
     static Diagnostic missingSpanDiagnostic(Node node, Throwable failure) {
         return new Diagnostic(DiagnosticSeverity.ERROR, "java.missing-span",
                 "Semantic observation has no verified source coordinates; the deterministic AST path preserves its denominator entry",
                 Optional.empty(), Map.of("astPath", astPath(node), "nodeType", node.getClass().getName(),
                         "failure", failure == null ? "unknown" : failure.getClass().getName()));
     }
+
     static String astPath(Node node) {
         var indexes = new ArrayList<Integer>();
         Node child = node;
@@ -3419,10 +4455,15 @@ final class Extraction {
             int index = -1;
             var children = parent.getChildNodes();
             for (int candidate = 0; candidate < children.size(); candidate++) {
-                if (children.get(candidate) == child) { index = candidate; break; }
+                if (children.get(candidate) == child) {
+                    index = candidate;
+                    break;
+                }
             }
-            if (index < 0) throw new IllegalArgumentException("AST parent does not own child");
-            indexes.add(index); child = parent;
+            if (index < 0)
+                throw new IllegalArgumentException("AST parent does not own child");
+            indexes.add(index);
+            child = parent;
         }
         Collections.reverse(indexes);
         return child.getClass().getName() + indexes.stream().map(String::valueOf)

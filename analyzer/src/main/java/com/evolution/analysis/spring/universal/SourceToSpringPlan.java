@@ -113,6 +113,14 @@ public final class SourceToSpringPlan {
                 public SymbolicEvaluation evaluateSymbolic(ConfigurationSpace space, ConfigurationAssignment baseline,
                                 TruthRegionEvaluation.Limits limits, ContentDigest evaluatorArtifact, int maxSignatures,
                                 SymbolicConfiguration.Limits symbolicLimits) {
+                        return evaluateSymbolic(space, baseline, limits, evaluatorArtifact, maxSignatures,
+                                        symbolicLimits,
+                                        Boolean.parseBoolean(System.getProperty("evo.spring.verifyWitnessReplay", "true")));
+                }
+
+                public SymbolicEvaluation evaluateSymbolic(ConfigurationSpace space, ConfigurationAssignment baseline,
+                                TruthRegionEvaluation.Limits limits, ContentDigest evaluatorArtifact, int maxSignatures,
+                                SymbolicConfiguration.Limits symbolicLimits, boolean verifyWitnessReplay) {
                         if (!space.buildContext().identity()
                                         .equals(binding.registrationPlan().discoveryPlan().buildContext().identity()))
                                 throw new IllegalArgumentException(
@@ -125,7 +133,7 @@ public final class SourceToSpringPlan {
                                                                         conditions.semantics(), baseline,
                                                                         SatConfigurationReasoner.INSTANCE, limits,
                                                                         evaluatorArtifact),
-                                                        maxSignatures, symbolicLimits));
+                                                        maxSignatures, symbolicLimits, verifyWitnessReplay));
                 }
         }
 
@@ -347,10 +355,25 @@ public final class SourceToSpringPlan {
                 var methods = BeanMethodIngestion.acquire(build, source, containerKey, byDeclaration,
                                 acquisitionIssues);
                 methods.forEach((id, method) -> byDeclaration.put(id, method.candidate()));
+                var raw = new HashMap<ContentDigest, SpringMechanismInventory.RawObservation>();
+                inventory.rawObservations().forEach(r -> raw.put(r.identity(), r));
+                var attached = new HashMap<EntityIdentity, List<RegistrationEvent.ConditionUse>>();
+                for (var row : lowering.rows())
+                        row.occurrence().ifPresent(occurrence -> raw.get(row.rawObservation()).owner()
+                                        .ifPresent(owner -> attached.computeIfAbsent(owner, k -> new ArrayList<>())
+                                                        .add(new RegistrationEvent.ConditionUse(occurrence.identity(),
+                                                                        BeanConditionLowering.predicate(inventory,
+                                                                                        lowering, occurrence.identity())
+                                                                                        .isPresent()
+                                                                                                        ? RegistrationEvent.RequiredPhase.REGISTER_BEAN
+                                                                                                        : RegistrationEvent.RequiredPhase.ORDINARY,
+                                                                        occurrence.declarationEvidenceKey()))));
                 Scope scope = autoScoped
                                 ? new Scope(autoContainer, source.identity(),
                                                 deriveSourceScopedOrder(source, byDeclaration, methods),
-                                                COMPLETE, COMPLETE, COMPLETE, COMPLETE, COMPLETE,
+                                                hasAmbiguousBeanStateOrder(source, byDeclaration, methods, inventory,
+                                                                raw, attached) ? UNKNOWN : COMPLETE,
+                                                COMPLETE, COMPLETE, COMPLETE, COMPLETE,
                                                 generation.overridePolicy() == FrameworkGeneration.OverridePolicy.ALLOW
                                                                 ? RegistrationPlan.OverridePolicy.ALLOW
                                                                 : RegistrationPlan.OverridePolicy.FORBID,
@@ -381,19 +404,6 @@ public final class SourceToSpringPlan {
                                 && !new HashSet<>(scope.registrationOrder()).equals(byDeclaration.keySet()))
                         throw new IllegalArgumentException(
                                         "Order must reference exactly the acquired component/bean-method inventory when complete");
-                var raw = new HashMap<ContentDigest, SpringMechanismInventory.RawObservation>();
-                inventory.rawObservations().forEach(r -> raw.put(r.identity(), r));
-                var attached = new HashMap<EntityIdentity, List<RegistrationEvent.ConditionUse>>();
-                for (var row : lowering.rows())
-                        row.occurrence().ifPresent(occurrence -> raw.get(row.rawObservation()).owner()
-                                        .ifPresent(owner -> attached.computeIfAbsent(owner, k -> new ArrayList<>())
-                                                        .add(new RegistrationEvent.ConditionUse(occurrence.identity(),
-                                                                        BeanConditionLowering.predicate(inventory,
-                                                                                        lowering, occurrence.identity())
-                                                                                        .isPresent()
-                                                                                                        ? RegistrationEvent.RequiredPhase.REGISTER_BEAN
-                                                                                                        : RegistrationEvent.RequiredPhase.ORDINARY,
-                                                                        occurrence.declarationEvidenceKey()))));
                 // A direct, unconditional scan obligation is realized by the component
                 // membership
                 // evidence already acquired above. Conditional/custom scan drivers stay
@@ -809,31 +819,256 @@ public final class SourceToSpringPlan {
                                 List.copyOf(methodSelections.values()));
         }
 
+        private enum OrderRankState { EXPLICIT, ABSENT, UNPARSEABLE }
+
+        private record ParsedOrder(OrderRankState state, int value) {
+                static final ParsedOrder ABSENT = new ParsedOrder(OrderRankState.ABSENT, Integer.MAX_VALUE);
+                static final ParsedOrder UNPARSEABLE = new ParsedOrder(OrderRankState.UNPARSEABLE, Integer.MAX_VALUE);
+
+                static ParsedOrder explicit(int value) {
+                        return new ParsedOrder(OrderRankState.EXPLICIT, value);
+                }
+        }
+
+        private record OrderTier(boolean beanMethod, int primaryOrder, int secondaryOrder) {
+        }
+
         private static List<EntityIdentity> deriveSourceScopedOrder(
                         SpringSourceEvidence source,
                         Map<EntityIdentity, BeanDefinitionCandidate> byDeclaration,
                         Map<EntityIdentity, BeanMethodIngestion.Method> methods) {
+                var tiers = new HashMap<EntityIdentity, OrderTier>(byDeclaration.size() * 2);
+                for (var id : byDeclaration.keySet()) {
+                        tiers.put(id, orderTier(source, id, methods));
+                }
                 return byDeclaration.keySet().stream()
                                 .sorted(Comparator
-                                                .comparingInt((EntityIdentity id) -> methods.containsKey(id) ? 1 : 0)
-                                                .thenComparingInt(id -> annotationOrder(source, id))
+                                                .comparingInt((EntityIdentity id) -> tiers.get(id).beanMethod() ? 1 : 0)
+                                                .thenComparingInt(id -> tiers.get(id).primaryOrder())
+                                                .thenComparingInt(id -> tiers.get(id).secondaryOrder())
                                                 .thenComparing(EntityIdentity::value))
                                 .toList();
         }
 
-        private static int annotationOrder(SpringSourceEvidence source, EntityIdentity id) {
-                for (var ann : source.annotations(id)) {
-                        if (ann.name().filter("org.springframework.core.annotation.Order"::equals).isPresent()) {
-                                try {
-                                        var attrs = LiteralConditionAnnotation.parse(ann.use().spelling());
-                                        String raw = LiteralConditionAnnotation.string(attrs, "value", "");
-                                        if (!raw.isBlank())
-                                                return Integer.parseInt(raw.trim());
-                                } catch (IllegalArgumentException ignored) {
-                                }
+        /**
+         * Soundness guard for source-scoped registration order: when any candidate carries
+         * a non-monotone {@code REGISTER_BEAN} bean-state condition ({@code @ConditionalOnBean},
+         * {@code @ConditionalOnMissingBean}, {@code @ConditionalOnSingleCandidate}), arbitrary
+         * identity-hash tie-breaking across equal or unspecified {@code @Order} tiers (or an
+         * unparseable {@code @Order} expression) is unsound and must fail closed to
+         * {@code order = UNKNOWN}.
+         */
+        private static boolean hasAmbiguousBeanStateOrder(
+                        SpringSourceEvidence source,
+                        Map<EntityIdentity, BeanDefinitionCandidate> byDeclaration,
+                        Map<EntityIdentity, BeanMethodIngestion.Method> methods,
+                        SpringMechanismInventory inventory,
+                        Map<ContentDigest, SpringMechanismInventory.RawObservation> raw,
+                        Map<EntityIdentity, List<RegistrationEvent.ConditionUse>> attached) {
+                var beanStateOwners = new HashSet<EntityIdentity>();
+                for (var id : byDeclaration.keySet()) {
+                        if (attached.getOrDefault(id, List.of()).stream()
+                                        .anyMatch(c -> c.requiredPhase() == RegistrationEvent.RequiredPhase.REGISTER_BEAN)) {
+                                beanStateOwners.add(id);
                         }
                 }
-                return Integer.MAX_VALUE;
+                for (var obligation : inventory.obligations()) {
+                        if (!"spring.condition.bean-state".equals(obligation.primaryMechanism())) continue;
+                        var obs = raw.get(obligation.rawObservationIdentity());
+                        if (obs != null) {
+                                obs.owner().filter(byDeclaration::containsKey).ifPresent(beanStateOwners::add);
+                        }
+                }
+                if (beanStateOwners.isEmpty()) {
+                        return false;
+                }
+                var tierCounts = new HashMap<OrderTier, Integer>(byDeclaration.size() * 2);
+                var tiersById = new HashMap<EntityIdentity, OrderTier>(byDeclaration.size() * 2);
+                for (var id : byDeclaration.keySet()) {
+                        var method = methods.get(id);
+                        ParsedOrder ownOrder = parseAnnotationOrder(source, id);
+                        if (ownOrder.state() == OrderRankState.UNPARSEABLE) {
+                                return true;
+                        }
+                        OrderTier tier;
+                        if (method == null) {
+                                tier = new OrderTier(false, ownOrder.value(), Integer.MAX_VALUE);
+                        } else {
+                                ParsedOrder ownerOrder = parseAnnotationOrder(source, method.owner());
+                                if (ownerOrder.state() == OrderRankState.UNPARSEABLE) {
+                                        return true;
+                                }
+                                tier = new OrderTier(true, ownerOrder.value(), ownOrder.value());
+                        }
+                        tiersById.put(id, tier);
+                        tierCounts.merge(tier, 1, Integer::sum);
+                }
+                for (var beanStateId : beanStateOwners) {
+                        if (tierCounts.getOrDefault(tiersById.get(beanStateId), 0) > 1) {
+                                return true;
+                        }
+                }
+                return false;
+        }
+
+        private static OrderTier orderTier(
+                        SpringSourceEvidence source,
+                        EntityIdentity id,
+                        Map<EntityIdentity, BeanMethodIngestion.Method> methods) {
+                var method = methods.get(id);
+                int own = parseAnnotationOrder(source, id).value();
+                if (method == null) {
+                        return new OrderTier(false, own, Integer.MAX_VALUE);
+                }
+                int owner = parseAnnotationOrder(source, method.owner()).value();
+                return new OrderTier(true, owner, own);
+        }
+
+        private static ParsedOrder parseAnnotationOrder(SpringSourceEvidence source, EntityIdentity id) {
+                ParsedOrder found = null;
+                for (var ann : source.annotations(id)) {
+                        if (ann.name().filter("org.springframework.core.annotation.Order"::equals).isPresent()) {
+                                if (found != null) {
+                                        return ParsedOrder.UNPARSEABLE;
+                                }
+                                found = parseOrderSpelling(ann.use().spelling());
+                        }
+                }
+                return found != null ? found : ParsedOrder.ABSENT;
+        }
+
+        private static ParsedOrder parseOrderSpelling(String spelling) {
+                if (spelling == null) return ParsedOrder.UNPARSEABLE;
+                int open = spelling.indexOf('(');
+                if (open < 0) {
+                        // Bare @Order defaults to Ordered.LOWEST_PRECEDENCE (same tier as unspecified).
+                        return ParsedOrder.ABSENT;
+                }
+                int close = spelling.lastIndexOf(')');
+                if (close < open || !stripJavaComments(spelling.substring(close + 1)).isBlank()) {
+                        return ParsedOrder.UNPARSEABLE;
+                }
+                String body = stripJavaComments(spelling.substring(open + 1, close)).trim();
+                if (body.isEmpty()) {
+                        return ParsedOrder.ABSENT;
+                }
+                if (body.indexOf(',') >= 0) {
+                        return ParsedOrder.UNPARSEABLE;
+                }
+                int eq = body.indexOf('=');
+                if (eq >= 0) {
+                        String attrName = body.substring(0, eq).trim();
+                        if (!"value".equals(attrName)) {
+                                return ParsedOrder.UNPARSEABLE;
+                        }
+                        body = body.substring(eq + 1).trim();
+                }
+                return parseOrderExpression(body);
+        }
+
+        private static ParsedOrder parseOrderExpression(String expr) {
+                if (expr.isEmpty()) return ParsedOrder.UNPARSEABLE;
+                String compact = expr.replaceAll("\\s+", "");
+                Integer direct = parseSignedDecimalInt(compact);
+                if (direct != null) {
+                        return ParsedOrder.explicit(direct);
+                }
+                // Standard Spring Ordered / Integer precedence constants with optional +N / -N offset.
+                int opIdx = -1;
+                char op = '\0';
+                for (int i = 1; i < compact.length(); i++) {
+                        char c = compact.charAt(i);
+                        if (c == '+' || c == '-') {
+                                if (opIdx >= 0) return ParsedOrder.UNPARSEABLE;
+                                opIdx = i;
+                                op = c;
+                        }
+                }
+                String baseToken = opIdx >= 0 ? compact.substring(0, opIdx) : compact;
+                Long baseVal = switch (baseToken) {
+                        case "Ordered.HIGHEST_PRECEDENCE",
+                             "org.springframework.core.Ordered.HIGHEST_PRECEDENCE",
+                             "Integer.MIN_VALUE",
+                             "java.lang.Integer.MIN_VALUE" -> (long) Integer.MIN_VALUE;
+                        case "Ordered.LOWEST_PRECEDENCE",
+                             "org.springframework.core.Ordered.LOWEST_PRECEDENCE",
+                             "Integer.MAX_VALUE",
+                             "java.lang.Integer.MAX_VALUE" -> (long) Integer.MAX_VALUE;
+                        default -> null;
+                };
+                if (baseVal == null) {
+                        return ParsedOrder.UNPARSEABLE;
+                }
+                if (opIdx < 0) {
+                        return ParsedOrder.explicit(baseVal.intValue());
+                }
+                Integer delta = parseUnsignedDecimalInt(compact.substring(opIdx + 1));
+                if (delta == null) {
+                        return ParsedOrder.UNPARSEABLE;
+                }
+                long combined = op == '+' ? baseVal + delta : baseVal - delta;
+                if (combined < Integer.MIN_VALUE || combined > Integer.MAX_VALUE) {
+                        return ParsedOrder.UNPARSEABLE;
+                }
+                return ParsedOrder.explicit((int) combined);
+        }
+
+        private static Integer parseSignedDecimalInt(String token) {
+                if (token.isEmpty()) return null;
+                int start = (token.charAt(0) == '+' || token.charAt(0) == '-') ? 1 : 0;
+                if (start == token.length()) return null;
+                String digits = normalizeJavaDecimalDigits(token.substring(start));
+                if (digits == null) return null;
+                String normalized = token.charAt(0) == '-' ? "-" + digits : digits;
+                try {
+                        return Integer.parseInt(normalized);
+                } catch (NumberFormatException overflow) {
+                        return null;
+                }
+        }
+
+        private static Integer parseUnsignedDecimalInt(String token) {
+                String digits = normalizeJavaDecimalDigits(token);
+                if (digits == null) return null;
+                try {
+                        return Integer.parseInt(digits);
+                } catch (NumberFormatException overflow) {
+                        return null;
+                }
+        }
+
+        private static String normalizeJavaDecimalDigits(String raw) {
+                if (raw.isEmpty() || raw.charAt(0) == '_' || raw.charAt(raw.length() - 1) == '_') return null;
+                var sb = new StringBuilder(raw.length());
+                for (int i = 0; i < raw.length(); i++) {
+                        char c = raw.charAt(i);
+                        if (c >= '0' && c <= '9') {
+                                sb.append(c);
+                        } else if (c != '_') {
+                                return null;
+                        }
+                }
+                return sb.isEmpty() ? null : sb.toString();
+        }
+
+        private static String stripJavaComments(String text) {
+                var out = new StringBuilder(text.length());
+                int i = 0;
+                while (i < text.length()) {
+                        if (text.startsWith("/*", i)) {
+                                int end = text.indexOf("*/", i + 2);
+                                if (end < 0) return text;
+                                out.append(' ');
+                                i = end + 2;
+                        } else if (text.startsWith("//", i)) {
+                                int end = text.indexOf('\n', i + 2);
+                                out.append(' ');
+                                i = end < 0 ? text.length() : end + 1;
+                        } else {
+                                out.append(text.charAt(i++));
+                        }
+                }
+                return out.toString();
         }
 
         private static CapabilityGapRecord autoScopedClosureGap(

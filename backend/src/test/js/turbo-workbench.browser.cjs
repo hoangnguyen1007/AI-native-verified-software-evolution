@@ -34,10 +34,20 @@ async function main([browser, output]) {
           '/lucian-components.css', '/lucian-components.js',
           '/github-auth.css', '/github-auth.js', '/github-enterprise.css', '/github-enterprise.js',
           '/github-hub.css', '/repair-studio.css', '/github-hub.js', '/repair-studio.js',
+          '/community-advisory.css', '/community-advisory.js', '/code-search.css', '/code-search.js',
+          '/graph-canvas.css', '/graph-canvas.js', '/dsm-matrix.css', '/dsm-matrix.js',
+          '/vertical-trace.css', '/vertical-trace.js', '/mcp-scip-hub.css', '/mcp-scip-hub.js',
+          '/workbench-craft.css', '/evo-bus.js', '/trust-badges.js', '/sandbox-setup.js',
+          '/webgl-graph-engine.js', '/architecture-chat.css', '/architecture-chat.js',
           '/model.js', '/app.js', '/ux.js', '/logo.svg',
           '/bridges.html', '/bridges.css', '/bridge-model.js', '/bridges.js',
           '/vendor/cytoscape-3.30.2.min.js', '/fonts/newsreader-latin.woff2',
           '/fonts/source-sans-3-latin.woff2'].includes(route), 'Unexpected static route: ' + route);
+        if (route === '/webgl-graph-engine.js') {
+          res.writeHead(503);
+          res.end();
+          return;
+        }
         if (route.includes('cytoscape') && blockRenderer) {
           blockRenderer = false;
           res.writeHead(503);
@@ -54,19 +64,22 @@ async function main([browser, output]) {
       const input = json ? JSON.parse(json) : null;
       let data;
       if (route === '/api/v1') data = {analysisJobsEnabled: true, analysisModes: ['FULL', 'FAST_ARCHITECTURE'],
-        repositoryConnectionsEnabled: true, architectureInsightsEnabled: true, architectureChatEnabled: true, bridgesEnabled: true};
+        repositoryConnectionsEnabled: true, architectureInsightsEnabled: true, architectureChatEnabled: true, bridgesEnabled: true,
+        onlineMode: true, localCheckoutAllowed: false, mcpEndpoint: '/mcp', mcpProtocolVersion: '2025-11-25',
+        projectionProfiles: ['strict', 'dfd-export'], defaultProjectionProfile: 'strict'};
+      else if (route === '/api/v1/mcp/setup') data = {protocolVersion: '2025-11-25', toolCount: 21, resourceCount: 6, multiUserMode: false, patRequired: false};
       else if (route.endsWith('/setups')) data = {items: [{id: 'sample'}]};
       else if (route.endsWith('/connections')) data = {items: [{setup: 'sample',
         label: 'AI-native-verified-software-evolution-long-repository-name', kind: 'LOCAL'}]};
-      else if (route.endsWith('/history')) data = {items: submission ? [live] : []};
-      else if (route.endsWith('/jobs')) { submission = input; data = live; }
+      else if (route.endsWith('/history')) data = {items: submission ? [{...live, projectionProfile: submission.projectionProfile || 'strict'}] : []};
+      else if (route.endsWith('/jobs')) { submission = input; data = {...live, projectionProfile: input?.projectionProfile || 'strict'}; }
       else if (route.endsWith('/jobs/job')) {
         if (++polls === 2 || polls === 3) {
           res.writeHead(503, {'Content-Type': 'application/json'});
           res.end(JSON.stringify({error: {code: 'BUSY'}}));
           return;
         }
-        data = live;
+        data = {...live, projectionProfile: submission?.projectionProfile || 'strict'};
       }
       else if (route.endsWith('/telemetry')) data = {totalElapsedMillis: 31, stages: [{stage: 'ANALYSIS', durationMillis: 20}]};
       else if (route.endsWith('/input-diagnostics')) {
@@ -81,7 +94,8 @@ async function main([browser, output]) {
         metadata: input.request.context === 'analysis:second' ? {modulePath: 'worker', sourceSet: 'MAIN'} : {modulePath: 'sample'}}]};
       else if (route.endsWith('/summary')) data = {status: 'PARTIAL', items: [{nodeCounts: {TYPE: 2, CAPABILITY_GAP: 1}}]};
       else if (route.endsWith('/visual-graph')) {
-        data = input.request.context === 'snapshot:sample'
+        const reqContext = input?.request?.context ?? input?.context;
+        data = reqContext === 'snapshot:sample'
           ? {nodes: [], edges: [], metadata: {status: 'PARTIAL'}}
           : {nodes: [{id: 'first', label: 'sample.First', kind: 'TYPE'}, {id: 'second', label: 'sample.Second', kind: 'TYPE'}],
             edges: [{id: 'link', source: 'first', target: 'second', classification: 'MUST'}], metadata: {status: 'PARTIAL'}};
@@ -142,8 +156,17 @@ async function main([browser, output]) {
       select.dispatchEvent(new Event('change'));
     })()`);
     assert.equal(await evaluate("document.querySelector('#analysis-mode-note').hidden"), false);
+    assert.equal(await evaluate("document.querySelector('#projection-profile').value"), 'strict');
+    await evaluate(`(() => {
+      const profile = document.querySelector('#projection-profile');
+      profile.value = 'dfd-export';
+      profile.dispatchEvent(new Event('change'));
+    })()`);
+    assert.equal(await evaluate("document.querySelector('#connect-projection-profile').value"), 'dfd-export');
     await click('analyze');
     await until('Live activity auto-expands immediately while running', () => evaluate("document.querySelector('#job-description').textContent.includes('Capturing repository') && document.querySelector('#run-details').open === true"));
+    assert.equal(await evaluate("document.querySelector('#job-profile-pill').hidden"), false);
+    assert.equal(await evaluate("document.querySelector('#job-profile-pill').textContent"), 'DFD_EXPORT');
     await evaluate("document.querySelector('#job-events details[data-stage=ACQUISITION] summary').click()");
     live = running;
     await until('Two failed updates show the last confirmed status', () => evaluate(`(() => {
@@ -167,7 +190,68 @@ async function main([browser, output]) {
     assert.deepEqual(await evaluate("document.fonts.ready.then(() => [...document.fonts].filter(face => face.status === 'loaded').map(face => face.family))"),
       ['Newsreader', 'Source Sans 3']);
     assert.equal(submission.mode, 'FAST_ARCHITECTURE');
+    assert.equal(submission.projectionProfile, 'dfd-export');
+    assert.equal(await evaluate("document.querySelector('#job-profile-pill').textContent"), 'DFD_EXPORT');
     assert.match(await evaluate("document.querySelector('#job-mode').textContent"), /reduced Java detail/);
+
+    // 1-Click Connect AI Agent (MCP) header button, modal tabs, security posture & copy confirmation
+    await click('header-mcp-trigger');
+    await until('MCP Quickstart modal opens with auto-populated origin URL', () =>
+      evaluate("document.querySelector('#mcp-setup-dialog').open && document.querySelector('#mcp-setup-body').innerText.includes(window.location.origin + '/mcp')"));
+    const mcpCheck = await evaluate(`(() => {
+      const body = document.querySelector('#mcp-setup-body');
+      const tabs = [...body.querySelectorAll('[role=tab]')].map(t => t.textContent.trim());
+      const text = body.innerText;
+      return {
+        tabs,
+        hasOriginMcp: text.includes(window.location.origin + '/mcp'),
+        hasProtocol: text.includes('2025-11-25'),
+        hasToolsCount: text.includes('21'),
+        hasResources: ['evo://score-v2', 'evo://report', 'evo://gaps', 'evo://hotspots', 'evo://cycles', 'evo://spring-summary'].every(u => text.includes(u)),
+        hasPosture: text.includes('mcp:read') && /Origin/i.test(text) && /Shannon/i.test(text)
+      };
+    })()`);
+    assert.equal(mcpCheck.hasOriginMcp, true);
+    assert.equal(mcpCheck.hasProtocol, true);
+    assert.equal(mcpCheck.hasToolsCount, true);
+    assert.equal(mcpCheck.hasResources, true);
+    assert.equal(mcpCheck.hasPosture, true);
+    assert.ok(mcpCheck.tabs.some(t => t.includes('Claude Code')));
+    assert.ok(mcpCheck.tabs.some(t => t.includes('Cursor')));
+    assert.ok(mcpCheck.tabs.some(t => t.includes('Antigravity / Windsurf')));
+    assert.ok(mcpCheck.tabs.some(t => t.includes('Streamable HTTP (2025-11-25)')));
+    await evaluate("[...document.querySelectorAll('#mcp-setup-body [role=tab]')].find(t => t.textContent.includes('Streamable HTTP')).click()");
+    await until('Streamable HTTP tab shows JSON-RPC initialize payload', () =>
+      evaluate("document.querySelector('#mcp-setup-body .u272-pre').textContent.includes('\"protocolVersion\": \"2025-11-25\"')"));
+    await evaluate("document.querySelector('#mcp-setup-body [data-mcp-copy=\"snippet\"]').click()");
+    await until('1-click Copy button shows visual confirmation', () =>
+      evaluate("(() => { const b = document.querySelector('#mcp-setup-body [data-mcp-copy=\"snippet\"]'); return Boolean(b && b.classList.contains('is-copied') && b.textContent.includes('Copied')); })()"));
+    await key(page, 'Escape', 27);
+    await until('MCP modal closes on Escape', () => evaluate("!document.querySelector('#mcp-setup-dialog').open"));
+
+    // SKG-RTS telemetry pill verification (targeted selection vs safety fallback)
+    const rtsCheck = await evaluate(`(() => {
+      const targeted = window.EvoRepairStudio.renderVerificationReportCard({
+        verdict: 'VERIFIED', trustLabel: 'ISOLATED_CONTAINER_VERIFIED',
+        rtsMode: 'SELECTED_TESTS', selectedTestsCount: 2,
+        build: { compiled: true, compileExit: 0 }, tests: { run: 2, failed: 0 }
+      }, {});
+      const fallback = window.EvoRepairStudio.renderVerificationReportCard({
+        verdict: 'VERIFIED', trustLabel: 'ISOLATED_CONTAINER_VERIFIED',
+        rtsMode: 'FULL_SUITE', selectedTestsCount: 0,
+        build: { compiled: true, compileExit: 0 }, tests: { run: 18, failed: 0 }
+      }, {});
+      return {
+        targetedPill: targeted.querySelector('.rs-rts-pill')?.textContent || '',
+        targetedMode: targeted.querySelector('.rs-rts-pill')?.dataset.rtsMode || '',
+        fallbackPill: fallback.querySelector('.rs-rts-pill')?.textContent || '',
+        fallbackMode: fallback.querySelector('.rs-rts-pill')?.dataset.rtsMode || ''
+      };
+    })()`);
+    assert.equal(rtsCheck.targetedPill, 'SKG-RTS: 2 targeted tests');
+    assert.equal(rtsCheck.targetedMode, 'SELECTED_TESTS');
+    assert.equal(rtsCheck.fallbackPill, 'FULL_SUITE (safety fallback)');
+    assert.equal(rtsCheck.fallbackMode, 'FULL_SUITE');
     assert.equal(calls.filter(route => route.endsWith('/provenance')).length, 0);
     assert.equal(calls.some(route => route.includes('cytoscape') || route.endsWith('/telemetry') || route.includes('/bridges/')), false);
     assert.equal(await evaluate("document.getElementById('job-timing')"), null);

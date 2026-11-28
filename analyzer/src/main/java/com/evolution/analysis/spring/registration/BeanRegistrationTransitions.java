@@ -64,6 +64,7 @@ public final class BeanRegistrationTransitions {
         private final List<BeanConditionLowering.Row> refinements;
         private final boolean registrationClosed;
         private final boolean containerError;
+        private volatile ContentDigest cachedIdentity;
         private Result(Evaluation evaluation) {
             input = evaluation.input; context = evaluation.context; discovery = evaluation.discovery;
             refinements = List.copyOf(evaluation.refinements);
@@ -73,20 +74,41 @@ public final class BeanRegistrationTransitions {
             registrationClosed = !evaluation.uncertain && !evaluation.failed && evaluation.registryClosed
                     && evaluation.plan.order() == RegistrationEvent.Completeness.COMPLETE
                     && rows.stream().noneMatch(r -> r.outcome() == Outcome.UNKNOWN || r.outcome() == Outcome.NOT_REACHED || r.outcome() == Outcome.ERROR);
-            candidates = evaluation.candidates.values().stream().map(c -> {
-                var names = evaluation.registry.entrySet().stream().filter(e -> e.getValue().equals(c.identity())).map(Map.Entry::getKey).toList();
-                return new Candidate(c.identity(), names, registrationClosed ? (names.isEmpty() ? FALSE : TRUE) : UNKNOWN,
-                        rows.stream().filter(r -> evaluation.steps.get(r.step()).operation() == REGISTER_DEFINITION
-                                && evaluation.events.get(r.discoveryEvent()).candidate().filter(v -> v.identity().equals(c.identity())).isPresent())
-                                .map(Row::step).toList());
-            }).toList();
+            var namesByCandidate = new HashMap<BeanDefinitionCandidate.Identity, List<String>>(evaluation.registry.size() * 2 + 1);
+            for (var e : evaluation.registry.entrySet()) {
+                namesByCandidate.computeIfAbsent(e.getValue(), ignored -> new ArrayList<>()).add(e.getKey());
+            }
+            var regStepsByCandidate = new HashMap<BeanDefinitionCandidate.Identity, List<String>>(rows.size() * 2 + 1);
+            for (var r : rows) {
+                if (evaluation.steps.get(r.step()).operation() == REGISTER_DEFINITION) {
+                    var candOpt = evaluation.events.get(r.discoveryEvent()).candidate();
+                    if (candOpt.isPresent()) {
+                        regStepsByCandidate.computeIfAbsent(evaluation.candidateId(candOpt.orElseThrow()),
+                                ignored -> new ArrayList<>()).add(r.step());
+                    }
+                }
+            }
+            var builtCandidates = new ArrayList<Candidate>(evaluation.candidates.size());
+            for (var entry : evaluation.candidates.entrySet()) {
+                var cid = entry.getKey();
+                var names = namesByCandidate.getOrDefault(cid, List.of());
+                var regSteps = regStepsByCandidate.getOrDefault(cid, List.of());
+                builtCandidates.add(new Candidate(cid, names, registrationClosed ? (names.isEmpty() ? FALSE : TRUE) : UNKNOWN, regSteps));
+            }
+            candidates = List.copyOf(builtCandidates);
             issues = evaluation.issues.stream().distinct().sorted(Comparator.comparing(BeanRegistrationProcessing.Issue::identity)).toList();
             var all = new TreeSet<>(discovery.capabilityGaps());
             all.addAll(BeanRegistrationProcessing.gaps(input, evaluation.source.buildContext(), issues)); gaps = List.copyOf(all);
         }
         public ContentDigest inputIdentity() { return input; }
         public DiscoveryTransitions.ContextIdentity semanticsContextIdentity() { return context; }
-        public ContentDigest identity() { return RegistrationIdentity.digest(canonicalForm()); }
+        public ContentDigest identity() {
+            ContentDigest cached = cachedIdentity;
+            if (cached != null) return cached;
+            ContentDigest computed = RegistrationIdentity.digest(canonicalForm());
+            cachedIdentity = computed;
+            return computed;
+        }
         public DiscoveryTransitions.Result discovery() { return discovery; }
         public List<Row> rows() { return rows; }
         public List<BeanDefinitionState> states() { return states; }
@@ -110,7 +132,12 @@ public final class BeanRegistrationTransitions {
     }
     public static Result evaluate(BeanRegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment,
                                   ExogenousConditionEvaluator.Limits exogenousLimits) {
-        return new Evaluation(plan, model, assignment, exogenousLimits).run();
+        return evaluate(plan, model, assignment, exogenousLimits, null);
+    }
+    public static Result evaluate(BeanRegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment,
+                                  ExogenousConditionEvaluator.Limits exogenousLimits,
+                                  ExogenousConditionEvaluator.Result precomputedExogenous) {
+        return new Evaluation(plan, model, assignment, exogenousLimits, precomputedExogenous).run();
     }
     private static final class Evaluation {
         final BeanRegistrationPlan plan;
@@ -120,6 +147,11 @@ public final class BeanRegistrationTransitions {
         final DiscoveryTransitions.ContextIdentity context;
         final DiscoveryTransitions.Result discovery;
         final Map<RegistrationEvent.Identity, RegistrationEvent> events = new HashMap<>();
+        final Map<RegistrationEvent, RegistrationEvent.Identity> eventIds = new IdentityHashMap<>();
+        final Map<BeanDefinitionCandidate, BeanDefinitionCandidate.Identity> candidateIds = new IdentityHashMap<>();
+        final Map<BeanDefinitionState, DiscoveryTransitions.StateIdentity> stateIds = new IdentityHashMap<>();
+        final Map<RegistrationEvent.Identity, List<BeanRegistrationPlan.Step>> stepsByEvent = new HashMap<>();
+        final Set<ConditionOccurrence.Identity> beanStateRequiredOccurrences = new HashSet<>();
         final Map<RegistrationEvent.Identity, DiscoveryTransitions.Row> discoveryRows = new HashMap<>();
         final Map<String, BeanRegistrationPlan.Step> steps = new HashMap<>();
         final Map<ConditionOccurrence.Identity, ConditionOccurrence> occurrences = new HashMap<>();
@@ -141,11 +173,25 @@ public final class BeanRegistrationTransitions {
         long stateCells;
         int matchChecks;
 
-        Evaluation(BeanRegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment, ExogenousConditionEvaluator.Limits limits) {
+        RegistrationEvent.Identity eventId(RegistrationEvent event) {
+            return eventIds.computeIfAbsent(event, RegistrationEvent::identity);
+        }
+
+        BeanDefinitionCandidate.Identity candidateId(BeanDefinitionCandidate candidate) {
+            return candidateIds.computeIfAbsent(candidate, BeanDefinitionCandidate::identity);
+        }
+
+        DiscoveryTransitions.StateIdentity stateId(BeanDefinitionState state) {
+            return stateIds.computeIfAbsent(state, BeanDefinitionState::identity);
+        }
+
+        Evaluation(BeanRegistrationPlan plan, ConditionModel model, ConfigurationAssignment assignment,
+                   ExogenousConditionEvaluator.Limits limits, ExogenousConditionEvaluator.Result precomputedExogenous) {
             this.plan = Objects.requireNonNull(plan); source = plan.discoveryPlan(); this.assignment = Objects.requireNonNull(assignment);
-            Set<ConditionOccurrence.Identity> modelRows = new HashSet<>(); model.sourceRows().forEach(o -> modelRows.add(o.identity()));
+            Set<ConditionOccurrence.Identity> modelRows = new HashSet<>(Math.max(16, model.sourceRows().size() * 2));
+            model.sourceRows().forEach(o -> modelRows.add(model.identityOf(o)));
             modelMatches = model.space().buildContext().identity().equals(source.buildContext().identity())
-                    && source.lowering().occurrences().stream().allMatch(o -> modelRows.contains(o.identity()));
+                    && source.lowering().occurrences().stream().allMatch(o -> modelRows.contains(model.identityOf(o)));
             context = new DiscoveryTransitions.ContextIdentity(RegistrationIdentity.derive("spring-semantics-context", Map.ofEntries(
                     Map.entry("buildContextIdentity", source.buildContext().identity()), Map.entry("configurationSpaceIdentity", model.space().identity()),
                     Map.entry("registrationPlanIdentity", plan.identity()), Map.entry("mechanismCatalog", source.inventory().mechanismCatalog()),
@@ -154,13 +200,27 @@ public final class BeanRegistrationTransitions {
                     Map.entry("reasonerPolicy", "evidenced-prefix:uncertainty-barrier-v1"),
                     Map.entry("deterministicLimits", Map.of("discovery", source.limits(), "registration", plan.limits(), "exogenous", limits)))));
             input = RegistrationIdentity.digest(Map.of("context", context, "model", model.identity(), "assignment", assignment.identity(), "provider", BeanRegistrationProcessing.PROVIDER));
-            discovery = DiscoveryTransitions.prepareRegistration(source, model, assignment, limits);
+            discovery = DiscoveryTransitions.prepareRegistration(source, model, assignment, limits, precomputedExogenous);
             discovery.rows().forEach(r -> discoveryRows.put(r.event(), r));
             discovery.exogenousEvaluation().rows().forEach(r -> exogenous.put(r.occurrence(), r.truth()));
-            source.events().forEach(e -> { events.put(e.identity(), e); e.candidate().ifPresent(c -> candidates.put(c.identity(), c)); });
-            source.initialDefinitions().forEach(c -> candidates.put(c.identity(), c));
-            source.lowering().occurrences().forEach(o -> occurrences.put(o.identity(), o));
-            plan.steps().forEach(s -> steps.put(s.key(), s));
+            for (var e : source.events()) {
+                var eid = eventId(e);
+                events.put(eid, e);
+                e.candidate().ifPresent(c -> candidates.put(candidateId(c), c));
+            }
+            for (var c : source.initialDefinitions()) {
+                candidates.put(candidateId(c), c);
+            }
+            source.lowering().occurrences().forEach(o -> occurrences.put(model.identityOf(o), o));
+            for (var issue : source.lowering().issues()) {
+                if (issue.reason() == ConditionProcessing.Reason.BEAN_STATE_REQUIRED) {
+                    issue.occurrence().ifPresent(beanStateRequiredOccurrences::add);
+                }
+            }
+            for (var s : plan.steps()) {
+                steps.put(s.key(), s);
+                stepsByEvent.computeIfAbsent(s.discoveryEvent(), ignored -> new ArrayList<>()).add(s);
+            }
             plan.definitions().forEach(d -> metadata.put(d.candidate(), d));
             plan.queryTypes().forEach(t -> queryTypes.put(t.key(), t));
             plan.queries().forEach(q -> queries.put(q.occurrence(), q));
@@ -181,11 +241,12 @@ public final class BeanRegistrationTransitions {
                 var row = process(step, before);
                 prefix.add(key); saveState();
                 var event = events.get(step.discoveryEvent());
+                var stepId = step.identity();
                 var invocation = new RegistrationEvent.Identity(RegistrationIdentity.derive("spring-registration-event", Map.of(
-                        "buildContextIdentity", source.buildContext().identity(), "triggerOccurrenceIdentity", step.identity(),
+                        "buildContextIdentity", source.buildContext().identity(), "triggerOccurrenceIdentity", stepId,
                         "parentInvocationPath", event.invocationPath(), "phase", "DEFINITION_READING", "eventSlot", step.key(),
                         "frameworkSemantics", source.lowering().semantics())));
-                var transition = new Transition(context, key, invocation, step.identity(), before.identity(), states.getLast().identity(), row.conditionTruth(), row.outcome(), assignment.identity());
+                var transition = new Transition(context, key, invocation, stepId, stateId(before), stateId(states.getLast()), row.conditionTruth(), row.outcome(), assignment.identity());
                 transitions.add(transition);
                 rows.put(key, new Row(key, step.discoveryEvent(), row.outcome(), row.conditionTruth(), row.conditions(), row.changes(), Optional.of(transition.identity())));
             }
@@ -250,21 +311,25 @@ public final class BeanRegistrationTransitions {
             // Unaccounted discovery can have occurred before any purported registration point.
             if (source.rows().stream().anyMatch(r -> r.status() == RegistrationPlan.ObligationStatus.GAP))
                 stop(DISCOVERY_INCOMPLETE, "discovery-denominator", null);
+            var initialDefSet = new HashSet<>(source.initialDefinitions());
             for (var event : source.events()) {
-                boolean hasStep = plan.steps().stream().anyMatch(s -> s.discoveryEvent().equals(event.identity()));
-                var discoveryRow = discoveryRows.get(event.identity());
+                var eid = eventId(event);
+                var eventSteps = stepsByEvent.getOrDefault(eid, List.of());
+                boolean hasStep = !eventSteps.isEmpty();
+                var discoveryRow = discoveryRows.get(eid);
                 if (!hasStep && discoveryRow.outcome() != DiscoveryTransitions.Outcome.DISCOVERED
                         && discoveryRow.outcome() != DiscoveryTransitions.Outcome.SKIPPED)
-                    stop(DISCOVERY_INCOMPLETE, event.identity().value(), null);
-                if (event.candidate().isPresent() && !source.initialDefinitions().contains(event.candidate().orElseThrow())
-                        && plan.steps().stream().noneMatch(s -> s.discoveryEvent().equals(event.identity()) && s.operation() == REGISTER_DEFINITION))
-                    stop(REGISTRATION_STEP_MISSING, event.identity().value(), null);
+                    stop(DISCOVERY_INCOMPLETE, eid.value(), null);
+                if (event.candidate().isPresent() && !initialDefSet.contains(event.candidate().orElseThrow())
+                        && eventSteps.stream().noneMatch(s -> s.operation() == REGISTER_DEFINITION))
+                    stop(REGISTRATION_STEP_MISSING, eid.value(), null);
                 boolean mutation = switch (event.kind()) { case IMPORT_REGISTRAR, REGISTRY_POST_PROCESSOR, XML_READER -> true; default -> false; };
-                if (mutation && plan.steps().stream().noneMatch(s -> s.discoveryEvent().equals(event.identity()) && s.operation() == OPAQUE_MUTATION))
-                    stop(REGISTRATION_STEP_MISSING, event.identity().value(), null);
+                if (mutation && eventSteps.stream().noneMatch(s -> s.operation() == OPAQUE_MUTATION))
+                    stop(REGISTRATION_STEP_MISSING, eid.value(), null);
             }
             for (var step : plan.steps()) {
                 var event = events.get(step.discoveryEvent());
+                var eid = step.discoveryEvent();
                 if (!BeanRegistrationEvidence.valid(step.evidence(), source.buildContext())
                         || !BeanRegistrationEvidence.valid(event.evidence(), source.buildContext())
                         || event.candidate().filter(c -> !BeanRegistrationEvidence.valid(c.producer().declarationEvidenceKey(), source.buildContext())).isPresent()
@@ -284,18 +349,18 @@ public final class BeanRegistrationTransitions {
                         && !hasOwnerGate(step, event)) stop(CONFIGURATION_GATE_MISSING, "bean-method-owner", step);
                 if (step.operation() == REGISTER_DEFINITION && event.candidate().isPresent()) {
                     var names = event.candidate().orElseThrow().declaredNameKey();
-                    for (String alias : names.aliases()) if (plan.steps().stream().noneMatch(s -> s.discoveryEvent().equals(event.identity())
-                            && s.alias().filter(a -> a.name().equals(alias) && names.primary().filter(a.target()::equals).isPresent()).isPresent()))
+                    var eventSteps = stepsByEvent.getOrDefault(eid, List.of());
+                    for (String alias : names.aliases()) if (eventSteps.stream().noneMatch(s ->
+                            s.alias().filter(a -> a.name().equals(alias) && names.primary().filter(a.target()::equals).isPresent()).isPresent()))
                         stop(ALIAS_ORDER_REQUIRED, alias, step);
                 }
                 if (step.operation() == REGISTER_ALIAS && (step.gate().isEmpty()
-                        || !steps.get(step.gate().orElseThrow()).discoveryEvent().equals(event.identity())))
+                        || !steps.get(step.gate().orElseThrow()).discoveryEvent().equals(eid)))
                     stop(CONFIGURATION_GATE_MISSING, "alias-condition-gate", step);
             }
             for (var query : plan.queries()) {
                 var occurrence = occurrences.get(query.occurrence());
-                boolean beanObligation = source.lowering().issues().stream().anyMatch(i -> i.reason() == ConditionProcessing.Reason.BEAN_STATE_REQUIRED
-                        && i.occurrence().filter(query.occurrence()::equals).isPresent());
+                boolean beanObligation = beanStateRequiredOccurrences.contains(query.occurrence());
                 boolean identicalIr = occurrence.expression().operand() instanceof ConditionExpression.Bean bean && bean.equals(query.selector());
                 if ((!beanObligation && !identicalIr) || !BeanRegistrationEvidence.valid(occurrence.declarationEvidenceKey(), source.buildContext()))
                     stop(QUERY_REFINEMENT_INVALID, query.occurrence().value(), null);
@@ -350,7 +415,7 @@ public final class BeanRegistrationTransitions {
                     return unknown(step, before, CONFIGURATION_GATE_MISSING);
             }
             if (step.readerDecision() != TRUE) return unknown(step, before, PRIOR_EXECUTION_UNKNOWN);
-            boolean inherited = step.gate().map(steps::get).filter(g -> g.discoveryEvent().equals(event.identity())).isPresent();
+            boolean inherited = step.gate().map(steps::get).filter(g -> g.discoveryEvent().equals(step.discoveryEvent())).isPresent();
             List<Invocation> invocations = new ArrayList<>();
             LogicalValue guard = event.conditionMetadata() == RegistrationEvent.Completeness.COMPLETE ? TRUE : UNKNOWN;
             if (guard != TRUE) return unknown(step, before, QUERY_METADATA_INCOMPLETE);
@@ -376,7 +441,7 @@ public final class BeanRegistrationTransitions {
                             Math.max(0, plan.limits().maxMatchChecks() - matchChecks));
                     matchChecks += evaluated.checks(); truth = evaluated.truth();
                     evaluated.reasons().stream().sorted().forEach(r -> conditionIssue(r, use.occurrence(), step));
-                    invocations.add(new Invocation(use.occurrence(), InvocationStatus.EVALUATED, truth, Optional.of(before.identity()),
+                    invocations.add(new Invocation(use.occurrence(), InvocationStatus.EVALUATED, truth, Optional.of(stateId(before)),
                             evaluated.matches().stream().map(m -> new SelectorMatch(m.selector(), m.candidates(), m.exists())).toList()));
                     if (evaluated.reasons().contains(QUERY_TYPE_ERROR)) { failed = true; guard = UNKNOWN; break; }
                 } else {
@@ -386,8 +451,7 @@ public final class BeanRegistrationTransitions {
                     if (occurrence == null || occurrence.expression().dependencies().contains(ConditionExpression.Dependency.OPAQUE)) {
                         // An opaque invocation has no proven purity or failure behavior. Even a later
                         // FALSE condition cannot erase its possible registry/environment mutation.
-                        boolean missingBeanMetadata = source.lowering().issues().stream().anyMatch(i -> i.reason() == ConditionProcessing.Reason.BEAN_STATE_REQUIRED
-                                && i.occurrence().filter(use.occurrence()::equals).isPresent());
+                        boolean missingBeanMetadata = beanStateRequiredOccurrences.contains(use.occurrence());
                         uncertain = true; conditionIssue(missingBeanMetadata ? QUERY_METADATA_INCOMPLETE : REGISTRY_MUTATION_UNKNOWN, use.occurrence(), step);
                         guard = UNKNOWN; break;
                     }
@@ -404,12 +468,12 @@ public final class BeanRegistrationTransitions {
             if (failed) return row(step, Outcome.ERROR, UNKNOWN, invocations, List.of());
             if (guard == FALSE) return row(step, Outcome.SKIPPED, FALSE, invocations, List.of());
             if (guard != TRUE || uncertain) {
-                stop(CONDITION_UNKNOWN, event.identity().value(), step);
+                stop(CONDITION_UNKNOWN, step.discoveryEvent().value(), step);
                 return row(step, Outcome.UNKNOWN, UNKNOWN, invocations, List.of());
             }
             if (step.operation() == CONFIGURATION_GATE) return row(step, Outcome.ACCEPTED, TRUE, invocations, List.of());
             if (step.operation() == OPAQUE_MUTATION) {
-                stop(REGISTRY_MUTATION_UNKNOWN, event.identity().value(), step);
+                stop(REGISTRY_MUTATION_UNKNOWN, step.discoveryEvent().value(), step);
                 return row(step, Outcome.UNKNOWN, TRUE, invocations, List.of());
             }
             if (step.operation() == REGISTER_ALIAS) return alias(step, invocations);
@@ -459,8 +523,9 @@ public final class BeanRegistrationTransitions {
             var changes = new ArrayList<Change>();
             // Spring removes an alias colliding with a NEW definition, not when replacing an existing one.
             if (old == null && oldAlias != null) { aliases.remove(name); changes.add(new Change("ALIAS", name, Optional.of(oldAlias), Optional.empty())); }
-            registry.put(name, candidate.identity());
-            changes.add(new Change("DEFINITION", name, Optional.ofNullable(old).map(BeanDefinitionCandidate.Identity::value), Optional.of(candidate.identity().value())));
+            var cid = candidateId(candidate);
+            registry.put(name, cid);
+            changes.add(new Change("DEFINITION", name, Optional.ofNullable(old).map(BeanDefinitionCandidate.Identity::value), Optional.of(cid.value())));
             return row(step, old == null ? Outcome.REGISTERED : Outcome.OVERRIDDEN, TRUE, invocations, changes);
         }
         Row alias(BeanRegistrationPlan.Step step, List<Invocation> invocations) {
@@ -507,7 +572,7 @@ public final class BeanRegistrationTransitions {
             return event.conditions().stream().map(c -> invocation(c, InvocationStatus.NOT_INVOKED, UNKNOWN, before)).toList();
         }
         Invocation invocation(RegistrationEvent.ConditionUse use, InvocationStatus status, LogicalValue truth, BeanDefinitionState before) {
-            return new Invocation(use.occurrence(), status, truth, Optional.ofNullable(before).map(BeanDefinitionState::identity), List.of());
+            return new Invocation(use.occurrence(), status, truth, before == null ? Optional.empty() : Optional.of(stateId(before)), List.of());
         }
         Row row(BeanRegistrationPlan.Step step, Outcome outcome, LogicalValue truth, List<Invocation> conditions, List<Change> changes) {
             return new Row(step.key(), step.discoveryEvent(), outcome, truth, conditions, changes, Optional.empty());

@@ -140,6 +140,54 @@
     return wrap;
   }
 
+  function extractRtsTelemetry(source) {
+    if (!source || typeof source !== 'object') return null;
+    let rtsMode = source.rtsMode ?? source.tests?.rtsMode ?? source.sandbox?.rtsMode ?? source.rts?.mode ?? source.report?.rtsMode ?? null;
+    let selectedCount = source.selectedTestsCount ?? source.tests?.selectedTestsCount ?? source.sandbox?.selectedTestsCount ?? source.rts?.selectedTestsCount ?? source.report?.selectedTestsCount ?? null;
+    if (rtsMode == null && selectedCount == null && Array.isArray(source.events)) {
+      for (let i = source.events.length - 1; i >= 0; i--) {
+        const det = source.events[i]?.detail || source.events[i]?.details;
+        if (det && (det.rtsMode != null || det.selectedTestsCount != null)) {
+          rtsMode = det.rtsMode ?? null;
+          selectedCount = det.selectedTestsCount ?? null;
+          break;
+        }
+      }
+    }
+    if (rtsMode == null && selectedCount == null) return null;
+    const rawCount = selectedCount != null && selectedCount !== '' && Number.isFinite(Number(selectedCount))
+      ? Math.max(0, Math.round(Number(selectedCount)))
+      : null;
+    const normMode = String(rtsMode || (rawCount != null && rawCount > 0 ? 'SELECTED_TESTS' : 'FULL_SUITE')).trim().toUpperCase();
+    if (normMode === 'SELECTED_TESTS' || (normMode !== 'FULL_SUITE' && rawCount != null && rawCount > 0)) {
+      const n = rawCount ?? 0;
+      return {
+        mode: 'SELECTED_TESTS',
+        selectedTestsCount: n,
+        tone: 'good',
+        label: `SKG-RTS: ${n} targeted ${n === 1 ? 'test' : 'tests'}`,
+        title: 'Software Knowledge Graph Regression Test Selection executed reverse-dependent tests only.'
+      };
+    }
+    return {
+      mode: 'FULL_SUITE',
+      selectedTestsCount: rawCount,
+      tone: 'warn',
+      label: 'FULL_SUITE (safety fallback)',
+      title: 'SKG-RTS failed closed to the full regression suite for safety.'
+    };
+  }
+
+  function renderRtsBadge(source) {
+    const rts = extractRtsTelemetry(source);
+    if (!rts) return null;
+    const pill = el('span', 'badge rs-rts-pill ' + rts.tone, rts.label);
+    pill.dataset.rtsMode = rts.mode;
+    if (rts.selectedTestsCount != null) pill.dataset.selectedTestsCount = String(rts.selectedTestsCount);
+    pill.title = rts.title;
+    return pill;
+  }
+
   function renderVerificationReportCard(report, { onDownloadMarkdown, onProceedToApply, onRerun }) {
     const trust = M.repairTrustMeta(report?.verdict, report?.trustLabel);
     const score = M.formatScoreV2Delta(report?.scoreV2Delta || report?.scoreDelta);
@@ -156,11 +204,13 @@
     const banner = el('div', 'rs-verdict-banner is-' + trust.verdictTone);
     const left = el('div', 'rs-verdict-main');
     const isolationBackend = report?.isolationBackend || report?.sandbox?.isolationMode || '';
+    const rtsPill = renderRtsBadge(report);
     left.append(
       append(el('div', 'rs-verdict-badges'),
         el('span', 'badge ' + (trust.verdictTone === 'good' ? 'good' : trust.verdictTone === 'bad' ? 'bad' : 'warn'), trust.verdictShort),
         el('span', 'rs-trust-pill is-' + trust.trustTone, trust.trustTitle),
-        isolationBackend ? el('span', 'badge', 'Sandbox: ' + isolationBackend) : null
+        isolationBackend ? el('span', 'badge', 'Sandbox: ' + isolationBackend) : null,
+        rtsPill
       ),
       el('strong', 'rs-verdict-headline', trust.verdictLabel),
       el('p', 'small muted', report?.executiveSummary || trust.trustSummary)
@@ -1063,20 +1113,25 @@
     /* ── STEP 3: Async Isolated Sandbox Verification (SSE + Fallback) ─────── */
     function unwrapJobReport(payload) {
       if (!payload || typeof payload !== 'object') return payload;
+      const rts = extractRtsTelemetry(payload);
+      const rtsExtra = rts
+        ? { rtsMode: rts.mode, ...(rts.selectedTestsCount != null ? { selectedTestsCount: rts.selectedTestsCount } : {}) }
+        : {};
       // Backend serializeRepairJob promotes UI-aligned aliases (scoreV2Delta, violationsDelta, build, tests, behavioralDiff, springPreservation, rounds) onto top-level
       if (payload.verdict && (payload.scoreV2Delta || payload.build || payload.behavioralDiff || !payload.report)) {
-        return payload;
+        return { ...payload, ...rtsExtra };
       }
       if (payload.report && typeof payload.report === 'object') {
         return {
           ...payload.report,
+          ...rtsExtra,
           jobId: payload.jobId || payload.report.jobId,
           rounds: Array.isArray(payload.report.rounds) && payload.report.rounds.length
             ? payload.report.rounds
             : (Array.isArray(payload.rounds) ? payload.rounds : [])
         };
       }
-      return payload;
+      return { ...payload, ...rtsExtra };
     }
 
     async function startSandboxVerification() {
@@ -1118,7 +1173,8 @@
         li.append(
           append(el('div', 'rs-verdict-badges'),
             roundNum > 0 ? el('span', 'badge', `Round ${roundNum}`) : null,
-            stageName ? el('span', 'badge ' + (stageName === 'FAILED' || stageName === 'INTERRUPTED_ON_RESTART' ? 'bad' : stageName === 'REPORT_READY' ? 'good' : ''), stageName) : null),
+            stageName ? el('span', 'badge ' + (stageName === 'FAILED' || stageName === 'INTERRUPTED_ON_RESTART' ? 'bad' : stageName === 'REPORT_READY' ? 'good' : ''), stageName) : null,
+            renderRtsBadge(details)),
           el('p', 'small muted', msg)
         );
         timelineHost.append(li);
@@ -1805,6 +1861,7 @@
   window.EvoRepairStudio = {
     mount: mountRepairStudio,
     renderMultiFileDiff,
-    renderVerificationReportCard
+    renderVerificationReportCard,
+    extractRtsTelemetry
   };
 })();

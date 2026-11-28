@@ -98,4 +98,31 @@ class ConfigDataIngestionTest {
         assertEquals("true",result.assignment().orElseThrow().baseline().get(new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY,"feature.enabled")).exact().orElseThrow());
         assertEquals(result.identity(),new ConfigDataIngestion().ingest(input,ConfigDataIngestion.Policy.defaults()).identity());
     }
+
+    @Test void phase0BootstrapLegacySpringProfilesAndLocalConfigServerSharedYamlResolveCleanly() {
+        var input = IngestionFixtures.inputs(Map.of(
+                "src/main/resources/bootstrap.yml",
+                "spring:\n  application:\n    name: order-service\n  profiles:\n    active: prod\n",
+                "src/main/resources/bootstrap-prod.yml",
+                "bootstrap.flag: prod-boot\n",
+                "config/src/main/resources/shared/application.yml",
+                "shared.global: from-app\nspring.profiles: \"!dev\"\n",
+                "config/src/main/resources/shared/order-service.yml",
+                "service.override: from-config-server\n",
+                "src/main/resources/application.yml",
+                "local.only: yes\n---\nspring.profiles:\n  - prod\n  - staging\nlegacy.enabled: true\n---\nspring.profiles: \"!prod\"\nlegacy.disabled: true\n"));
+        var result = new ConfigDataIngestion().ingest(input, ConfigDataIngestion.Policy.defaults());
+        assertEquals(List.of("prod"), result.activeProfiles(), result.issues().toString());
+        assertEquals("prod-boot", result.properties().get("bootstrap.flag"));
+        assertEquals("from-app", result.properties().get("shared.global"));
+        assertEquals("from-config-server", result.properties().get("service.override"));
+        assertEquals("true", result.properties().get("legacy.enabled"));
+        assertNull(result.properties().get("legacy.disabled"));
+        assertTrue(result.assignment().isPresent(), result.gaps().toString());
+
+        // Malformed legacy spring.profiles expression must remain fail-closed (CONFIG_ACTIVATION_UNKNOWN)
+        var bad = load(Map.of("application.yml", "spring.profiles: 'a & b | c'\na: 1"));
+        assertTrue(bad.assignment().isEmpty());
+        assertTrue(bad.gaps().stream().anyMatch(g -> "CONFIG_ACTIVATION_UNKNOWN".equals(g.reasonCode())));
+    }
 }

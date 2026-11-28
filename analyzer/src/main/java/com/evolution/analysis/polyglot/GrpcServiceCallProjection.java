@@ -12,7 +12,9 @@ import java.util.function.BooleanSupplier;
  * address is inferred from a coincident method name. */
 public final class GrpcServiceCallProjection {
     public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("polyglot.grpc-source-candidates","m8.4-v1");
-    private record Row(KnowledgeGraph.Node node,ContentDigest proof,Map<String,Object> fact,Map<String,Object> attributes) {}
+    private static final java.util.regex.Pattern TEST_FILE_BASENAME=java.util.regex.Pattern.compile("(?i)(?:^test_.*\\.py$|.*(?:Test|Tests)\\.(?:java|kt|cs|go|py)$|.*\\.(?:test|spec)\\.(?:ts|tsx|js|jsx|mjs|cjs)$)");
+    private static final Set<String> COMPONENT_CONTAINER_DIRS=Set.of("src","services","apps","packages","microservices","cmd","modules");
+    private record Row(KnowledgeGraph.Node node,ContentDigest proof,Map<String,Object> fact,Map<String,Object> attributes,String path) {}
     private record Method(Row row,String service,String name) {}
     private GrpcServiceCallProjection() {}
     public static void project(GraphProjectionStore store,String root,BooleanSupplier cancelled)throws IOException {
@@ -32,15 +34,24 @@ public final class GrpcServiceCallProjection {
         for(var node:store.valuesByKind("nodes",Set.of("SOURCE_RPC_HANDLER_CANDIDATE"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind)) {
             check(cancelled);
             var descriptor=source(node,evidence);if(descriptor.isEmpty()||recovered(descriptor.orElseThrow()))continue;var handler=descriptor.orElseThrow();
+            if(isTestPath(handler.path()))continue;
             for(var method:matching(handler,methods))handlers.computeIfAbsent(key(method.row()),ignored->new ArrayList<>()).add(handler);
         }
         for(var node:store.valuesByKind("nodes",Set.of("SOURCE_RPC_CALL_CANDIDATE","SOURCE_RPC_HANDLER_CANDIDATE"),GraphSnapshotCodec::node,KnowledgeGraph.Node::kind)) {
             check(cancelled);
             var descriptor=source(node,evidence);if(descriptor.isEmpty())continue;var caller=descriptor.orElseThrow();boolean implementation=node.kind().equals("SOURCE_RPC_HANDLER_CANDIDATE");
             var contracts=recovered(caller)?List.<Method>of():matching(caller,methods);var targets=new TreeMap<String,Row>();var schemas=new TreeMap<String,Row>();
+            String callerComponent=serviceComponentDir(caller.path());
+            boolean skipCaller=isTestPath(caller.path());
             for(var method:contracts) {
                 schemas.put(key(method.row()),method.row());
-                if(!implementation)for(var handler:handlers.getOrDefault(key(method.row()),List.of()))if(!handler.node().equals(node))targets.put(key(handler),handler);
+                if(!implementation&&!skipCaller)for(var handler:handlers.getOrDefault(key(method.row()),List.of())) {
+                    if(handler.node().equals(node))continue;
+                    if(!caller.node().context().equals(root)&&caller.node().context().equals(handler.node().context()))continue;
+                    String handlerComponent=serviceComponentDir(handler.path());
+                    if(!callerComponent.isEmpty()&&callerComponent.equals(handlerComponent))continue;
+                    targets.put(key(handler),handler);
+                }
             }
             var supports=new TreeSet<ContentDigest>();supports.add(caller.proof());schemas.values().forEach(r->supports.add(r.proof()));targets.values().forEach(r->supports.add(r.proof()));
             String reason=recovered(caller)?"GRPC_SOURCE_RECOVERED":schemas.isEmpty()?"GRPC_SCHEMA_NO_CANDIDATE":!implementation&&targets.isEmpty()?"GRPC_HANDLER_NO_CANDIDATE":"GRPC_ROUTING_EVIDENCE_MISSING";
@@ -75,8 +86,33 @@ public final class GrpcServiceCallProjection {
     }
     private static Optional<Row> source(KnowledgeGraph.Node node,Map<String,GraphEvidence> evidence) {
         for(var id:node.evidence()) {var proof=evidence.get(id.value());if(proof==null||!proof.family().equals("polyglot.source-syntax"))continue;
-            var fields=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("fields"));var fact=GraphJson.object(fields.get("fact"));return Optional.of(new Row(node,id,fact,GraphJson.object(fact.get("attributes"))));}
+            var fields=GraphJson.object(GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults())).get("fields"));var fact=GraphJson.object(fields.get("fact"));
+            String path=decodePath(fields.get("path"));
+            return Optional.of(new Row(node,id,fact,GraphJson.object(fact.get("attributes")),path));}
         return Optional.empty();
+    }
+    private static String decodePath(Object raw) {
+        if(!(raw instanceof String encoded)||encoded.isBlank())return "";
+        try {
+            return new String(Base64.getDecoder().decode(encoded),java.nio.charset.StandardCharsets.UTF_8).replace('\\','/');
+        }catch(IllegalArgumentException plain) {
+            return encoded.replace('\\','/');
+        }
+    }
+    private static boolean isTestPath(String path) {
+        if(path==null||path.isBlank())return false;
+        String lower=path.toLowerCase(Locale.ROOT);
+        if(lower.endsWith("_test.go")||lower.contains("/src/test/")||lower.contains("/tests/")||lower.contains("/__tests__/")||lower.startsWith("tests/")||lower.startsWith("__tests__/"))return true;
+        int slash=path.lastIndexOf('/');
+        String base=slash>=0?path.substring(slash+1):path;
+        return TEST_FILE_BASENAME.matcher(base).matches();
+    }
+    private static String serviceComponentDir(String path) {
+        if(path==null||path.isBlank())return "";
+        String[] parts=path.split("/");
+        if(parts.length>=3&&COMPONENT_CONTAINER_DIRS.contains(parts[0].toLowerCase(Locale.ROOT)))return parts[0]+"/"+parts[1];
+        if(parts.length>=2)return parts[0];
+        return "";
     }
     private static Set<String> spellings(String method,String style){return style.equals("CSHARP_ASYNC")?Set.of(method,method+"Async"):style.equals("LOWER_CAMEL")?new TreeSet<>(List.of(method,Character.toLowerCase(method.charAt(0))+method.substring(1))):Set.of(method);}
     private static boolean recovered(Row row){return Boolean.TRUE.equals(row.fact().get("recovered"));}

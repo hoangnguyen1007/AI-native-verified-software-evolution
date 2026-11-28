@@ -129,6 +129,78 @@
     padding: 5px 10px;
     font-size: 12px;
   }
+  .workbench-page .evo-topbar-mcp-sub {
+    display: none;
+  }
+  .workbench-page .evo-topbar-mcp-btn {
+    padding: 0 8px;
+  }
+}
+
+/* 8. Online Web App UX Controls: Header MCP Button, Epistemic Profile Pill & SKG-RTS Pill */
+.workbench-page .evo-topbar-mcp-btn {
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-s);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workbench-page .evo-topbar-mcp-btn:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.workbench-page .evo-topbar-mcp-sub {
+  font-weight: 500;
+  color: var(--text-2);
+  padding-left: 6px;
+  border-left: 1px solid var(--line-mid);
+}
+
+.workbench-page .evo-profile-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-s);
+  color: var(--accent);
+}
+
+.workbench-page .evo-profile-pill[data-profile="dfd"] {
+  border-color: color-mix(in srgb, var(--raw-indigo-500, #6366f1) 45%, var(--line-mid));
+  background: color-mix(in srgb, var(--raw-indigo-500, #6366f1) 16%, transparent);
+  color: var(--raw-indigo-300, #a5b4fc);
+}
+
+:root[data-theme="light"] .workbench-page .evo-profile-pill[data-profile="dfd"] {
+  border-color: color-mix(in srgb, var(--raw-indigo-700, #4338ca) 35%, var(--line-mid));
+  background: color-mix(in srgb, var(--raw-indigo-500, #6366f1) 10%, var(--surface));
+  color: var(--raw-indigo-700, #4338ca);
+}
+
+.workbench-page .evo-connect-profile-field {
+  margin-top: 12px;
+}
+
+.workbench-page .rs-rts-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.01em;
 }
 
 @media (prefers-reduced-motion: reduce) {

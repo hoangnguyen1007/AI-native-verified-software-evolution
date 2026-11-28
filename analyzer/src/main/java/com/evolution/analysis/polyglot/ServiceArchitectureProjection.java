@@ -10,11 +10,15 @@ import java.util.function.BooleanSupplier;
  * provenance survives this projection; an edge is not an observed runtime call. */
 public final class ServiceArchitectureProjection {
     public static final VersionedIdentifier PROVIDER=new VersionedIdentifier("architecture.service-edges","m8.4-v1");
+    public enum ProjectionProfile { STRICT, DFD_EXPORT }
     private record Endpoint(String context,String identity,String role) {
         Map<String,String> fields(){return Map.of("context",context,"identity",identity,"role",role);}
     }
     private ServiceArchitectureProjection() {}
     public static void project(GraphProjectionStore store,String root,BooleanSupplier cancelled)throws IOException {
+        project(store,root,ProjectionProfile.STRICT,cancelled);
+    }
+    public static void project(GraphProjectionStore store,String root,ProjectionProfile profile,BooleanSupplier cancelled)throws IOException {
         check(cancelled);
         var nodes=store.records("nodes",GraphSnapshotCodec::node);var edges=store.records("edges",GraphSnapshotCodec::edge);var evidence=store.records("evidence",GraphSnapshotCodec::evidence);
         var owners=store.records("service-declaration-index",GraphJson::object);
@@ -29,7 +33,9 @@ public final class ServiceArchitectureProjection {
             check(cancelled);String kind=switch(candidate.kind()){case "polyglot.service-call.candidate"->"CALLS_SERVICE";case "polyglot.grpc-service-call.candidate"->"INVOKES_RPC";default->"";};if(kind.isEmpty())continue;
             var source=endpoint(nodes.get(candidate.context()+"|"+candidate.source()),true,nodes,evidence,owners);var destinations=new TreeMap<String,Endpoint>();
             for(String target:candidate.target().identities()) {
-                var destination=endpoint(nodes.get(candidate.context()+"|"+target),false,nodes,evidence,owners);destinations.put(destination.context()+"|"+destination.identity(),destination);
+                var destination=endpoint(nodes.get(candidate.context()+"|"+target),false,nodes,evidence,owners);
+                if(destination.context().equals(source.context())&&destination.identity().equals(source.identity()))continue;
+                destinations.put(destination.context()+"|"+destination.identity(),destination);
             }
             if(destinations.isEmpty())continue;
             String from=rooted(source,root,nodes,newNodes,evidence);var targets=new TreeSet<String>();for(var destination:destinations.values())targets.add(rooted(destination,root,nodes,newNodes,evidence));
@@ -41,6 +47,7 @@ public final class ServiceArchitectureProjection {
             newEdges.put(root+"|"+id,new KnowledgeGraph.Edge(id,root,kind,from,target,List.copyOf(support),Optional.empty()));
         }
         nodes.putAll(newNodes);edges.putAll(newEdges);
+        DeclarativeTopologyProjection.project(store,root,profile,cancelled);
     }
     private static Endpoint endpoint(KnowledgeGraph.Node node,boolean caller,Map<String,KnowledgeGraph.Node> nodes,Map<String,GraphEvidence> evidence,Map<String,Map<String,Object>> owners) {
         if(node==null)throw new IllegalArgumentException("SERVICE_EDGE_ENDPOINT_MISSING");
@@ -59,9 +66,10 @@ public final class ServiceArchitectureProjection {
         var original=nodes.get(context+"|"+identity);
         if(original!=null&&!original.equals(node))return endpoint(original,caller,nodes,evidence,owners);
         if(!caller)for(var id:node.evidence()) {
-            var proof=evidence.get(id.value());if(proof!=null&&proof.family().equals("spring.endpoint-declaration")) {
+            var proof=evidence.get(id.value());if(proof!=null&&Set.of("spring.endpoint-declaration","jaxrs.endpoint-declaration","servlet.endpoint-declaration").contains(proof.family())) {
                 var raw=GraphJson.object(GraphJson.read(proof.canonicalJson(),GraphJson.Limits.defaults()));var route=GraphJson.object(raw.get("route"));
                 if(route.get("handler") instanceof String handler&&nodes.containsKey(context+"|"+handler))return new Endpoint(context,handler,"HANDLER_DECLARATION");
+                if(route.get("controller") instanceof String ctrl&&nodes.containsKey(context+"|"+ctrl))return new Endpoint(context,ctrl,"HANDLER_DECLARATION");
             }
         }
         var declaration=owners.get(context+"|"+(caller?"caller":"handler")+"|"+identity);

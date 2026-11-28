@@ -21,6 +21,7 @@ public final class StreamingContentStore implements RepositoryContentStore {
     @FunctionalInterface interface Space { long usable() throws IOException; }
 
     private static final int BUFFER_BYTES = 64 * 1024;
+    private static final int IN_MEMORY_WRITE_THRESHOLD = 2 * 1024 * 1024;
     private static final int MAX_POOLED = 16;
     private static final ConcurrentLinkedQueue<byte[]> BUFFER_POOL = new ConcurrentLinkedQueue<>();
     private static final AtomicInteger POOLED_BUFFERS = new AtomicInteger();
@@ -29,11 +30,17 @@ public final class StreamingContentStore implements RepositoryContentStore {
 
     private final Path root, staging, sha256Root;
     private final long reserveBytes;
+    private final boolean checkDiskBudget;
     private final Force force;
     private final Space space;
     private final SmallBlobPacks packs;
     private final AtomicIntegerArray createdShards = new AtomicIntegerArray(256);
     private volatile int loosePresence; // 0 = unknown, 1 = empty, 2 = has shard(s)
+
+    private static final class DirectBytes extends ByteArrayOutputStream {
+        DirectBytes(int initialCapacity) { super(initialCapacity); }
+        byte[] rawBuffer() { return buf; }
+    }
 
     public StreamingContentStore(Path root) throws IOException { this(root, 0); }
     public StreamingContentStore(Path root, long reserveBytes) throws IOException {
@@ -48,6 +55,7 @@ public final class StreamingContentStore implements RepositoryContentStore {
         this.root = directory(root);
         this.staging = directory(this.root.resolve("staging"));
         this.reserveBytes = reserveBytes;
+        this.checkDiskBudget = reserveBytes > 0 || space != null;
         this.sha256Root = directory(this.root.resolve("sha256"));
         this.packs = new SmallBlobPacks(this.root, reserveBytes);
         var store = space == null ? Files.getFileStore(staging) : null;
@@ -300,53 +308,95 @@ public final class StreamingContentStore implements RepositoryContentStore {
     private ContentHandle writeInternal(ContentWriter writer, BooleanSupplier cancelled) throws IOException {
         Objects.requireNonNull(writer); Objects.requireNonNull(cancelled);
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-        ensureStaging();
-        Path temp = Files.createTempFile(staging, "blob-", ".part");
         MessageDigest hash = borrowSha256();
         long[] size = {0};
+        Path[] temp = { null };
+        FileChannel[] channel = { null };
         try {
-            ContentHandle handle;
-            try (var channel = FileChannel.open(temp, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
-                var budget = new DiskBudget();
-                var output = new OutputStream() {
-                    @Override public void write(int value) throws IOException { write(new byte[]{(byte)value}, 0, 1); }
-                    @Override public void write(byte[] bytes, int offset, int count) throws IOException {
-                        Objects.checkFromIndexSize(offset, count, bytes.length);
+            var budget = checkDiskBudget ? new DiskBudget() : null;
+            DirectBytes[] mem = { new DirectBytes(8192) };
+            var output = new OutputStream() {
+                @Override public void write(int value) throws IOException { write(new byte[]{(byte)value}, 0, 1); }
+                @Override public void write(byte[] bytes, int offset, int count) throws IOException {
+                    Objects.checkFromIndexSize(offset, count, bytes.length);
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+                    if (count == 0) return;
+                    while (count > 0) {
+                        int chunk = budget != null ? budget.claim(count) : count;
                         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-                        if (count == 0) return;
-                        while (count > 0) {
-                            int chunk = budget.claim(count);
-                            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-                            var buffer = ByteBuffer.wrap(bytes, offset, chunk);
-                            while (buffer.hasRemaining()) channel.write(buffer);
-                            size[0] = Math.addExact(size[0], chunk);
-                            hash.update(bytes, offset, chunk);
-                            offset += chunk;
-                            count -= chunk;
+                        long nextSize = Math.addExact(size[0], chunk);
+                        if (mem[0] != null) {
+                            if (nextSize <= IN_MEMORY_WRITE_THRESHOLD) {
+                                mem[0].write(bytes, offset, chunk);
+                            } else {
+                                ensureStaging();
+                                Path part = Files.createTempFile(staging, "blob-", ".part");
+                                temp[0] = part;
+                                FileChannel ch = FileChannel.open(part, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+                                channel[0] = ch;
+                                int bufferedLen = mem[0].size();
+                                if (bufferedLen > 0) {
+                                    var buf = ByteBuffer.wrap(mem[0].rawBuffer(), 0, bufferedLen);
+                                    while (buf.hasRemaining()) ch.write(buf);
+                                }
+                                mem[0] = null;
+                                var buf = ByteBuffer.wrap(bytes, offset, chunk);
+                                while (buf.hasRemaining()) ch.write(buf);
+                            }
+                        } else {
+                            var buf = ByteBuffer.wrap(bytes, offset, chunk);
+                            while (buf.hasRemaining()) channel[0].write(buf);
                         }
+                        size[0] = nextSize;
+                        hash.update(bytes, offset, chunk);
+                        offset += chunk;
+                        count -= chunk;
                     }
-                };
-                var destination = new BufferedOutputStream(output, BUFFER_BYTES);
-                writer.write(destination); destination.flush();
-                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
-                if (space.usable() < reserveBytes) throw new IOException("WAITING_FOR_DISK");
-                handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest())), size[0]);
+                }
+            };
+            var destination = new BufferedOutputStream(output, BUFFER_BYTES);
+            writer.write(destination); destination.flush();
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
+            if (checkDiskBudget && space.usable() < reserveBytes) throw new IOException("WAITING_FOR_DISK");
+            ContentHandle handle = new ContentHandle(new ContentDigest("sha256:" + HexFormat.of().formatHex(hash.digest())), size[0]);
+            if (mem[0] != null) {
                 if (hasLoose(handle) || packs.contains(handle)) {
                     if (!verify(handle, cancelled)) throw new IOException("CAS_CORRUPT");
                     return handle;
                 }
-                force(channel);
+                ensureStaging();
+                temp[0] = Files.createTempFile(staging, "blob-", ".part");
+                channel[0] = FileChannel.open(temp[0], StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+                int bufferedLen = mem[0].size();
+                if (bufferedLen > 0) {
+                    var buf = ByteBuffer.wrap(mem[0].rawBuffer(), 0, bufferedLen);
+                    while (buf.hasRemaining()) channel[0].write(buf);
+                }
+                force(channel[0]);
+                channel[0].close();
+                channel[0] = null;
+            } else {
+                if (hasLoose(handle) || packs.contains(handle)) {
+                    if (!verify(handle, cancelled)) throw new IOException("CAS_CORRUPT");
+                    return handle;
+                }
+                force(channel[0]);
+                channel[0].close();
+                channel[0] = null;
             }
             Path target = path(handle);
             ensureShard(handle.digest().value().substring(7, 9), target.getParent());
-            try { createLinkWithRetry(target, temp); loosePresence = 2; }
+            try { createLinkWithRetry(target, temp[0]); loosePresence = 2; }
             catch (FileAlreadyExistsException exists) { if (!verify(handle, cancelled)) throw new IOException("CAS_CORRUPT"); }
             catch (UnsupportedOperationException unavailable) { throw new IOException("ATOMIC_PUBLICATION_UNAVAILABLE"); }
             return handle;
         } catch (ArithmeticException overflow) { throw new IOException("CONTENT_SIZE_OVERFLOW"); }
         finally {
+            if (channel[0] != null) {
+                try { channel[0].close(); } catch (IOException ignored) {}
+            }
             releaseSha256(hash);
-            deleteIfExistsQuietly(temp);
+            if (temp[0] != null) deleteIfExistsQuietly(temp[0]);
         }
     }
 

@@ -8,7 +8,7 @@ import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.frontend.*;
 import com.evolution.analysis.ingestion.UniversalSourceIngestion;
 import com.evolution.analysis.maven.*;
-import com.evolution.analysis.dependency.DependencyAcquisitionPolicy;
+import com.evolution.analysis.dependency.*;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -62,7 +62,7 @@ public final class MavenScan {
         public Inputs{ledgers=List.copyOf(ledgers);}
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,Optional<MavenBuildModelResolution> build,Path cache,Optional<PlatformInput> platform){
-        return inputs(acquisition,models(acquisition,cache),cache,platform,new DependencyAcquisitionPolicy(4096,64_000_000,DEFAULT_DEPENDENCY_TOTAL_BYTES,64,DEFAULT_REPOSITORIES,5000,15000,1,8));
+        return inputs(acquisition,models(acquisition,cache),cache,platform,new DependencyAcquisitionPolicy(4096,64_000_000,DEFAULT_DEPENDENCY_TOTAL_BYTES,64,DEFAULT_REPOSITORIES,5000,15000,1,16));
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy){
         return inputs(acquisition,builds,cache,platform,acquisitionPolicy,Map.of());
@@ -83,6 +83,10 @@ public final class MavenScan {
         return inputs(acquisition, builds, cache, platform, acquisitionPolicy, platforms, null);
     }
     public static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy,Map<Integer,PlatformInput> platforms,BuildDeltaCache deltaCache){
+        return inputs(acquisition, builds, cache, platform, acquisitionPolicy, platforms, deltaCache,
+                (request, policy) -> new MavenDependencyArtifactResolver(cache).resolve(request, policy));
+    }
+    static Inputs inputs(RepositoryAcquisitionResult acquisition,List<MavenBuildModelResolution> builds,Path cache,Optional<PlatformInput> platform,DependencyAcquisitionPolicy acquisitionPolicy,Map<Integer,PlatformInput> platforms,BuildDeltaCache deltaCache,java.util.function.BiFunction<ClasspathResolutionRequest,DependencyAcquisitionPolicy,MavenDependencyArtifactResolution> dependencyResolver){
         var views=Map.copyOf(platforms);views.forEach((release,view)->{if(release!=view.release())throw new IllegalArgumentException("PLATFORM_VIEW_RELEASE_MISMATCH");});
         if(builds.isEmpty())return new Inputs(Map.of(),Map.of(),List.of(),Map.of("mode","NOT_APPLICABLE"));
         if(deltaCache!=null){
@@ -96,7 +100,7 @@ public final class MavenScan {
         var conflictedSets=new HashSet<UniversalSourceIngestion.SourceSet>();var conflictedPoms=new HashSet<MavenCoordinate>();
         for(var resolved:builds){
         var request=new ClasspathResolutionRequest(resolved.request(),resolved.model(),new ClasspathResolutionPolicy(4096,8192,4_000_000,64_000_000,Math.max(DEFAULT_DEPENDENCY_TOTAL_BYTES,acquisitionPolicy.maxTotalBytes()),64));
-        var acquired=new MavenDependencyArtifactResolver(cache).resolve(request,acquisitionPolicy);var classpath=acquired.classpath();
+        var acquired=dependencyResolver.apply(request,acquisitionPolicy);var classpath=acquired.classpath();
         for(var manifest:classpath.manifests())if(manifest.sourceSet()!=SourcePlanModel.Kind.CUSTOM){
             var requested=resolved.model().modules().stream().filter(m->m.module().identity().equals(manifest.module())).flatMap(m->m.effectivePom().stream())
                     .flatMap(p->p.sourcePlan().sourceSets().stream()).filter(s->s.kind()==manifest.sourceSet()).flatMap(s->s.platformRelease().value().stream()).findFirst().flatMap(MavenScan::release);
@@ -111,7 +115,8 @@ public final class MavenScan {
                 resolutions.remove(key);conflictedSets.add(key);conflicts.add(new com.evolution.analysis.ingestion.IngestionEvidence.Issue(com.evolution.analysis.ingestion.IngestionEvidence.Reason.AMBIGUOUS_INPUT,key.toString(),List.of(prior.exactClasspathEvidence(),value.exactClasspathEvidence())));
             }
         }
-        var ledger=CapabilityGapNormalizer.normalize(EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),EvidenceNormalizationInput.builder().buildModels(List.of(resolved.model())).classpaths(List.of(classpath)).dependencyAcquisitions(acquired.acquisitions()).build());
+        var canonicalFailed=canonicalFailedAcquisitions(acquired.acquisitions(),acquisitionPolicy,unresolvedCoordinates(classpath));
+        var ledger=CapabilityGapNormalizer.normalize(EvidenceContext.forSnapshot(acquisition.snapshot().orElseThrow().identity()),EvidenceNormalizationInput.builder().buildModels(List.of(resolved.model())).classpaths(List.of(classpath)).dependencyAcquisitions(canonicalFailed).build());
         ledgers.add(ledger);
         gaps.addAll(ledger.gaps());
         resolved.request().artifactPoms().forEach((coordinate,pom)->{
@@ -120,14 +125,91 @@ public final class MavenScan {
                 external.remove(coordinate);conflictedPoms.add(coordinate);conflicts.add(new com.evolution.analysis.ingestion.IngestionEvidence.Issue(com.evolution.analysis.ingestion.IngestionEvidence.Reason.AMBIGUOUS_INPUT,coordinate.notation(),List.of(prior.digest(),pom.digest())));
             }
         });
-        summaries.add(Map.of("root",resolved.request().rootPom(),"build",resolved.identity(),"pomPolicy",resolved.policyIdentity(),
-                "poms",resolved.acquiredPoms().size(),"pomAttempts",resolved.attempts().size(),"pomProblems",resolved.problems(),
-                "classpath",classpath.identity(),"acquisition",acquired.identity(),"artifacts",classpath.artifacts().size(),"problems",classpath.manifests().stream().flatMap(m->m.problems().stream()).distinct().toList()));
+        int acquisitionAttempts=acquired.acquisitions().stream().mapToInt(a->a.attempts().size()).sum();
+        summaries.add(Map.ofEntries(
+                Map.entry("root",resolved.request().rootPom()),
+                Map.entry("build",resolved.identity()),
+                Map.entry("pomPolicy",resolved.policyIdentity()),
+                Map.entry("poms",resolved.acquiredPoms().size()),
+                Map.entry("pomAttempts",resolved.attempts().size()),
+                Map.entry("pomProblems",resolved.problems()),
+                Map.entry("classpath",classpath.identity()),
+                Map.entry("acquisition",acquired.identity()),
+                Map.entry("acquisitionAttempts",acquisitionAttempts),
+                Map.entry("artifacts",classpath.artifacts().size()),
+                Map.entry("problems",classpath.manifests().stream().flatMap(m->m.problems().stream()).distinct().toList())));
         }
         gaps.addAll(com.evolution.analysis.ingestion.IngestionEvidence.gaps(acquisition.snapshot().orElseThrow().identity(),new VersionedIdentifier("build.product-readiness","m8.4-v1"),acquisition.identity(),conflicts));
         var out=new Inputs(Map.copyOf(resolutions),Map.copyOf(external),List.copyOf(gaps),Map.of("mode",acquisitionPolicy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION","policy",acquisitionPolicy.identity(),"roots",summaries),ledgers);
         if(deltaCache!=null)deltaCache.putMavenInputs(acquisition,builds,cache,platform,acquisitionPolicy,views,out);
         return out;
+    }
+
+    static Set<ArtifactCoordinate> unresolvedCoordinates(ExactClasspathResult classpath) {
+        var unresolved = new TreeSet<ArtifactCoordinate>();
+        for (var attempt : classpath.attempts()) {
+            if (attempt.outcome() != ExactClasspathResult.AttemptOutcome.SUCCEEDED) {
+                unresolved.add(attempt.coordinate());
+            }
+        }
+        return unresolved;
+    }
+
+    /**
+     * Extracts a cache-state-independent, batch-independent canonical view of genuinely failed
+     * dependency acquisitions for ledger/graph projection. Operational cache-miss, mirror-fallback,
+     * and retry attempts stay in operational summaries rather than entering canonical graph identity,
+     * while every still-unresolved coordinate retains its typed failure gap.
+     */
+    static List<DependencyAcquisitionResult> canonicalFailedAcquisitions(
+            List<DependencyAcquisitionResult> acquisitions,
+            DependencyAcquisitionPolicy policy,
+            Set<ArtifactCoordinate> unresolvedFilter) {
+        if (acquisitions.isEmpty()) return List.of();
+        var succeeded = new HashSet<ArtifactCoordinate>();
+        for (var result : acquisitions) {
+            for (var outcome : result.outcomes()) {
+                if (outcome.status() != DependencyAcquisitionResult.Status.FAILED) {
+                    succeeded.add(outcome.requirement().coordinate());
+                }
+            }
+        }
+        Comparator<VersionedIdentifier> providerOrder = Comparator.comparing(VersionedIdentifier::id)
+                .thenComparing(VersionedIdentifier::version);
+        Comparator<DependencyAcquisitionRequest.Requirement> reqOrder = Comparator
+                .comparing(DependencyAcquisitionRequest.Requirement::coordinate)
+                .thenComparing(r -> r.expectedDigest().map(ContentDigest::value).orElse(""));
+        var failedByProvider = new TreeMap<VersionedIdentifier, TreeMap<DependencyAcquisitionRequest.Requirement, DependencyAcquisitionResult.FailureReason>>(providerOrder);
+        for (var result : acquisitions) {
+            for (var outcome : result.outcomes()) {
+                if (outcome.status() != DependencyAcquisitionResult.Status.FAILED || outcome.failureReason().isEmpty()) {
+                    continue;
+                }
+                var coord = outcome.requirement().coordinate();
+                if (succeeded.contains(coord)) continue;
+                if (unresolvedFilter != null && !unresolvedFilter.contains(coord)) continue;
+                failedByProvider.computeIfAbsent(result.provider(), ignored -> new TreeMap<>(reqOrder))
+                        .put(outcome.requirement(), outcome.failureReason().orElseThrow());
+            }
+        }
+        if (failedByProvider.isEmpty()) return List.of();
+        int maxChunk = policy.maxCoordinates();
+        var canonical = new ArrayList<DependencyAcquisitionResult>();
+        for (var entry : failedByProvider.entrySet()) {
+            var reqList = new ArrayList<>(entry.getValue().keySet());
+            for (int start = 0; start < reqList.size(); start += maxChunk) {
+                var chunk = List.copyOf(reqList.subList(start, Math.min(start + maxChunk, reqList.size())));
+                var req = new DependencyAcquisitionRequest(chunk, policy);
+                var outcomes = new ArrayList<DependencyAcquisitionResult.Outcome>(chunk.size());
+                for (var r : chunk) {
+                    outcomes.add(new DependencyAcquisitionResult.Outcome(
+                            r, DependencyAcquisitionResult.Status.FAILED, Optional.empty(),
+                            Optional.of(entry.getValue().get(r))));
+                }
+                canonical.add(DependencyAcquisitionResult.create(req, entry.getKey(), outcomes, List.of(), 0L));
+            }
+        }
+        return List.copyOf(canonical);
     }
     /** Create only the caller-selected cache, without traversing existing aliases/links.
      * Unavailable storage remains a typed acquisition result rather than aborting source analysis. */

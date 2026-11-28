@@ -17,7 +17,7 @@ final class ConditionIdentitySupport {
                 "kind", kind, "version", 1)).value();
     }
 
-    static ContentDigest digest(Object value) { return ContentDigest.sha256Utf8(CanonicalJson.write(value)); }
+    static ContentDigest digest(Object value) { return CanonicalJson.sha256(value); }
 
     static String require(String value, String kind) {
         if (value == null || !Pattern.matches(Pattern.quote(kind) + ":sha256:[0-9a-f]{64}", value)) {

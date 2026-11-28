@@ -59,15 +59,21 @@ public final class ConditionModel {
     private final List<CapabilityGapRecord> gaps;
     private final Coverage coverage;
     private final Status status;
+    private final Map<ConditionOccurrence, ConditionOccurrence.Identity> occurrenceIdentities;
 
     private ConditionModel(ConfigurationSpace space, List<ConditionOccurrence> inputRows) {
         this.space = Objects.requireNonNull(space);
-        inputRows = ContractChecks.sortedDistinct(inputRows, Comparator.comparing(ConditionOccurrence::identity), "condition rows");
+        var idCache = new IdentityHashMap<ConditionOccurrence, ConditionOccurrence.Identity>(
+                Math.max(16, (inputRows.size() + space.constraints().size()) * 2));
+        for (var row : inputRows) idCache.computeIfAbsent(row, ConditionOccurrence::identity);
+        for (var row : space.constraints()) idCache.computeIfAbsent(row, ConditionOccurrence::identity);
+        inputRows = ContractChecks.sortedDistinct(inputRows, Comparator.comparing(idCache::get), "condition rows");
         Map<ConditionOccurrence.Identity, ConditionOccurrence> all = new TreeMap<>();
-        inputRows.forEach(row -> all.put(row.identity(), row));
-        space.constraints().forEach(row -> all.putIfAbsent(row.identity(), row));
+        inputRows.forEach(row -> all.put(idCache.get(row), row));
+        space.constraints().forEach(row -> all.putIfAbsent(idCache.get(row), row));
         List<ConditionOccurrence> ordered = List.copyOf(all.values());
         sourceRows = ordered;
+        occurrenceIdentities = idCache;
         inputIdentity = ConditionIdentitySupport.digest(Map.of("schema", SCHEMA, "provider", PROVIDER,
                 "space", space.identity(), "rows", ordered.stream().map(ConditionOccurrence::canonicalForm).toList()));
         Validator validator = new Validator(space, ordered);
@@ -88,6 +94,11 @@ public final class ConditionModel {
     public ContentDigest identity() { return identity; }
     public ContentDigest inputIdentity() { return inputIdentity; }
     public ConfigurationSpace space() { return space; }
+    /** Precomputed occurrence identity for rows in this model; falls back cleanly for external occurrences. */
+    public ConditionOccurrence.Identity identityOf(ConditionOccurrence occurrence) {
+        var cached = occurrenceIdentities.get(occurrence);
+        return cached != null ? cached : occurrence.identity();
+    }
     /** Complete immutable supplied roots, including formulas whose bounded expansion was withheld. */
     public List<ConditionOccurrence> sourceRows() { return sourceRows; }
     public List<Row> rows() { return rows; }

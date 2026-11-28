@@ -27,6 +27,9 @@
         <dependency>
             <groupId>org.springframework</groupId><artifactId>spring-expression</artifactId><version>6.2.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId><artifactId>asm</artifactId>
+        </dependency>
 
         <!-- Testing -->
         <dependency>

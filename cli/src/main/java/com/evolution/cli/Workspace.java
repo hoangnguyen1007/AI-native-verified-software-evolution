@@ -75,7 +75,10 @@ final class Workspace {
         return publish(input,List.of(),contribution);
     }
     com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input,Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers,PartitionedGraphStore.Contribution contribution)throws IOException {
-        create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),ledgers,contribution);
+        return publish(input,ledgers,contribution,false,null);
+    }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input,Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers,PartitionedGraphStore.Contribution contribution,boolean fastArchitecture,IncrementalGraphProjector projector)throws IOException {
+        create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),ledgers,contribution,fastArchitecture,projector);
     }
     com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(KnowledgeGraph input,PartitionedGraphStore.Contribution contribution)throws IOException {
         create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),contribution);
@@ -83,6 +86,11 @@ final class Workspace {
     void select(com.evolution.analysis.filesystem.PartitionedGraphStore.Publication graph,Optional<String> context)throws IOException {
         if(context.isPresent()&&graph.contexts().stream().noneMatch(c->c.identity().equals(context.orElseThrow())))throw new IllegalArgumentException("Foreign context");
         atomicSelection(CanonicalJson.write(Map.of("graph",graph.graph(),"context",context)).getBytes(StandardCharsets.UTF_8));
+    }
+    void selectExisting(ContentDigest graphId,Optional<String> context)throws IOException {
+        Path snapshot=safe(root.resolve(graphId.value().substring(7)+".graph.json"));
+        if(!Files.isRegularFile(snapshot,NOFOLLOW_LINKS))throw new IOException("GRAPH_SNAPSHOT_UNAVAILABLE");
+        atomicSelection(CanonicalJson.write(Map.of("graph",graphId,"context",context)).getBytes(StandardCharsets.UTF_8));
     }
     PartitionedGraphStore partitioned()throws IOException{return new PartitionedGraphStore(root.resolve("graph-pages"));}
     void rememberContext(KnowledgeGraph verified,String context)throws IOException {

@@ -59,6 +59,158 @@ class AnalysisJobApiTest {
         var data = GraphJson.object(envelope.get("data"));
         assertEquals("architecture.jobs:m8.1-v1", data.get("jobVersion"));
         assertEquals(false, data.get("analysisJobsEnabled"));
+        assertEquals("/mcp", data.get("mcpEndpoint"));
+        assertEquals("2025-11-25", data.get("mcpProtocolVersion"));
+        assertEquals(List.of("strict", "dfd-export"), data.get("projectionProfiles"));
+        assertEquals("strict", data.get("defaultProjectionProfile"));
+
+        var healthResp = api.handle("GET", "/api/v1/health", null, new byte[0], () -> false);
+        assertEquals(200, healthResp.status());
+        var health = data(healthResp);
+        assertEquals("ok", health.get("status"));
+        assertEquals("/mcp", health.get("mcpEndpoint"));
+        assertEquals("2025-11-25", health.get("mcpProtocolVersion"));
+        assertEquals(List.of("strict", "dfd-export"), health.get("projectionProfiles"));
+        assertEquals("strict", health.get("defaultProjectionProfile"));
+
+        String previousProp = System.getProperty("evo.projection.profile");
+        System.setProperty("evo.projection.profile", "dfd-export");
+        try {
+            assertEquals("dfd-export", data(api.handle("GET", "/api/v1", null, new byte[0], () -> false))
+                    .get("defaultProjectionProfile"));
+            assertEquals("dfd-export", data(api.handle("GET", "/api/v1/health", null, new byte[0], () -> false))
+                    .get("defaultProjectionProfile"));
+        } finally {
+            if (previousProp == null) {
+                System.clearProperty("evo.projection.profile");
+            } else {
+                System.setProperty("evo.projection.profile", previousProp);
+            }
+        }
+    }
+
+    @Test void perJobProjectionProfileValidationPersistenceAndOperationalTelemetry() throws Exception {
+        var strictGraph = new QueryFixture().node("strict-node").graph();
+        var dfdGraph = new QueryFixture().node("dfd-node").graph();
+        var store = new InMemoryGraphStore();
+        var reports = new PublishedReports();
+        var seenProfiles = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var registration = AnalysisJobsTest.registration("local", control -> {
+            String profile = control.projectionProfile();
+            seenProfiles.add(profile);
+            control.recordAcquisitionTelemetry("strict".equals(profile) ? 5L : 12L, "strict".equals(profile) ? 2L : 4L);
+            return AnalysisJobsTest.output("dfd-export".equals(profile) ? dfdGraph : strictGraph);
+        });
+        Path jobsDir = Files.createDirectory(connectionRoot.resolve("profile-jobs"));
+        String strictId;
+        String dfdId;
+        String previousProp = System.getProperty("evo.projection.profile");
+        System.clearProperty("evo.projection.profile");
+        try {
+            try (var disk = new com.evolution.backend.analysis.AnalysisJobDiskStore(jobsDir);
+                 var jobs = new AnalysisJobs(List.of(registration), store, reports, AnalysisJobs.Limits.defaults(), disk)) {
+                var api = new ArchitectureQueryApi(store, reports, ApiLimits.defaults(), jobs);
+                String route = "/api/v1/analysis/jobs";
+
+                // Invalid non-blank values and non-strings MUST fail-closed with HTTP 400
+                for (String invalid : List.of(
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"bad-1\",\"projectionProfile\":\"bogus\"}",
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"bad-2\",\"projectionProfile\":\"relaxed\"}",
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"bad-3\",\"projectionProfile\":123}",
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"bad-4\",\"projectionProfile\":true}",
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"bad-5\",\"projectionProfile\":[]}")) {
+                    assertEquals(400, call(api, "POST", route, invalid).status(), invalid);
+                }
+
+                // Omitted / blank defaults to configuredProjectionProfile() ("strict")
+                var createdStrict = call(api, "POST", route,
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"k-strict\",\"projectionProfile\":\"   \"}");
+                assertEquals(202, createdStrict.status());
+                assertEquals("strict", data(createdStrict).get("projectionProfile"));
+                strictId = GraphJson.string(data(createdStrict).get("id"));
+                AnalysisJobsTest.finished(jobs, strictId);
+
+                // Explicit case-insensitive "DFD-EXPORT" normalizes to "dfd-export"
+                var createdDfd = call(api, "POST", route,
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"k-dfd\",\"projectionProfile\":\"DFD-EXPORT\"}");
+                assertEquals(202, createdDfd.status());
+                assertEquals("dfd-export", data(createdDfd).get("projectionProfile"));
+                dfdId = GraphJson.string(data(createdDfd).get("id"));
+                AnalysisJobsTest.finished(jobs, dfdId);
+
+                // Idempotency retry with mismatched projectionProfile fails with 409 IDEMPOTENCY_CONFLICT
+                var conflict = call(api, "POST", route,
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"k-dfd\",\"projectionProfile\":\"strict\"}");
+                assertEquals(409, conflict.status());
+                assertTrue(new String(conflict.body(), StandardCharsets.UTF_8).contains("IDEMPOTENCY_CONFLICT"));
+
+                // Same key + same profile is idempotent (200)
+                var retryOk = call(api, "POST", route,
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"k-dfd\",\"projectionProfile\":\"dfd-export\"}");
+                assertEquals(200, retryOk.status());
+                assertEquals(dfdId, data(retryOk).get("id"));
+                assertEquals("dfd-export", data(retryOk).get("projectionProfile"));
+
+                // Status endpoint exposes projectionProfile + operational acquisitionSummary separate from canonical graph
+                var strictView = data(call(api, "GET", route + "/" + strictId, ""));
+                assertEquals("strict", strictView.get("projectionProfile"));
+                assertEquals(strictGraph.identity().value(), GraphJson.object(strictView.get("result")).get("graph"));
+                var strictAcq = GraphJson.object(strictView.get("acquisitionSummary"));
+                assertEquals(5, ((Number) strictAcq.get("acquisitionAttempts")).intValue());
+                assertEquals(2, ((Number) strictAcq.get("pomAttempts")).intValue());
+                assertEquals("strict", strictAcq.get("projectionProfile"));
+
+                var dfdView = data(call(api, "GET", route + "/" + dfdId, ""));
+                assertEquals("dfd-export", dfdView.get("projectionProfile"));
+                assertEquals(dfdGraph.identity().value(), GraphJson.object(dfdView.get("result")).get("graph"));
+                var dfdAcq = GraphJson.object(dfdView.get("acquisitionSummary"));
+                assertEquals(12, ((Number) dfdAcq.get("acquisitionAttempts")).intValue());
+                assertEquals(4, ((Number) dfdAcq.get("pomAttempts")).intValue());
+                assertEquals("dfd-export", dfdAcq.get("projectionProfile"));
+
+                // Telemetry endpoint also exposes projectionProfile + acquisitionSummary
+                var dfdTel = data(call(api, "GET", route + "/" + dfdId + "/telemetry", ""));
+                assertEquals("dfd-export", dfdTel.get("projectionProfile"));
+                assertEquals(12, ((Number) GraphJson.object(dfdTel.get("acquisitionSummary")).get("acquisitionAttempts")).intValue());
+
+                // List endpoint & history endpoint persist projectionProfile on every item
+                var listItems = GraphJson.array(data(call(api, "GET", route, "")).get("items"));
+                assertEquals(2, listItems.size());
+                var listedProfiles = listItems.stream().map(o -> GraphJson.string(GraphJson.object(o).get("projectionProfile"))).toList();
+                assertTrue(listedProfiles.contains("strict") && listedProfiles.contains("dfd-export"), listedProfiles.toString());
+
+                // When EVO_PROJECTION_PROFILE / -Devo.projection.profile is set to dfd-export, omitted field uses it
+                System.setProperty("evo.projection.profile", "dfd-export");
+                var envDefaulted = call(api, "POST", route, "{\"setup\":\"local\",\"idempotencyKey\":\"k-env-default\"}");
+                assertEquals(202, envDefaulted.status());
+                assertEquals("dfd-export", data(envDefaulted).get("projectionProfile"));
+                AnalysisJobsTest.finished(jobs, GraphJson.string(data(envDefaulted).get("id")));
+                assertEquals(List.of("strict", "dfd-export", "dfd-export"), seenProfiles);
+            }
+
+            // Reopen AnalysisJobDiskStore across restart: projectionProfile & acquisitionSummary survive durably
+            System.clearProperty("evo.projection.profile");
+            try (var reopenedDisk = new com.evolution.backend.analysis.AnalysisJobDiskStore(jobsDir);
+                 var reopenedJobs = new AnalysisJobs(List.of(registration), store, reports, AnalysisJobs.Limits.defaults(), reopenedDisk)) {
+                var reopenedApi = new ArchitectureQueryApi(store, reports, ApiLimits.defaults(), reopenedJobs);
+                var reloadedDfd = data(call(reopenedApi, "GET", "/api/v1/analysis/jobs/" + dfdId, ""));
+                assertEquals("dfd-export", reloadedDfd.get("projectionProfile"));
+                var reloadedAcq = GraphJson.object(reloadedDfd.get("acquisitionSummary"));
+                assertEquals(12, ((Number) reloadedAcq.get("acquisitionAttempts")).intValue());
+                assertEquals(4, ((Number) reloadedAcq.get("pomAttempts")).intValue());
+                assertEquals("dfd-export", reloadedAcq.get("projectionProfile"));
+
+                // Cross-restart idempotency check also enforces projectionProfile match
+                assertEquals(409, call(reopenedApi, "POST", "/api/v1/analysis/jobs",
+                        "{\"setup\":\"local\",\"idempotencyKey\":\"k-dfd\",\"projectionProfile\":\"strict\"}").status());
+            }
+        } finally {
+            if (previousProp == null) {
+                System.clearProperty("evo.projection.profile");
+            } else {
+                System.setProperty("evo.projection.profile", previousProp);
+            }
+        }
     }
     @Test void submitDiscoverPollAndQueryUseTheExactPublishedDomainResults() throws Exception {
         var f = new QueryFixture().node("a"); var store = new InMemoryGraphStore(); var reports = new PublishedReports();

@@ -174,4 +174,59 @@ class RepositoryConfigurationSpaceBuilderTest {
                 assertTrue(selected.gaps().stream()
                                 .anyMatch(g -> "CONFIGURATION_SPACE_DIMENSION_BOUNDED".equals(g.reasonCode())));
         }
+
+        @Test
+        void collectsLegacySpringProfilesKeysIntoProfileDimensions() throws Exception {
+                var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/sat-legacy-profiles.git");
+                var module = ModuleDescriptor.create(repo, ".", "app");
+                String yml = "spring:\n  profiles: \"!dev & cloud\"\n---\nspring.profiles:\n  - qa\n";
+                var doc = SourceDocument.create(repo, module, "src/main/resources/application.yml",
+                                ContentDigest.sha256Utf8(yml), SourceClassification.OTHER);
+                var config = new ConfigDataIngestion().ingest(
+                                new RepositoryInputs(
+                                                RepositorySnapshot.create(repo, Optional.empty(), false,
+                                                                List.of(SnapshotFile.from(doc)), List.of(doc)),
+                                                Map.of(doc.path(), new SourceInput(doc,
+                                                                yml.getBytes(StandardCharsets.UTF_8)))),
+                                ConfigDataIngestion.Policy.defaults());
+                var build = ConditionLoweringTest.fixture(List.of()).build();
+                var selected = RepositoryConfigurationSpaceBuilder.build(build, config, List.of());
+                var names = selected.space().domains().stream()
+                                .filter(d -> d.variable().kind() == FiniteDomain.Kind.PROFILE)
+                                .map(d -> d.variable().name()).toList();
+                assertTrue(names.containsAll(List.of("dev", "cloud", "qa")), () -> "profiles=" + names);
+        }
+
+        @Test
+        void retainsNonMatchingWitnessForHavingValueWithMatchIfMissingPreventsFalseMust() throws Exception {
+                var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/having-value-soundness.git");
+                var module = ModuleDescriptor.create(repo, ".", "app");
+                String yml = "app:\n  audit:\n    mode: strict\n";
+                var doc = SourceDocument.create(repo, module, "src/main/resources/application.yml",
+                                ContentDigest.sha256Utf8(yml), SourceClassification.OTHER);
+                var config = new ConfigDataIngestion().ingest(
+                                new RepositoryInputs(
+                                                RepositorySnapshot.create(repo, Optional.empty(), false,
+                                                                List.of(SnapshotFile.from(doc)), List.of(doc)),
+                                                Map.of(doc.path(), new SourceInput(doc,
+                                                                yml.getBytes(StandardCharsets.UTF_8)))),
+                                ConfigDataIngestion.Policy.defaults());
+                var build = ConditionLoweringTest.fixture(List.of()).build();
+                var semantics = ConditionEvidenceLowering.semantics(
+                                new SpringFrameworkEvidence(false, Optional.empty(), List.of()));
+                var occ = new ConditionOccurrence(
+                                ConditionExpression.atom(semantics, new ConditionExpression.Property(
+                                                "app.audit", List.of("mode"), "strict", true)),
+                                config.documents().getFirst().evidence(), "cond/audit", "BEAN", 0);
+
+                var selected = RepositoryConfigurationSpaceBuilder.build(build, config, List.of(occ));
+                var modeDomain = selected.space().domains().stream()
+                                .filter(d -> d.variable().kind() == FiniteDomain.Kind.PROPERTY
+                                                && d.variable().name().equals("app.audit.mode"))
+                                .findFirst().orElseThrow();
+                assertTrue(modeDomain.values().contains(FiniteDomain.Value.missing()));
+                assertTrue(modeDomain.values().contains(FiniteDomain.Value.exact("strict")));
+                assertTrue(modeDomain.values().contains(FiniteDomain.Value.exact("false")),
+                                () -> "Expected non-matching falsifying witness in domain: " + modeDomain.values());
+        }
 }

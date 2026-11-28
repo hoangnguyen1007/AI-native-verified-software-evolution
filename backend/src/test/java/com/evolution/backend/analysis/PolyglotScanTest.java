@@ -667,4 +667,282 @@ class PolyglotScanTest {
                     "TS fetch('/orders/0') should match OpenAPI /orders/{id} route candidate");
         }
     }
+
+    @Test
+    void extractsKubernetesGatewayPrometheusGrafanaSpringCloudMessagingAndGapsCleanly() throws Exception {
+        Path source = Files.createDirectory(directory.resolve("cloud-native-source"));
+        Files.createDirectories(source.resolve("api-gateway/src/main/resources"));
+        Files.createDirectories(source.resolve("api-gateway/src/main/java/gw"));
+        Files.createDirectories(source.resolve("vets-service/src/main/resources"));
+        Files.createDirectories(source.resolve("vets-service/src/main/java/vets"));
+        Files.createDirectories(source.resolve("vets-service/src/main/go"));
+        Files.createDirectories(source.resolve("deploy"));
+        Files.createDirectories(source.resolve("monitoring/grafana/provisioning/datasources"));
+        Files.createDirectories(source.resolve("logging/pipeline"));
+
+        // F3 + F4 + F5 Spring Cloud Gateway & Stream YAML
+        Files.writeString(source.resolve("api-gateway/src/main/resources/application.yml"), """
+                spring:
+                  application:
+                    name: api-gateway
+                  cloud:
+                    gateway:
+                      routes:
+                        - id: vets
+                          uri: lb://vets-service
+                          predicates:
+                            - Path=/api/vet/**
+                          filters:
+                            - StripPrefix=2
+                    stream:
+                      bindings:
+                        orders-out:
+                          destination: vet.visits
+                  rabbitmq:
+                    host: rabbitmq
+                eureka:
+                  client:
+                    serviceUrl:
+                      defaultZone: http://registry:8761/eureka/
+                """);
+        Files.writeString(source.resolve("api-gateway/src/main/resources/web.js"),
+                "export function loadVets() { return fetch('/api/vet/vets'); }\n");
+        Files.writeString(source.resolve("api-gateway/src/main/java/gw/GatewayApp.java"), """
+                package gw;
+                import org.springframework.cloud.openfeign.FeignClient;
+                import org.springframework.cloud.netflix.zuul.EnableZuulProxy;
+                import org.springframework.web.bind.annotation.GetMapping;
+                @EnableZuulProxy
+                @FeignClient(name = "vets-service", path = "/vets")
+                interface VetsClient { @GetMapping("") String list(); }
+                """);
+        Files.writeString(source.resolve("vets-service/src/main/resources/application.properties"), """
+                spring.application.name=vets-service
+                spring.datasource.url=jdbc:postgresql://postgres:5432/vets
+                spring.rabbitmq.host=rabbitmq
+                spring.cloud.stream.bindings.visits-in.destination=vet.visits
+                """);
+        Files.writeString(source.resolve("vets-service/src/main/java/vets/VetsApp.java"), """
+                package vets;
+                import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+                import org.springframework.amqp.rabbit.annotation.RabbitListener;
+                @EnableDiscoveryClient
+                public class VetsApp {
+                    @RabbitListener(queues = "vet.visits")
+                    public void handle(String msg) {}
+                }
+                """);
+        Files.writeString(source.resolve("vets-service/src/main/go/routes.go"),
+                "package main\nfunc routes(r *mux.Router) { r.HandleFunc(\"/vets\", listVets).Methods(\"GET\") }\n");
+        // F4 Kubernetes Deployment + Service (container-only redis-cache)
+        Files.writeString(source.resolve("deploy/k8s.yaml"), """
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: vets-service
+                spec:
+                  template:
+                    spec:
+                      containers:
+                        - name: server
+                          image: demo/vets:1
+                          env:
+                            - name: REDIS_ADDR
+                              value: redis-cart:6379
+                ---
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: redis-cart
+                spec:
+                  template:
+                    spec:
+                      containers:
+                        - name: redis
+                          image: redis:alpine
+                          ports:
+                            - containerPort: 6379
+                ---
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: api-gateway
+                spec:
+                  type: LoadBalancer
+                  ports:
+                    - port: 8080
+                """);
+        // F4 Prometheus & Grafana YAML
+        Files.writeString(source.resolve("monitoring/prometheus.yml"), """
+                scrape_configs:
+                  - job_name: vets
+                    metrics_path: /actuator/prometheus
+                    static_configs:
+                      - targets: ['vets-service:8080']
+                """);
+        Files.writeString(source.resolve("monitoring/grafana/provisioning/datasources/datasources.yml"), """
+                datasources:
+                  - name: Prometheus
+                    type: prometheus
+                    url: http://prometheus:9090
+                """);
+        // Unsupported non-YAML log config DSL must produce explicit CapabilityGapRecord(UNSUPPORTED_CONFIG_DSL)
+        Files.writeString(source.resolve("logging/pipeline/agent.conf"),
+                "input { tcp { port => 5000 } }\noutput { elasticsearch { hosts => [\"elasticsearch:9200\"] } }\n");
+
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("urn:test:cloud-native-batch3");
+        try (var intake = new RepositoryIntake(directory.resolve("cn-intake"))) {
+            intake.localComplete(source, "cn", new StreamingAcquisitionRequest(repo, Optional.empty(), false, List.of()), () -> false);
+            var readiness = intake.readiness("cn", ReadinessPlanner.Policy.comprehensive(), () -> false);
+            var snapshot = RepositorySnapshot.create(repo, Optional.empty(), false, List.of(), List.of());
+            var scan = new PolyglotScan();
+            var result = scan.run("cn", intake, readiness, EvidenceContext.forSnapshot(snapshot.identity()),
+                    Optional.empty(), directory.resolve("cn-work"), () -> false);
+            assertTrue(result.gaps().stream().anyMatch(g -> g.reasonCode().equals("UNSUPPORTED_CONFIG_DSL")),
+                    () -> "Unsupported .conf DSL must emit explicit gap: " + result.gaps());
+
+            var input = new CanonicalGraphInput(new RepositoryInputs(snapshot, Map.of()), Optional.empty(),
+                    Optional.empty(), List.of(), List.of(), result.gaps());
+            var pages = new PartitionedGraphStore(directory.resolve("cn-pages"));
+            var snapshots = directory.resolve("cn-snapshots");
+            var publishedStrict = pages.build(input, snapshots, () -> false,
+                    store -> scan.project(result, store, ServiceArchitectureProjection.ProjectionProfile.STRICT, () -> false));
+            var graphStrict = FileGraphStore.readSnapshot(
+                    snapshots.resolve(publishedStrict.graph().value().substring(7) + ".graph.json"),
+                    64_000_000, new GraphJson.StreamLimits(64_000_000, 128, 64_000_000));
+
+            assertTrue(graphStrict.nodes().stream().anyMatch(n -> n.kind().equals("INFRA_COMPONENT")));
+            assertTrue(graphStrict.nodes().stream().noneMatch(n -> n.kind().equals("EXTERNAL_ACTOR")),
+                    "STRICT profile must not emit EXTERNAL_ACTOR");
+            assertTrue(graphStrict.edges().stream().anyMatch(e -> e.kind().equals("CALLS_SERVICE")));
+            assertTrue(graphStrict.edges().stream().anyMatch(e -> e.kind().equals("EVENT_FLOW")));
+            assertTrue(graphStrict.edges().stream().anyMatch(e -> e.kind().equals("PUBLISHES_TO")));
+            assertTrue(graphStrict.edges().stream().anyMatch(e -> e.kind().equals("CONSUMES_FROM")));
+            assertTrue(graphStrict.evidence().stream().anyMatch(e -> e.canonicalJson().contains("PROMETHEUS_SCRAPE")));
+            assertTrue(graphStrict.evidence().stream().anyMatch(e -> e.canonicalJson().contains("GATEWAY_ROUTE")));
+            assertTrue(graphStrict.evidence().stream().anyMatch(e -> e.canonicalJson().contains("rewrittenPath")));
+
+            // DFD_EXPORT profile
+            var publishedDfd = pages.build(input, snapshots, () -> false,
+                    store -> scan.project(result, store, ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT, () -> false));
+            var graphDfd = FileGraphStore.readSnapshot(
+                    snapshots.resolve(publishedDfd.graph().value().substring(7) + ".graph.json"),
+                    64_000_000, new GraphJson.StreamLimits(64_000_000, 128, 64_000_000));
+            assertTrue(graphDfd.nodes().stream().anyMatch(n -> n.kind().equals("EXTERNAL_ACTOR")));
+            assertTrue(graphDfd.evidence().stream().anyMatch(e -> e.canonicalJson().contains("DERIVED_DFD_POLICY")));
+        }
+    }
+
+    @Test
+    void testRootIsolationHelmGapProxyLogbackAndStarterFactsIntegrateCleanlyAndDeterministically() throws Exception {
+        Path source = Files.createDirectory(directory.resolve("batch10-decl-source"));
+        Files.createDirectories(source.resolve("orders/src/main/java/com/demo"));
+        Files.createDirectories(source.resolve("orders/src/test/java/com/demo"));
+        Files.createDirectories(source.resolve("orders/src/main/resources"));
+        Files.createDirectories(source.resolve("orders/src/test/resources"));
+        Files.createDirectories(source.resolve("charts/demo/templates"));
+        Files.createDirectories(source.resolve("proxy"));
+        Files.createDirectories(source.resolve("logging/pipeline"));
+
+        Files.writeString(source.resolve("orders/pom.xml"), """
+                <project>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.springframework.cloud</groupId>
+                      <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+                    </dependency>
+                    <dependency>
+                      <groupId>org.springframework.boot</groupId>
+                      <artifactId>spring-boot-starter-data-jpa</artifactId>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """);
+        Files.writeString(source.resolve("orders/src/main/java/com/demo/OrderApp.java"), """
+                package com.demo;
+                import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+                @EnableDiscoveryClient
+                public class OrderApp {}
+                """);
+        // Test-root Java client & Spring config MUST be isolated from production passive topology facts
+        Files.writeString(source.resolve("orders/src/test/java/com/demo/OrderIntegrationTest.java"), """
+                package com.demo;
+                import org.springframework.web.client.RestTemplate;
+                public class OrderIntegrationTest {
+                    RestTemplate rest = new RestTemplate();
+                    void testCall() { rest.getForObject("http://billing-service/test-only", String.class); }
+                }
+                """);
+        Files.writeString(source.resolve("orders/src/test/resources/application.yml"), """
+                spring:
+                  application:
+                    name: test-only-order
+                  datasource:
+                    url: jdbc:postgresql://test-only-db:5432/test
+                """);
+        Files.writeString(source.resolve("orders/src/main/resources/logback-spring.xml"), """
+                <configuration>
+                  <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+                    <destination>logstash:5000</destination>
+                  </appender>
+                </configuration>
+                """);
+        Files.writeString(source.resolve("proxy/httpd-vhosts.conf"),
+                "ProxyPass /orders http://orders:8080/orders\n");
+        Files.writeString(source.resolve("charts/demo/templates/deployment.yaml"), """
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: {{ .Release.Name }}-orders
+                spec:
+                  template:
+                    spec:
+                      containers:
+                        - name: orders
+                          image: demo/orders:1
+                """);
+        Files.writeString(source.resolve("logging/pipeline/custom.conf"),
+                "input { stdin {} }\n");
+
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("urn:test:batch10-decl-scan");
+        Path cacheRoot = Files.createDirectory(directory.resolve("batch10-cache"));
+        try (var intake = new RepositoryIntake(directory.resolve("batch10-intake"))) {
+            intake.localComplete(source, "b10",
+                    new StreamingAcquisitionRequest(repo, Optional.empty(), false, List.of()), () -> false);
+            var readiness = intake.readiness("b10", ReadinessPlanner.Policy.comprehensive(), () -> false);
+            var snapshot = RepositorySnapshot.create(repo, Optional.empty(), false, List.of(), List.of());
+            var scan = new PolyglotScan();
+            var cold = scan.run("b10", intake, readiness, EvidenceContext.forSnapshot(snapshot.identity()),
+                    Optional.empty(), directory.resolve("b10-work-1"), () -> false, digest -> null, false,
+                    path -> false, Optional.of(cacheRoot));
+            var warm = scan.run("b10", intake, readiness, EvidenceContext.forSnapshot(snapshot.identity()),
+                    Optional.empty(), directory.resolve("b10-work-2"), () -> false, digest -> null, false,
+                    path -> false, Optional.of(cacheRoot));
+            var uncached = scan.run("b10", intake, readiness, EvidenceContext.forSnapshot(snapshot.identity()),
+                    Optional.empty(), directory.resolve("b10-work-3"), () -> false, digest -> null, false,
+                    path -> false, Optional.empty());
+
+            assertEquals(uncached.syntax().records().identity(), cold.syntax().records().identity());
+            assertEquals(cold.syntax().records().identity(), warm.syntax().records().identity());
+
+            assertTrue(cold.gaps().stream().anyMatch(g -> g.reasonCode().equals("UNRENDERED_HELM_TEMPLATE")),
+                    "Helm chart under /templates/ must emit UNRENDERED_HELM_TEMPLATE gap");
+            assertTrue(cold.gaps().stream().anyMatch(g -> g.reasonCode().equals("UNSUPPORTED_CONFIG_DSL")),
+                    "Non-standard .conf must continue emitting UNSUPPORTED_CONFIG_DSL");
+            assertEquals(2L, cold.syntax().categories().get("build-descriptor:INFRA_DEPENDENCY_STARTER"));
+            assertEquals(1L, cold.syntax().categories().get("config:INFRA_CONFIG_REF"));
+            assertEquals(1L, cold.syntax().categories().get("config:GATEWAY_ROUTE"));
+
+            // Verify zero test-source HTTP calls or test-source config identities leaked into syntax records
+            try (var rows = cold.tables().open(cold.syntax().records(), () -> false)) {
+                SemanticTables.Row r;
+                while ((r = rows.next()) != null) {
+                    String json = CanonicalJson.write(r.fields());
+                    assertFalse(json.contains("test-only-db"), "src/test/resources config must not leak: " + json);
+                    assertFalse(json.contains("/test-only"), "src/test/java HTTP client must not leak: " + json);
+                    assertFalse(json.contains(".Release.Name"), "Helm template name must not leak as fact: " + json);
+                }
+            }
+        }
+    }
 }

@@ -81,6 +81,12 @@ public final class SpringSourceEvidence {
             Map.entry("Repository", "org.springframework.stereotype.Repository"),
             Map.entry("Controller", "org.springframework.stereotype.Controller"),
             Map.entry("RestController", "org.springframework.web.bind.annotation.RestController"),
+            Map.entry("RequestMapping", "org.springframework.web.bind.annotation.RequestMapping"),
+            Map.entry("GetMapping", "org.springframework.web.bind.annotation.GetMapping"),
+            Map.entry("PostMapping", "org.springframework.web.bind.annotation.PostMapping"),
+            Map.entry("PutMapping", "org.springframework.web.bind.annotation.PutMapping"),
+            Map.entry("DeleteMapping", "org.springframework.web.bind.annotation.DeleteMapping"),
+            Map.entry("PatchMapping", "org.springframework.web.bind.annotation.PatchMapping"),
             Map.entry("Configuration", "org.springframework.context.annotation.Configuration"),
             Map.entry("SpringBootApplication", "org.springframework.boot.autoconfigure.SpringBootApplication"),
             Map.entry("ComponentScan", "org.springframework.context.annotation.ComponentScan"),
@@ -122,7 +128,20 @@ public final class SpringSourceEvidence {
             Map.entry("ImportResource", "org.springframework.context.annotation.ImportResource"),
             Map.entry("ConfigurationProperties", "org.springframework.boot.context.properties.ConfigurationProperties"),
             Map.entry("EnableConfigurationProperties",
-                    "org.springframework.boot.context.properties.EnableConfigurationProperties"));
+                    "org.springframework.boot.context.properties.EnableConfigurationProperties"),
+            Map.entry("FeignClient", "org.springframework.cloud.openfeign.FeignClient"),
+            Map.entry("EnableDiscoveryClient", "org.springframework.cloud.client.discovery.EnableDiscoveryClient"),
+            Map.entry("EnableEurekaClient", "org.springframework.cloud.netflix.eureka.EnableEurekaClient"),
+            Map.entry("EnableEurekaServer", "org.springframework.cloud.netflix.eureka.server.EnableEurekaServer"),
+            Map.entry("EnableConfigServer", "org.springframework.cloud.config.server.EnableConfigServer"),
+            Map.entry("EnableZuulProxy", "org.springframework.cloud.netflix.zuul.EnableZuulProxy"),
+            Map.entry("RabbitListener", "org.springframework.amqp.rabbit.annotation.RabbitListener"),
+            Map.entry("KafkaListener", "org.springframework.kafka.annotation.KafkaListener"),
+            Map.entry("StreamListener", "org.springframework.cloud.stream.annotation.StreamListener"),
+            Map.entry("EnableBinding", "org.springframework.cloud.stream.annotation.EnableBinding"),
+            Map.entry("EnableTurbineStream", "org.springframework.cloud.netflix.turbine.stream.EnableTurbineStream"),
+            Map.entry("EnableZipkinStreamServer",
+                    "org.springframework.cloud.sleuth.zipkin.stream.EnableZipkinStreamServer"));
     private static final Set<String> QUALIFIED_SPRING_ANNOTATIONS = buildQualifiedSpringAnnotations();
 
     private static Set<String> buildQualifiedSpringAnnotations() {
@@ -130,6 +149,7 @@ public final class SpringSourceEvidence {
         set.add("javax.inject.Inject");
         set.add("javax.inject.Named");
         set.add("javax.annotation.Resource");
+        set.add("org.springframework.cloud.netflix.feign.FeignClient");
         return Set.copyOf(set);
     }
 

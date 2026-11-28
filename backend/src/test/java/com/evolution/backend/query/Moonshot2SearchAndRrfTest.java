@@ -320,6 +320,19 @@ class Moonshot2SearchAndRrfTest {
                     () -> StopReason.NONE, rwIndex);
             assertTrue(repairPlan.files().stream().anyMatch(pf -> pf.path().endsWith("LedgerAuditService.java")));
 
+            var adHocOutcome = new CapturedRepair(null, rwIndex).proposeAdHoc(
+                    new CapturedRepair.AdHocRequest(ctx, "Inspect quantumLedgerChecksum",
+                            "Verify quantumLedgerChecksum handling", List.of(), List.of(),
+                            CapturedRepair.Strategy.AI, Optional.empty(), 1),
+                    graph, null, () -> StopReason.NONE);
+            assertEquals("WITHHELD", adHocOutcome.status());
+            assertTrue(adHocOutcome.reason().isPresent());
+            assertEquals(CapturedRepair.Reason.MODEL_NOT_CONFIGURED, adHocOutcome.reason().orElseThrow());
+            assertTrue(adHocOutcome.sources().stream()
+                            .anyMatch(f -> f.path().endsWith("LedgerAuditService.java")),
+                    "CapturedRepair(model, searchIndex) must thread searchIndex into focus seeding: "
+                            + adHocOutcome.sources());
+
             var searchRes = rwIndex.codeSearch(graph, "quantumLedgerChecksum", List.of(), true, 10, 0, null).orElseThrow();
             firstSearchJson = CanonicalJson.write(searchRes);
             firstRepoMapJson = CanonicalJson.write(rrfMap);

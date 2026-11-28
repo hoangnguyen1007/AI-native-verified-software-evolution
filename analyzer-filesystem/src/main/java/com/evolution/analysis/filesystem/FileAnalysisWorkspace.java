@@ -26,13 +26,32 @@ import java.util.zip.Inflater;
 public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoCloseable {
     private static final int ORDERED_PAGE_SIZE = 256;
     private static final int MIN_COMPRESS_BYTES = 256;
-    private static final int WRITE_BUFFER_BYTES = 64 * 1024;
-    private static final int SQLITE_COMMIT_BATCH = 512;
+    private static final int WRITE_BUFFER_BYTES = 256 * 1024;
+    private static final int SQLITE_BATCH_SIZE = 2_048;
+    private static final int SQLITE_COMMIT_BATCH = 8_192;
+    private static final int DISTINCT_PAGE_SIZE = 1_024;
+    private static final int MAX_CACHED_KEYS_PER_SPACE = 262_144;
     private static final byte FLAG_RAW = 0;
     private static final byte FLAG_DEFLATE = 1;
     private static final ThreadLocal<Deflater> ROW_DEFLATER = ThreadLocal.withInitial(() -> new Deflater(Deflater.BEST_SPEED, true));
     private static final ThreadLocal<Inflater> ROW_INFLATER = ThreadLocal.withInitial(() -> new Inflater(true));
     private int pendingUncommittedRows;
+    private PreparedStatement activeBatchStmt;
+    private int activeBatchCount;
+    private final Map<Integer, SpaceKeys> spaceKeys = new HashMap<>();
+
+    private record ByteKey(byte[] bytes, int hash) {
+        ByteKey(byte[] bytes) { this(bytes, Arrays.hashCode(bytes)); }
+        @Override public int hashCode() { return hash; }
+        @Override public boolean equals(Object obj) {
+            return obj instanceof ByteKey other && this.hash == other.hash && Arrays.equals(this.bytes, other.bytes);
+        }
+    }
+
+    private static final class SpaceKeys {
+        final HashSet<ByteKey> keys = new HashSet<>();
+        boolean overflowed;
+    }
 
     @Override public boolean concurrentTables() { return true; }
     private final Path directory;
@@ -117,8 +136,10 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             if (owned.owner() != this) throw new IllegalArgumentException("FOREIGN_ANALYSIS_SPOOL");
             synchronized (this) {
                 requireOpen();
-                try { flushFileWriteBufferLocked(); }
-                catch (IOException failed) { throw failure(failed); }
+                try {
+                    flushFileWriteBufferLocked();
+                    flushPendingBatchLocked();
+                } catch (IOException | SQLException failed) { throw failure(failed); }
             }
             owned.sealed = true; int size = owned.size;
             return new ReplayRows<>(owned.space, size);
@@ -141,14 +162,69 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         int space = space(), source = -1;
         if (rows instanceof FileAnalysisWorkspace.Rows<?> owned && owned.owner() == this) source = owned.space;
         if (rows instanceof FileAnalysisWorkspace.ReplayRows<?> owned && owned.owner() == this) source = owned.space;
-        if (source >= 0) for (int i = 0; i < rows.size(); i++) { var stored = this.<T>readStored(source, i); insertAlias(space, key.apply(stored.value()), stored.location()); }
-        else for (var row : rows) insertKey(space, key.apply(row), row);
+        if (source >= 0) {
+            record RawRow(byte[] framed, Location location) {}
+            record KeyedAlias(byte[] encodedKey, Location location) {}
+            int afterOrdinal = -1;
+            while (true) {
+                var page = new ArrayList<RawRow>(DISTINCT_PAGE_SIZE);
+                int lastOrdinal = afterOrdinal;
+                synchronized (this) {
+                    requireOpen();
+                    try {
+                        flushFileWriteBufferLocked();
+                        flushPendingBatchLocked();
+                        var q = query("SELECT ordinal,start,length,digest FROM rows WHERE space=? AND ordinal>? ORDER BY ordinal LIMIT " + DISTINCT_PAGE_SIZE);
+                        q.setInt(1, source);
+                        q.setInt(2, afterOrdinal);
+                        var channel = data.getChannel();
+                        try (var r = q.executeQuery()) {
+                            while (r.next()) {
+                                int ord = r.getInt(1);
+                                long start = r.getLong(2), length = r.getLong(3);
+                                byte[] expected = r.getBytes(4);
+                                if (start < 0 || length < 1 || start > writePosition - length || length > Integer.MAX_VALUE - 8)
+                                    throw new IOException("ANALYSIS_SPOOL_RANGE");
+                                byte[] framed = new byte[(int) length];
+                                var buf = ByteBuffer.wrap(framed);
+                                long pos = start;
+                                while (buf.hasRemaining()) {
+                                    int n = channel.read(buf, pos);
+                                    if (n < 0) throw new EOFException();
+                                    pos += n;
+                                }
+                                page.add(new RawRow(framed, new Location(start, length, expected)));
+                                lastOrdinal = ord;
+                            }
+                        }
+                    } catch (IOException | SQLException failed) { throw failure(failed); }
+                }
+                if (page.isEmpty()) break;
+                afterOrdinal = lastOrdinal;
+                var keyed = new ArrayList<KeyedAlias>(page.size());
+                for (var raw : page) {
+                    T val = this.<T>decodeFramed(raw.framed(), raw.location());
+                    keyed.add(new KeyedAlias(orderedKey(key.apply(val)), raw.location()));
+                }
+                synchronized (this) {
+                    requireOpen();
+                    for (var entry : keyed) {
+                        insertAliasLocked(space, entry.encodedKey(), entry.location());
+                    }
+                }
+                if (page.size() < DISTINCT_PAGE_SIZE) break;
+            }
+        } else {
+            for (var row : rows) insertKey(space, key.apply(row), row);
+        }
         int output = space();
         synchronized (this) {
             requireOpen();
             try {
+                flushPendingBatchLocked();
                 var q = query("INSERT INTO rows SELECT ?,ROW_NUMBER() OVER (ORDER BY key)-1,NULL,start,length,digest FROM rows WHERE space=?");
                 q.setInt(1, output); q.setInt(2, space); q.executeUpdate(); sizes.put(output, count(space));
+                spaceKeys.remove(space);
             } catch (SQLException failed) { throw failure(failed); }
         }
         return new ReplayRows<>(output, count(output));
@@ -158,13 +234,77 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     private record Stored<T>(T value, Location location) {}
     private record SerializedRow(byte[] bytes, int length, byte[] digest) {}
 
-    private synchronized void insertAlias(int space, String key, Location location) {
-        requireOpen();
+    private void flushPendingBatchLocked() throws SQLException {
+        if (activeBatchCount > 0 && activeBatchStmt != null) {
+            activeBatchStmt.executeBatch();
+            activeBatchCount = 0;
+            activeBatchStmt = null;
+        }
+    }
+
+    private void enqueueBatchRowLocked(PreparedStatement q) throws SQLException {
+        if (activeBatchStmt != null && activeBatchStmt != q && activeBatchCount > 0) {
+            flushPendingBatchLocked();
+        }
+        q.addBatch();
+        activeBatchStmt = q;
+        activeBatchCount++;
+        pendingUncommittedRows++;
+        if (activeBatchCount >= SQLITE_BATCH_SIZE) {
+            flushPendingBatchLocked();
+        }
+        if (pendingUncommittedRows >= SQLITE_COMMIT_BATCH) {
+            flushPendingBatchLocked();
+            db.commit();
+            pendingUncommittedRows = 0;
+        }
+    }
+
+    private boolean keyExistsLocked(int space, byte[] encodedKey, ByteKey bk) throws SQLException {
+        var sk = spaceKeys.get(space);
+        if (sk != null && sk.keys.contains(bk)) return true;
+        if (sk == null || !sk.overflowed) return false;
+        flushPendingBatchLocked();
+        var q = query("SELECT 1 FROM rows WHERE space=? AND key=?");
+        q.setInt(1, space); q.setBytes(2, encodedKey);
+        try (var r = q.executeQuery()) { return r.next(); }
+    }
+
+    private void recordKeyLocked(int space, ByteKey bk) {
+        var sk = spaceKeys.computeIfAbsent(space, k -> new SpaceKeys());
+        if (sk.keys.size() < MAX_CACHED_KEYS_PER_SPACE) {
+            sk.keys.add(bk);
+        } else {
+            sk.overflowed = true;
+        }
+    }
+
+    private void insertAliasLocked(int space, byte[] encodedKey, Location location) {
         try {
-            var q = query("INSERT OR IGNORE INTO rows VALUES(?,?,?,?,?,?)");
-            q.setInt(1, space); q.setInt(2, count(space)); q.setBytes(3, orderedKey(key));
-            q.setLong(4, location.start()); q.setLong(5, location.length()); q.setBytes(6, location.digest());
-            if (q.executeUpdate() > 0) sizes.put(space, count(space) + 1);
+            var bk = new ByteKey(encodedKey);
+            if (keyExistsLocked(space, encodedKey, bk)) return;
+            var sk = spaceKeys.computeIfAbsent(space, k -> new SpaceKeys());
+            if (!sk.overflowed) {
+                recordKeyLocked(space, bk);
+                int idx = count(space);
+                var q = query("INSERT OR IGNORE INTO rows VALUES(?,?,?,?,?,?)");
+                q.setInt(1, space); q.setInt(2, idx); q.setBytes(3, encodedKey);
+                q.setLong(4, location.start()); q.setLong(5, location.length()); q.setBytes(6, location.digest());
+                enqueueBatchRowLocked(q);
+                sizes.put(space, idx + 1);
+            } else {
+                flushPendingBatchLocked();
+                var q = query("INSERT OR IGNORE INTO rows VALUES(?,?,?,?,?,?)");
+                q.setInt(1, space); q.setInt(2, count(space)); q.setBytes(3, encodedKey);
+                q.setLong(4, location.start()); q.setLong(5, location.length()); q.setBytes(6, location.digest());
+                if (q.executeUpdate() > 0) {
+                    sizes.put(space, count(space) + 1);
+                    if (++pendingUncommittedRows >= SQLITE_COMMIT_BATCH) {
+                        db.commit();
+                        pendingUncommittedRows = 0;
+                    }
+                }
+            }
         } catch (SQLException failed) { throw failure(failed); }
     }
 
@@ -172,12 +312,11 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
 
     private boolean insertKey(int space, String key, Object value) {
         byte[] encodedKey = orderedKey(key);
+        var bk = new ByteKey(encodedKey);
         synchronized (this) {
             requireOpen();
             try {
-                var q = query("SELECT 1 FROM rows WHERE space=? AND key=?");
-                q.setInt(1, space); q.setBytes(2, encodedKey);
-                try (var r = q.executeQuery()) { if (r.next()) return false; }
+                if (keyExistsLocked(space, encodedKey, bk)) return false;
             } catch (SQLException failed) { throw failure(failed); }
         }
         // Serialize, compress, and hash outside the global monitor so concurrent threads overlap.
@@ -185,9 +324,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         synchronized (this) {
             requireOpen();
             try {
-                var q = query("SELECT 1 FROM rows WHERE space=? AND key=?");
-                q.setInt(1, space); q.setBytes(2, encodedKey);
-                try (var r = q.executeQuery()) { if (r.next()) return false; }
+                if (keyExistsLocked(space, encodedKey, bk)) return false;
+                recordKeyLocked(space, bk);
                 appendAndIndexLocked(space, count(space), encodedKey, serialized);
                 return true;
             } catch (SQLException | IOException failed) { throw failure(failed); }
@@ -240,6 +378,7 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
                 synchronized (FileAnalysisWorkspace.this) {
                     requireOpen();
                     try {
+                        flushPendingBatchLocked();
                         var q = query(after == null
                                 ? "SELECT ordinal,key FROM rows WHERE space=? ORDER BY key LIMIT " + ORDERED_PAGE_SIZE
                                 : "SELECT ordinal,key FROM rows WHERE space=? AND key>? ORDER BY key LIMIT " + ORDERED_PAGE_SIZE);
@@ -371,12 +510,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
         q.setInt(1, space); q.setInt(2, index);
         if (key == null) q.setNull(3, Types.BLOB); else q.setBytes(3, key);
         q.setLong(4, start); q.setLong(5, len); q.setBytes(6, row.digest());
-        q.executeUpdate();
+        enqueueBatchRowLocked(q);
         sizes.put(space, Math.max(sizes.get(space), index + 1));
-        if (++pendingUncommittedRows >= SQLITE_COMMIT_BATCH) {
-            db.commit();
-            pendingUncommittedRows = 0;
-        }
     }
 
     private void write(int space, int index, byte[] key, Object value) {
@@ -391,7 +526,6 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
 
     private <T> T read(int space, int index) { return this.<T>readStored(space, index).value(); }
 
-    @SuppressWarnings("unchecked")
     private <T> Stored<T> readStored(int space, int index) {
         byte[] framed;
         Location location;
@@ -399,6 +533,7 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
             requireOpen();
             try {
                 flushFileWriteBufferLocked();
+                flushPendingBatchLocked();
                 var q = query("SELECT start,length,digest FROM rows WHERE space=? AND ordinal=?");
                 q.setInt(1, space); q.setInt(2, index);
                 try (var r = q.executeQuery()) {
@@ -419,6 +554,11 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
                 }
             } catch (IOException | SQLException failed) { throw failure(failed); }
         }
+        return new Stored<>(this.<T>decodeFramed(framed, location), location);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T decodeFramed(byte[] framed, Location location) {
         // Verify SHA-256, decompress, and decode outside the global monitor.
         MessageDigest digest = StreamingContentStore.borrowSha256();
         byte[] actual;
@@ -433,7 +573,7 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
                 try (var in = new DataInputStream(new ByteArrayInputStream(raw, 1, raw.length - 1))) {
                     Object value = decode(in);
                     if (in.read() != -1) throw new IOException("ANALYSIS_SPOOL_TRAILING_BYTES");
-                    return new Stored<>((T) value, location);
+                    return (T) value;
                 }
             } else if (flag == FLAG_DEFLATE) {
                 if (framed.length < 5) throw new IOException("ANALYSIS_SPOOL_CORRUPT");
@@ -458,7 +598,7 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
                 try (var in = new DataInputStream(new ByteArrayInputStream(raw))) {
                     Object value = decode(in);
                     if (in.read() != -1) throw new IOException("ANALYSIS_SPOOL_TRAILING_BYTES");
-                    return new Stored<>((T) value, location);
+                    return (T) value;
                 }
             } else {
                 throw new IOException("ANALYSIS_SPOOL_FLAG");
@@ -610,6 +750,8 @@ public final class FileAnalysisWorkspace implements AnalysisWorkspace, AutoClose
     @Override public synchronized void close() throws IOException {
         if (closed) return; closed = true; IOException failure = null;
         try { flushFileWriteBufferLocked(); } catch (IOException failed) { failure = retain(failure, failed); }
+        try { flushPendingBatchLocked(); } catch (SQLException failed) { failure = retain(failure, new IOException("ANALYSIS_SPOOL_CLOSE_BATCH", failed)); }
+        activeBatchStmt = null; activeBatchCount = 0; spaceKeys.clear();
         for (var stmt : queries.values()) { try { stmt.close(); } catch (SQLException ignored) {} }
         queries.clear();
         try { db.close(); } catch (SQLException failed) { failure = new IOException("ANALYSIS_SPOOL_CLOSE", failed); }
