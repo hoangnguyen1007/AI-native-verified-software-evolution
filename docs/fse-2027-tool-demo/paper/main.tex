@@ -1,0 +1,83 @@
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{microtype}
+
+\title{Evo Workbench: Host-Safe Static Architecture Recovery, Conditional DI Reasoning, and Multi-JDK Isolated Repair}
+
+\author{Evo Platform Authors}
+\affiliation{%
+  \institution{University of Information Technology (VNU-HCM)}
+  \city{Ho Chi Minh City}
+  \country{Vietnam}
+}
+
+\begin{abstract}
+Modern Java and polyglot enterprise repositories rely heavily on build plugins, conditional dependency injection (DI), and cross-service protocols, posing two coupled challenges for software evolution tools: executing untrusted target builds on an analysis host compromises security, while single-configuration or static-only approximations flatten conditional Spring bean truth and overlook test-suite overfitting in automated refactoring. We present \textbf{Evo Workbench}, an online, host-safe architecture intelligence and verified evolution platform. Evo runs passively (\texttt{--build=off} / \texttt{EVO\_ONLINE\_MODE=true}) to recover canonical Software Knowledge Graphs (SKGs), models conditional Spring bean truth (\texttt{MUST}/\texttt{MAY}/\texttt{NEVER}/\texttt{UNKNOWN}) with content-addressed SHA-256 replay, exposes \textbf{23} read-only tools and \textbf{7} resources over Streamable HTTP MCP (\texttt{2025-11-25}) with strict origin enforcement and secret redaction, and certifies candidate patches across a pinned multi-JDK (\texttt{8}/\texttt{11}/\texttt{17}/\texttt{21}) sandbox using \textbf{22} deterministic AST/OpenRewrite recipes and 3-layer verification.
+\end{abstract}
+
+\keywords{Software Architecture Recovery, Spring Dependency Injection, Model Context Protocol, Isolated Automated Repair}
+
+\begin{document}
+\maketitle
+
+\section{Introduction and Motivation}
+Architecture recovery, comprehension, and automated refactoring tools often assume unrestricted host execution—invoking Maven or Gradle build plugins directly on developer workstations, flattening conditional Spring configurations into a single active world, or accepting plausible patches that pass tests via hollow method stubs~\cite{swerefactor2026}. Conversely, pure static tools that discard provenance or conflate derived flows with direct syntactic facts sacrifice auditability.
+
+\textbf{Evo Workbench} resolves this tension for practitioners and AI coding agents through a turnkey online web workbench (\texttt{evo-workbench-online:latest}, \texttt{backend/target/evo-workbench.jar}) built around deterministic canonical snapshots, explicit uncertainty reporting, and networkless container isolation.
+
+\section{Architecture and Safety Invariants}
+Evo enforces a unidirectional pipeline: \textit{acquisition $\rightarrow$ build model $\rightarrow$ semantic frontend $\rightarrow$ Spring enrichment $\rightarrow$ canonical graph $\rightarrow$ query/metrics/policy $\rightarrow$ presentation}. Six non-negotiable invariants govern all workbench surfaces:
+\begin{enumerate}
+  \item \textbf{Execution Safety (\texttt{I1}):} Untrusted target builds never run on the host; online acquisition runs passively (\texttt{--build=off}) and repair execution runs strictly inside networkless read-only containers (\texttt{--network=none --read-only --cap-drop=ALL}).
+  \item \textbf{Deterministic SHA-256 Replay (\texttt{I2}):} Identical inputs yield bit-identical canonical JSON digests across cold and warm incremental runs.
+  \item \textbf{Closed Reporting Denominator (\texttt{I3}):} Unresolved, partial, timed-out, or missing-dependency outcomes emit typed \texttt{CapabilityGapRecord} entries; coverage and confidence are reported separately from architecture health scores.
+  \item \textbf{Trust Tiers and AI Quarantine (\texttt{I4}):} Compiler/bytecode, source syntax, declarative config, derived DFD exports, and advisory LLM outputs remain strictly separated (\texttt{canonicalLeakage = 0}).
+  \item \textbf{Zero Benchmark Overfitting (\texttt{I5}):} Production code contains zero benchmark-specific identifiers or corpus shortcuts.
+  \item \textbf{Comprehensive Coverage (\texttt{I6}):} Generated sources and stubs are accounted for without silent truncation.
+\end{enumerate}
+
+\section{Online Workbench and MCP Ecosystem}
+Figure~1 summarizes the interactive workbench capabilities packaged in \texttt{evo-workbench-online:latest} (Vanilla HTML/CSS/JS + Cytoscape + Lucian UI):
+
+\begin{table}[t]
+\centering
+\caption{Verified Evo Workbench Capabilities and Live Smoke Metrics}
+\label{tab:workbench-metrics}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Capability / Surface} & \textbf{Verified Live Measurement} \\
+\midrule
+Online Web App Image & \texttt{evo-workbench-online:latest} (\texttt{710.5 MB}) \\
+Standalone Workbench JAR & \texttt{evo-workbench.jar} (\texttt{73.96 MB}) \\
+Streamable HTTP MCP (\texttt{POST /mcp}) & \texttt{2025-11-25}, \textbf{23} tools, \textbf{7} \texttt{evo://} resources \\
+Origin DNS-Rebinding Guard & Untrusted \texttt{Origin} $\rightarrow$ HTTP \texttt{403 FORBIDDEN\_ORIGIN} \\
+Built-in Deterministic Recipes & \textbf{22} recipes (\texttt{16} DI + \texttt{6} OpenRewrite compound) \\
+Multi-JDK Tier-1 Docker Matrix & \textbf{4/4} PASS: JDK \texttt{8/11/17/21} (\texttt{21.41--25.62 s}) \\
+Spring Oracle Suite (\texttt{T4}) & \textbf{29/29} PASS (\texttt{309} worlds, \texttt{0} false MUST/NEVER) \\
+\textit{Shopizer} \texttt{syntax-fast} Parity & Cold \texttt{88.14 s} / Warm \texttt{5.03 s}, \texttt{100\%} SHA-256 \\
+\textit{PetClinic} 3-Way Parity & Cold=Warm (\texttt{7.50/1.64 s}); Edit=Cold (\texttt{7.48/6.70 s}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Per-Job Epistemic Projection Switcher.} Practitioners can launch jobs under \texttt{strict} (direct canonical evidence) or \texttt{dfd-export} (derived dataflow projection for DFD tooling) without altering canonical graph storage or hiding capability gaps.
+
+\paragraph{Streamable HTTP MCP (\texttt{2025-11-25}).} AI agents connect to \texttt{POST /mcp} to query entities, incoming/outgoing impact, typed graph compositions, conditional Spring truth regions, and repair options with automatic Shannon-entropy secret redaction and SHA-256-hashed PAT scoping.
+
+\section{Multi-JDK Isolated Repair and Certification}
+Inside the \textbf{SKG-RTS Repair Studio}, Evo prioritizes \textbf{22} deterministic AST/OpenRewrite~\texttt{8.87.7} recipes—covering both DI cleanups and compound object-oriented refactorings (such as \texttt{EXTRACT\_AND\_MOVE\_METHOD} and \texttt{BREAK\_PACKAGE\_SCC\_CYCLE}~\cite{swerefactor2026})—before free-form LLM proposals. Candidates pass through dual-slicing causal context~\cite{causalrepair2026}, QMOOD Understandability non-regression guards~\cite{refagent2026}, and two-tier isolated verification:
+\begin{itemize}
+  \item \textbf{Tier-1 Fast Loop:} Hardened networkless container (\texttt{JDK 8/11/17/21} auto-detected passively from \texttt{pom.xml}/\texttt{build.gradle}), read-only \texttt{.m2} bind mount, \texttt{SKG-RTS} affected-test filtering, and XXE-hardened JaCoCo coverage parsing (\texttt{UNKNOWN\_UNTESTED} when \texttt{0\%} covered).
+  \item \textbf{Tier-2 Certification:} Hypervisor-level 3-layer certification requiring \textit{Compile\&Test + Coverage} $\land$ \textit{AST Refactoring Purity} $\land$ \textit{Negative Control} (confirming the baseline finding persists on control mutation and resolves on the candidate).
+\end{itemize}
+
+\section{4-Minute Live Demonstration Plan}
+The accompanying walkthrough (\texttt{walkthrough-script.md}) demonstrates: (1) one-command container launch (\texttt{docker compose up -d}), (2) passive acquisition and \texttt{strict} vs.\ \texttt{dfd-export} comparison, (3) conditional Spring bean inspection, (4) SKG-RTS Repair Studio multi-JDK verification with 3-layer certification, and (5) live IDE connection to \texttt{/mcp} alongside \texttt{403 FORBIDDEN\_ORIGIN} enforcement.
+
+\section{Zero-Overlap Boundary and Availability}
+Consistent with FSE Tool Demonstrations guidelines, this paper focuses exclusively on tool architecture, workbench UX, MCP integration, and turnkey verification workflows; formal soundness proofs, 10-row ablation matrices, and large-scale cross-benchmark empirical evaluations remain reserved for dedicated research papers~\cite{jackee2020,jasmine2022,mecheck2025,sundermann2026pbddnnf,micans2025,schneider2025microsar}. The reproducible demo guide and automated live verification script (\texttt{verify-demo.py}) are bundled in \texttt{docs/fse-2027-tool-demo/}.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+\end{document}
