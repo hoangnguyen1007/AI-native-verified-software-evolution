@@ -303,6 +303,22 @@ class Wp44MultiJdkAndJacocoTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_mod.canonical_json({"bad": float("nan")})
 
+    def test_container_run_sh_is_posix_sh_without_bashisms(self):
+        nonce = "fedcba9876543210fedcba9876543210"
+        with tempfile.TemporaryDirectory() as tmp:
+            for tool in ("maven", "gradle"):
+                ctx = Path(tmp) / tool
+                ctx.mkdir()
+                run_mod.write_container_runner_files(ctx, tool, nonce)
+                script = (ctx / "container-run.sh").read_text(encoding="utf-8")
+                self.assertTrue(script.startswith("#!/bin/sh\n"))
+                self.assertNotIn("<<<", script)
+                self.assertNotIn("read -r -a", script)
+                self.assertNotIn("${SEL_ARR[@]}", script)
+                self.assertIn("IFS=','", script)
+                self.assertIn("set -f", script)
+                self.assertIn("set +f", script)
+
 
 if __name__ == "__main__":
     unittest.main()

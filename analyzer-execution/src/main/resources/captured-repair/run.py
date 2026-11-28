@@ -1140,10 +1140,14 @@ if [ "${{EVO_BUILD_TOOL}}" = "gradle" ]; then
     else
       GRADLE_TEST_ARGS="${{GRADLE_ARGS}} test"
       if [ -n "${{EVO_SELECTED_TESTS:-}}" ]; then
-        IFS=',' read -r -a SEL_ARR <<< "${{EVO_SELECTED_TESTS}}"
-        for pat in "${{SEL_ARR[@]}}"; do
+        OLD_IFS="${{IFS}}"
+        IFS=','
+        set -f
+        for pat in ${{EVO_SELECTED_TESTS}}; do
           if [ -n "${{pat}}" ]; then GRADLE_TEST_ARGS="${{GRADLE_TEST_ARGS}} --tests ${{pat}}"; fi
         done
+        set +f
+        IFS="${{OLD_IFS}}"
       fi
       set +e; gradle ${{GRADLE_TEST_ARGS}} > /tmp/test.log 2>&1; TEST_EXIT=$?; set -e
     fi
