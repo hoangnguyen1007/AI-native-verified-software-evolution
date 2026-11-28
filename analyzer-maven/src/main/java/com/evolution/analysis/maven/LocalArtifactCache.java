@@ -291,18 +291,69 @@ final class LocalArtifactCache {
             if (!path.startsWith(root)) {
                 throw failure(coordinate, kind, relative, Reason.PATH_OUTSIDE_CACHE, AttemptOutcome.DENIED);
             }
-            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) missingArtifact.accept(coordinate);
-            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
-                Reason reason = kind == ArtifactKind.POM ? Reason.MISSING_POM : Reason.MISSING_ARTIFACT;
-                throw failure(coordinate, kind, relative, reason, AttemptOutcome.UNAVAILABLE);
-            }
-            if (Files.isSymbolicLink(path)) {
-                throw failure(coordinate, kind, relative, Reason.SYMBOLIC_LINK, AttemptOutcome.DENIED);
+            var activeSession = com.evolution.analysis.input.VerifiedArtifactSession.current().orElse(null);
+            if (activeSession != null) {
+                if (kind == ArtifactKind.JAR) {
+                    var fastJar = activeSession.lookupVerifiedJarByPath(path);
+                    if (fastJar.isPresent()) {
+                        var hit = fastJar.orElseThrow();
+                        if (hit.realPath().startsWith(root)) {
+                            reserve(coordinate, kind, ArtifactOrigin.LOCAL_CACHE, relative, hit.size(), perFileLimit);
+                            var record = new ArtifactRecord(coordinate, kind, ArtifactOrigin.LOCAL_CACHE,
+                                    Optional.of(relative), hit.digest(), hit.size());
+                            var material = new Material(record, hit.header());
+                            materials.put(coordinate, material);
+                            artifacts.add(record);
+                            totalBytes += hit.size();
+                            attempts.add(new Attempt(kind, coordinate, ArtifactOrigin.LOCAL_CACHE,
+                                    relative, AttemptOutcome.SUCCEEDED, Optional.of(hit.digest())));
+                            return material;
+                        }
+                    }
+                } else {
+                    var fastPom = activeSession.lookupVerifiedSmallFileByPath(path);
+                    if (fastPom.isPresent()) {
+                        var hit = fastPom.orElseThrow();
+                        if (hit.realPath().startsWith(root)) {
+                            byte[] pomBytes = hit.bytes();
+                            reserve(coordinate, kind, ArtifactOrigin.LOCAL_CACHE, relative, pomBytes.length, perFileLimit);
+                            var record = new ArtifactRecord(coordinate, kind, ArtifactOrigin.LOCAL_CACHE,
+                                    Optional.of(relative), hit.digest(), pomBytes.length);
+                            var material = new Material(record, pomBytes);
+                            materials.put(coordinate, material);
+                            artifacts.add(record);
+                            totalBytes += pomBytes.length;
+                            attempts.add(new Attempt(kind, coordinate, ArtifactOrigin.LOCAL_CACHE,
+                                    relative, AttemptOutcome.SUCCEEDED, Optional.of(hit.digest())));
+                            return material;
+                        }
+                    }
+                }
             }
             BasicFileAttributes before;
-            Path real;
             try {
                 before = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            } catch (NoSuchFileException missingFirst) {
+                missingArtifact.accept(coordinate);
+                try {
+                    before = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                } catch (NoSuchFileException missingAfter) {
+                    Reason reason = kind == ArtifactKind.POM ? Reason.MISSING_POM : Reason.MISSING_ARTIFACT;
+                    throw failure(coordinate, kind, relative, reason, AttemptOutcome.UNAVAILABLE);
+                } catch (IOException | SecurityException exception) {
+                    throw failure(coordinate, kind, relative, Reason.ARTIFACT_READ_FAILED, AttemptOutcome.FAILED);
+                }
+            } catch (IOException | SecurityException exception) {
+                throw failure(coordinate, kind, relative, Reason.ARTIFACT_READ_FAILED, AttemptOutcome.FAILED);
+            }
+            if (before.isSymbolicLink()) {
+                throw failure(coordinate, kind, relative, Reason.SYMBOLIC_LINK, AttemptOutcome.DENIED);
+            }
+            if (!before.isRegularFile()) {
+                throw failure(coordinate, kind, relative, Reason.NON_REGULAR_ARTIFACT, AttemptOutcome.DENIED);
+            }
+            Path real;
+            try {
                 real = path.toRealPath();
             } catch (IOException | SecurityException exception) {
                 throw failure(coordinate, kind, relative, Reason.ARTIFACT_READ_FAILED, AttemptOutcome.FAILED);
@@ -313,43 +364,73 @@ final class LocalArtifactCache {
             if (!real.equals(path.toAbsolutePath().normalize())) {
                 throw failure(coordinate, kind, relative, Reason.SYMBOLIC_LINK, AttemptOutcome.DENIED);
             }
-            if (!before.isRegularFile()) {
-                throw failure(coordinate, kind, relative, Reason.NON_REGULAR_ARTIFACT, AttemptOutcome.DENIED);
-            }
             reserve(coordinate, kind, ArtifactOrigin.LOCAL_CACHE, relative, before.size(), perFileLimit);
             byte[] bytes = null;
             StreamedJar streamedJar = null;
-            try {
-                long allowed = Math.min(perFileLimit, policy.maxTotalBytes() - totalBytes);
+            ContentDigest digest = null;
+            long byteLen = before.size();
+            boolean sessionHit = false;
+            if (activeSession != null) {
                 if (kind == ArtifactKind.JAR) {
-                    streamedJar = streamJar(path, allowed);
+                    var cachedJar = activeSession.lookupVerifiedJar(real, before.size());
+                    if (cachedJar.isPresent()) {
+                        var hit = cachedJar.orElseThrow();
+                        streamedJar = new StreamedJar(hit.digest(), hit.size(), hit.header());
+                        digest = hit.digest();
+                        byteLen = hit.size();
+                        sessionHit = true;
+                    }
                 } else {
-                    bytes = readBounded(path, allowed);
+                    var cachedPom = activeSession.lookupVerifiedSmallFile(real, before.size());
+                    if (cachedPom.isPresent()) {
+                        var hit = cachedPom.orElseThrow();
+                        bytes = hit.bytes();
+                        digest = hit.digest();
+                        byteLen = bytes.length;
+                        sessionHit = true;
+                    }
                 }
-            } catch (LimitExceeded exception) {
-                Reason reason = before.size() > perFileLimit
-                        ? limitReason(kind)
-                        : Reason.TOTAL_BYTE_LIMIT;
-                throw failure(coordinate, kind, relative, reason, AttemptOutcome.LIMIT_EXCEEDED);
-            } catch (IOException | SecurityException exception) {
-                throw failure(coordinate, kind, relative, Reason.ARTIFACT_READ_FAILED, AttemptOutcome.FAILED);
             }
-            BasicFileAttributes after;
-            try {
-                after = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            } catch (IOException | SecurityException exception) {
-                throw failure(coordinate, kind, relative, Reason.ARTIFACT_CHANGED_DURING_READ, AttemptOutcome.FAILED);
+            if (!sessionHit) {
+                try {
+                    long allowed = Math.min(perFileLimit, policy.maxTotalBytes() - totalBytes);
+                    if (kind == ArtifactKind.JAR) {
+                        streamedJar = streamJar(path, allowed);
+                    } else {
+                        bytes = readBounded(path, allowed);
+                    }
+                } catch (LimitExceeded exception) {
+                    Reason reason = before.size() > perFileLimit
+                            ? limitReason(kind)
+                            : Reason.TOTAL_BYTE_LIMIT;
+                    throw failure(coordinate, kind, relative, reason, AttemptOutcome.LIMIT_EXCEEDED);
+                } catch (IOException | SecurityException exception) {
+                    throw failure(coordinate, kind, relative, Reason.ARTIFACT_READ_FAILED, AttemptOutcome.FAILED);
+                }
+                BasicFileAttributes after;
+                try {
+                    after = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                } catch (IOException | SecurityException exception) {
+                    throw failure(coordinate, kind, relative, Reason.ARTIFACT_CHANGED_DURING_READ, AttemptOutcome.FAILED);
+                }
+                if (after.isSymbolicLink()
+                    || !after.isRegularFile()
+                    || before.size() != after.size()
+                    || !before.lastModifiedTime().equals(after.lastModifiedTime())
+                    || before.fileKey() != null && after.fileKey() != null
+                            && !before.fileKey().equals(after.fileKey())) {
+                    throw failure(coordinate, kind, relative, Reason.ARTIFACT_CHANGED_DURING_READ, AttemptOutcome.FAILED);
+                }
+                digest = streamedJar != null ? streamedJar.digest() : ContentDigest.sha256(bytes);
+                byteLen = streamedJar != null ? streamedJar.size() : bytes.length;
+                if (activeSession != null) {
+                    if (streamedJar != null) {
+                        activeSession.recordVerifiedJar(real, digest, byteLen, streamedJar.header());
+                    } else {
+                        activeSession.recordVerifiedSmallFile(real, digest, bytes);
+                    }
+                }
             }
-            if (Files.isSymbolicLink(path)
-                || !after.isRegularFile()
-                || before.size() != after.size()
-                || !before.lastModifiedTime().equals(after.lastModifiedTime())
-                || before.fileKey() != null && after.fileKey() != null
-                        && !before.fileKey().equals(after.fileKey())) {
-                throw failure(coordinate, kind, relative, Reason.ARTIFACT_CHANGED_DURING_READ, AttemptOutcome.FAILED);
-            }
-            ContentDigest digest = streamedJar != null ? streamedJar.digest() : ContentDigest.sha256(bytes);
-            long byteLen = streamedJar != null ? streamedJar.size() : bytes.length;
             var record = new ArtifactRecord(coordinate, kind, ArtifactOrigin.LOCAL_CACHE,
                     Optional.of(relative), digest, byteLen);
             var material = streamedJar != null

@@ -170,6 +170,42 @@ class MavenGradlePerfTest {
                 r2.outcomes().getFirst().failureReason().orElseThrow());
     }
 
+    @Test
+    void localArtifactCacheSessionReuseEliminatesRedundantReadsWithBitIdenticalResults() throws Exception {
+        Path cacheRoot = Files.createDirectory(temp.resolve("m2-session"));
+        byte[] pomBytes = "<project><modelVersion>4.0.0</modelVersion><groupId>acme</groupId><artifactId>shared</artifactId><version>1.2.3</version></project>"
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] jarBytes = minimalJar("acme/Shared.class");
+        var gav = new MavenCoordinate("acme", "shared", "1.2.3");
+        var jarCoord = new ArtifactCoordinate(gav, "jar", "");
+        writeLocal(cacheRoot, new ArtifactCoordinate(gav, "pom", "").repositoryPath(), pomBytes);
+        writeLocal(cacheRoot, jarCoord.repositoryPath(), jarBytes);
+
+        var cpPolicy = new ClasspathResolutionPolicy(500, 500, 1_000_000, 5_000_000, 20_000_000, 16);
+        var baselineCache = new LocalArtifactCache(cacheRoot, Map.of(), cpPolicy, ignored -> {});
+        var baselinePom = baselineCache.pom(gav);
+        var baselineJar = baselineCache.jar(jarCoord);
+
+        try (var session = VerifiedArtifactSession.open(true)) {
+            var cache1 = new LocalArtifactCache(cacheRoot, Map.of(), cpPolicy, ignored -> {});
+            var firstPom = cache1.pom(gav);
+            var firstJar = cache1.jar(jarCoord);
+
+            // Second distinct LocalArtifactCache (simulating another Maven root in a multi-root repo)
+            var cache2 = new LocalArtifactCache(cacheRoot, Map.of(), cpPolicy, ignored -> {});
+            var secondPom = cache2.pom(gav);
+            var secondJar = cache2.jar(jarCoord);
+
+            assertTrue(session.hits() >= 2, "Second root must hit VerifiedArtifactSession for both POM & JAR, hits=" + session.hits());
+            assertEquals(baselinePom.record(), firstPom.record());
+            assertEquals(baselinePom.record(), secondPom.record());
+            assertArrayEquals(baselinePom.bytes(), secondPom.bytes());
+            assertEquals(baselineJar.record(), firstJar.record());
+            assertEquals(baselineJar.record(), secondJar.record());
+            assertArrayEquals(baselineJar.bytes(), secondJar.bytes());
+        }
+    }
+
     private static void writeLocal(Path root, String relative, byte[] bytes) throws Exception {
         Path target = root.resolve(relative.replace('/', java.io.File.separatorChar));
         Files.createDirectories(target.getParent());

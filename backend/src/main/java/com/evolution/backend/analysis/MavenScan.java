@@ -46,11 +46,17 @@ public final class MavenScan {
         // Model aggregators before descendants. Otherwise app/pom.xml is first modeled
         // alone, then again in pom.xml's reactor, creating a false classpath conflict.
         var paths=poms.keySet().stream().sorted(Comparator.comparingLong((String path)->path.chars().filter(c->c=='/').count()).thenComparing(Comparator.naturalOrder())).toList();
-        for(String path:paths){
-            if(modeled.contains(path))continue;
-            var request=new BuildModelRequest(acquisition.snapshot().orElseThrow(),path,poms,Map.of(),POLICY);
-            var result=new MavenBuildModelResolver(cache).resolve(request,policy);
-            results.add(result);result.model().modules().stream().map(BuildModelResult.ModuleModel::pomPath).forEach(modeled::add);
+        var ownedSession = com.evolution.analysis.input.VerifiedArtifactSession.current().isEmpty()
+                ? com.evolution.analysis.input.VerifiedArtifactSession.open() : null;
+        try {
+            for(String path:paths){
+                if(modeled.contains(path))continue;
+                var request=new BuildModelRequest(acquisition.snapshot().orElseThrow(),path,poms,Map.of(),POLICY);
+                var result=new MavenBuildModelResolver(cache).resolve(request,policy);
+                results.add(result);result.model().modules().stream().map(BuildModelResult.ModuleModel::pomPath).forEach(modeled::add);
+            }
+        } finally {
+            if (ownedSession != null) ownedSession.close();
         }
         var immutable=List.copyOf(results);
         if(deltaCache!=null)deltaCache.putMavenModels(acquisition,cache,repositories,immutable);
@@ -98,6 +104,9 @@ public final class MavenScan {
         var external=new HashMap<MavenCoordinate,PomInput>();var gaps=new TreeSet<CapabilityGapRecord>();var summaries=new ArrayList<Object>();
         var conflicts=new ArrayList<com.evolution.analysis.ingestion.IngestionEvidence.Issue>();
         var conflictedSets=new HashSet<UniversalSourceIngestion.SourceSet>();var conflictedPoms=new HashSet<MavenCoordinate>();
+        var ownedSession = com.evolution.analysis.input.VerifiedArtifactSession.current().isEmpty()
+                ? com.evolution.analysis.input.VerifiedArtifactSession.open() : null;
+        try {
         for(var resolved:builds){
         var request=new ClasspathResolutionRequest(resolved.request(),resolved.model(),new ClasspathResolutionPolicy(4096,8192,4_000_000,64_000_000,Math.max(DEFAULT_DEPENDENCY_TOTAL_BYTES,acquisitionPolicy.maxTotalBytes()),64));
         var acquired=dependencyResolver.apply(request,acquisitionPolicy);var classpath=acquired.classpath();
@@ -138,6 +147,9 @@ public final class MavenScan {
                 Map.entry("acquisitionAttempts",acquisitionAttempts),
                 Map.entry("artifacts",classpath.artifacts().size()),
                 Map.entry("problems",classpath.manifests().stream().flatMap(m->m.problems().stream()).distinct().toList())));
+        }
+        } finally {
+            if (ownedSession != null) ownedSession.close();
         }
         gaps.addAll(com.evolution.analysis.ingestion.IngestionEvidence.gaps(acquisition.snapshot().orElseThrow().identity(),new VersionedIdentifier("build.product-readiness","m8.4-v1"),acquisition.identity(),conflicts));
         var out=new Inputs(Map.copyOf(resolutions),Map.copyOf(external),List.copyOf(gaps),Map.of("mode",acquisitionPolicy.remoteRepositories().isEmpty()?"PASSIVE_CACHE_THEN_ISOLATED_REQUIREMENT":"EXPLICIT_ARTIFACT_ACQUISITION","policy",acquisitionPolicy.identity(),"roots",summaries),ledgers);

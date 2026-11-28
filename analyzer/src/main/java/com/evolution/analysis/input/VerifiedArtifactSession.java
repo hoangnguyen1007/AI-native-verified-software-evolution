@@ -54,9 +54,43 @@ public final class VerifiedArtifactSession implements AutoCloseable {
         }
     }
 
+    public record VerifiedJar(Path realPath, ContentDigest digest, long size, byte[] header) {
+        public VerifiedJar {
+            Objects.requireNonNull(realPath);
+            Objects.requireNonNull(digest);
+            header = header == null ? new byte[0] : header.clone();
+        }
+
+        @Override
+        public byte[] header() {
+            return header.clone();
+        }
+    }
+
+    public record VerifiedSmallFile(Path realPath, ContentDigest digest, byte[] bytes) {
+        public VerifiedSmallFile {
+            Objects.requireNonNull(realPath);
+            Objects.requireNonNull(digest);
+            bytes = bytes == null ? new byte[0] : bytes.clone();
+        }
+
+        @Override
+        public byte[] bytes() {
+            return bytes.clone();
+        }
+    }
+
+    private static final int MAX_CACHED_SMALL_FILES = 2048;
+    private static final long MAX_CACHED_SMALL_FILE_BYTES = 512_000L;
+    private static final long MAX_CACHED_SMALL_TOTAL_BYTES = 32L * 1024L * 1024L;
+
     private final boolean enabled;
     private final VerifiedArtifactSession previous;
+    private final ConcurrentHashMap<Path, Path> verifiedRealPaths = new ConcurrentHashMap<>(128);
     private final ConcurrentHashMap<Path, VerifiedFile> verifiedFiles = new ConcurrentHashMap<>(128);
+    private final ConcurrentHashMap<Path, VerifiedJar> verifiedJars = new ConcurrentHashMap<>(128);
+    private final ConcurrentHashMap<Path, VerifiedSmallFile> verifiedSmallFiles = new ConcurrentHashMap<>(128);
+    private final AtomicLong cachedSmallFileBytes = new AtomicLong();
     private final Set<ContentDigest> validatedArchives = ConcurrentHashMap.newKeySet(128);
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
@@ -149,11 +183,23 @@ public final class VerifiedArtifactSession implements AutoCloseable {
      */
     public VerifiedFile digestFile(Path path) throws IOException {
         Objects.requireNonNull(path);
+        if (enabled && !closed.get()) {
+            Path knownReal = verifiedRealPaths.get(path);
+            if (knownReal != null) {
+                VerifiedFile existing = verifiedFiles.get(knownReal);
+                if (existing != null) {
+                    hits.incrementAndGet();
+                    return existing;
+                }
+            }
+        }
         Path real = resolveRegularRealPath(path);
         if (!enabled || closed.get()) {
             misses.incrementAndGet();
             return hashRegularFile(real);
         }
+        verifiedRealPaths.putIfAbsent(path.toAbsolutePath().normalize(), real);
+        verifiedRealPaths.putIfAbsent(real, real);
         VerifiedFile existing = verifiedFiles.get(real);
         if (existing != null) {
             hits.incrementAndGet();
@@ -192,6 +238,114 @@ public final class VerifiedArtifactSession implements AutoCloseable {
             verifiedFiles.putIfAbsent(real, new VerifiedFile(real, digest, size));
         } catch (IOException ignored) {
             // Best-effort recording; unverified path will still hash normally on demand.
+        }
+    }
+
+    /**
+     * Resolves {@code path} to its canonical real path at most once per normalized path in this session,
+     * eliminating repeated OS realpath/directory-walk syscalls for immutable cache artifacts.
+     */
+    public Path resolveCachedRealPath(Path path) throws IOException {
+        Objects.requireNonNull(path);
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!enabled || closed.get()) {
+            return resolveRegularRealPath(path);
+        }
+        Path cached = verifiedRealPaths.get(normalized);
+        if (cached != null) {
+            return cached;
+        }
+        Path real = resolveRegularRealPath(path);
+        verifiedRealPaths.putIfAbsent(normalized, real);
+        return real;
+    }
+
+    /** Returns a previously verified JAR header/digest for {@code normalizedPath} without extra disk syscalls. */
+    public Optional<VerifiedJar> lookupVerifiedJarByPath(Path normalizedPath) {
+        if (!enabled || closed.get() || normalizedPath == null) {
+            return Optional.empty();
+        }
+        Path real = verifiedRealPaths.get(normalizedPath);
+        if (real == null) {
+            return Optional.empty();
+        }
+        VerifiedJar cached = verifiedJars.get(real);
+        if (cached != null) {
+            hits.incrementAndGet();
+            return Optional.of(cached);
+        }
+        return Optional.empty();
+    }
+
+    /** Returns previously verified small-file bytes for {@code normalizedPath} without extra disk syscalls. */
+    public Optional<VerifiedSmallFile> lookupVerifiedSmallFileByPath(Path normalizedPath) {
+        if (!enabled || closed.get() || normalizedPath == null) {
+            return Optional.empty();
+        }
+        Path real = verifiedRealPaths.get(normalizedPath);
+        if (real == null) {
+            return Optional.empty();
+        }
+        VerifiedSmallFile cached = verifiedSmallFiles.get(real);
+        if (cached != null) {
+            hits.incrementAndGet();
+            return Optional.of(cached);
+        }
+        return Optional.empty();
+    }
+
+    /** Returns a previously verified JAR header/digest for {@code realPath} if its size still matches. */
+    public Optional<VerifiedJar> lookupVerifiedJar(Path realPath, long expectedSize) {
+        if (!enabled || closed.get() || realPath == null) {
+            return Optional.empty();
+        }
+        VerifiedJar cached = verifiedJars.get(realPath);
+        if (cached != null && cached.size() == expectedSize) {
+            hits.incrementAndGet();
+            return Optional.of(cached);
+        }
+        return Optional.empty();
+    }
+
+    /** Records an already streamed & SHA-256-verified JAR (header + digest + size) in this session. */
+    public void recordVerifiedJar(Path realPath, ContentDigest digest, long size, byte[] header) {
+        if (!enabled || closed.get() || realPath == null || digest == null || size < 0) {
+            return;
+        }
+        verifiedRealPaths.putIfAbsent(realPath, realPath);
+        verifiedFiles.putIfAbsent(realPath, new VerifiedFile(realPath, digest, size));
+        verifiedJars.putIfAbsent(realPath, new VerifiedJar(realPath, digest, size, header));
+    }
+
+    /** Returns previously verified small-file bytes (e.g. immutable Maven2 POM) if size still matches. */
+    public Optional<VerifiedSmallFile> lookupVerifiedSmallFile(Path realPath, long expectedSize) {
+        if (!enabled || closed.get() || realPath == null) {
+            return Optional.empty();
+        }
+        VerifiedSmallFile cached = verifiedSmallFiles.get(realPath);
+        if (cached != null && cached.bytes.length == expectedSize) {
+            hits.incrementAndGet();
+            return Optional.of(cached);
+        }
+        return Optional.empty();
+    }
+
+    /** Records an already SHA-256-verified small immutable descriptor (e.g. cached Maven POM) within session budget. */
+    public void recordVerifiedSmallFile(Path realPath, ContentDigest digest, byte[] bytes) {
+        if (!enabled || closed.get() || realPath == null || digest == null || bytes == null) {
+            return;
+        }
+        verifiedRealPaths.putIfAbsent(realPath, realPath);
+        verifiedFiles.putIfAbsent(realPath, new VerifiedFile(realPath, digest, bytes.length));
+        if (bytes.length <= MAX_CACHED_SMALL_FILE_BYTES && verifiedSmallFiles.size() < MAX_CACHED_SMALL_FILES) {
+            long total = cachedSmallFileBytes.addAndGet(bytes.length);
+            if (total <= MAX_CACHED_SMALL_TOTAL_BYTES) {
+                if (verifiedSmallFiles.putIfAbsent(realPath, new VerifiedSmallFile(realPath, digest, bytes)) != null) {
+                    cachedSmallFileBytes.addAndGet(-bytes.length);
+                }
+            } else {
+                cachedSmallFileBytes.addAndGet(-bytes.length);
+            }
         }
     }
 
@@ -273,7 +427,11 @@ public final class VerifiedArtifactSession implements AutoCloseable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            verifiedRealPaths.clear();
             verifiedFiles.clear();
+            verifiedJars.clear();
+            verifiedSmallFiles.clear();
+            cachedSmallFileBytes.set(0L);
             validatedArchives.clear();
         }
         if (ACTIVE.get() == this) {

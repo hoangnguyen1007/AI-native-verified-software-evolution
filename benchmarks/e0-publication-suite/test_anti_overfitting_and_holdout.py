@@ -49,6 +49,9 @@ class AntiOverfittingAuditTest(unittest.TestCase):
                     '  String e = "web-application";',
                     '  String f = "piggymetrics";',
                     '  String g = "redis.*cart";',
+                    '  String h = "thingsboard";',
+                    '  String i = "openmrs";',
+                    '  String j = "microsecend";',
                     '}',
                 ]),
                 encoding="utf-8",
@@ -56,7 +59,11 @@ class AntiOverfittingAuditTest(unittest.TestCase):
             report = anti_overfitting_audit.scan_repository(root, manifest_path=SUITE_DIR / "corpus_manifest.json")
             self.assertEqual("FAIL", report["status"])
             rules = {f["rule"] for f in report["findings"]}
-            for expected in ("redis-cart", "external-website", "mail-server", "zipkin-tracing", "web-application", "piggymetrics", "proxy:redis-cart"):
+            for expected in (
+                "redis-cart", "external-website", "mail-server", "zipkin-tracing",
+                "web-application", "piggymetrics", "proxy:redis-cart",
+                "thingsboard", "openmrs", "microsecend",
+            ):
                 self.assertIn(expected, rules, f"Expected audit to catch {expected}, got rules={rules}")
             exit_code = anti_overfitting_audit.main(["--repo-root", str(root)])
             self.assertEqual(1, exit_code)

@@ -319,7 +319,9 @@ public final class PassiveReadinessDiscovery implements ReadinessDiscovery {
                 String content=decode(desc).toLowerCase(Locale.ROOT);
                 if(content.contains("<istestproject>true</istestproject>")
                         ||content.contains("microsoft.net.test.sdk")
-                        ||content.contains("mstest.testframework")){
+                        ||content.contains("mstest.testframework")
+                        ||content.contains("xunit")
+                        ||content.contains("nunit")){
                     return true;
                 }
             }catch(IllegalArgumentException ignored){}

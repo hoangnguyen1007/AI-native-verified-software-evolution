@@ -23,15 +23,19 @@ public final class SourceCoordinates {
         if(little&&selected.equals(StandardCharsets.UTF_16BE)||big&&selected.equals(StandardCharsets.UTF_16LE))throw new IllegalArgumentException("SOURCE_BOM_CONFLICT");
         if (selected.equals(StandardCharsets.UTF_8) || selected.equals(StandardCharsets.US_ASCII) || selected.equals(StandardCharsets.ISO_8859_1)) {
             boolean allAscii = true;
-            int asciiLines = 1;
+            int[] starts = new int[Math.max(16, Math.min(4096, (bytes.length >> 5) + 16))];
+            int lineIdx = 1;
             for (int i = 0; i < bytes.length; i++) {
                 byte b = bytes[i];
                 if (b < 0) {
                     allAscii = false;
                     break;
                 }
-                if (b == '\n' || b == '\r' && (i + 1 == bytes.length || bytes[i + 1] != '\n')) {
-                    asciiLines++;
+                if (b == '\n' || (b == '\r' && (i + 1 == bytes.length || bytes[i + 1] != '\n'))) {
+                    if (lineIdx == starts.length) {
+                        starts = Arrays.copyOf(starts, starts.length << 1);
+                    }
+                    starts[lineIdx++] = i + 1;
                 }
             }
             if (allAscii) {
@@ -41,15 +45,7 @@ public final class SourceCoordinates {
                 this.characterCheckpoints = null;
                 this.codePointCheckpoints = null;
                 this.byteCheckpoints = null;
-                int[] starts = new int[asciiLines];
-                int lineIdx = 1;
-                for (int i = 0; i < bytes.length; i++) {
-                    byte b = bytes[i];
-                    if (b == '\n' || b == '\r' && (i + 1 == bytes.length || bytes[i + 1] != '\n')) {
-                        starts[lineIdx++] = i + 1;
-                    }
-                }
-                this.lineStarts = starts;
+                this.lineStarts = lineIdx == starts.length ? starts : Arrays.copyOf(starts, lineIdx);
                 return;
             }
         }

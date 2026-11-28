@@ -132,8 +132,19 @@ public final class DeclarativeTopologyProjection {
             "SOURCE_EVENT_PRODUCER_CANDIDATE",
             "SOURCE_EVENT_CONSUMER_CANDIDATE");
 
+    private static final Set<String> ENDPOINT_AND_RPC_KINDS = Set.of(
+            "ENDPOINT",
+            "ROUTE_CANDIDATE",
+            "SOURCE_RPC_HANDLER_CANDIDATE",
+            "SOURCE_RPC_CALL_CANDIDATE");
+
+    private static final Set<String> ENDPOINT_EVIDENCE_FAMILIES = Set.of(
+            "spring.endpoint-declaration",
+            "jaxrs.endpoint-declaration",
+            "servlet.endpoint-declaration");
+
     private record BuildCompInfo(KnowledgeGraph.Node node, String rawDir, String normDir, String compId,
-            String fallbackName, String tool, ContentDigest proof) {
+            String fallbackName, String tool, Set<String> languages, ContentDigest proof) {
         boolean isFrontendTool() {
             return FRONTEND_BUILD_TOOLS.contains(tool);
         }
@@ -141,6 +152,8 @@ public final class DeclarativeTopologyProjection {
 
     private record ServiceEntry(String nodeId, String canonicalName, String dirPrefix, boolean hasCodeBuild,
             boolean frontendBuild) {}
+
+    private record InfraOriginMeta(String name, String image, String spec, ContentDigest sourceProof) {}
 
     private record ConfigIdentitySite(KnowledgeGraph.Node node, String dir, String path, String serviceName,
             String configRepoFile, ContentDigest proof) {}
@@ -160,8 +173,9 @@ public final class DeclarativeTopologyProjection {
 
     private record RoleSite(KnowledgeGraph.Node node, String doc, String dir, String role, ContentDigest proof) {}
 
-    private record PropSite(KnowledgeGraph.Node node, String doc, String dir, String key, String value,
-            String target, String port, String configRepoFile, ContentDigest proof) {}
+    private record PropSite(KnowledgeGraph.Node node, String doc, String dir, String path, String nodeKind,
+            String key, String value, String target, String port, String configRepoFile,
+            Map<String, Object> attrs, ContentDigest proof) {}
 
     private record HttpCallSite(KnowledgeGraph.Node node, String doc, String dir, String uri, String targetService,
             String propertyKey, Map<String, Object> attrs, ContentDigest proof) {}
@@ -443,9 +457,21 @@ public final class DeclarativeTopologyProjection {
                 if (isNonDeployableBuildDescriptor(compId, normDir)) continue;
                 String tool = str(fields.get("tool"));
                 if (tool.isEmpty()) tool = str(fields.get("kind"));
+                if (tool.isEmpty()) {
+                    int colon = compId.indexOf(':');
+                    if (colon > 0) tool = compId.substring(0, colon);
+                }
+                var langs = new TreeSet<String>();
+                if (fields.get("languages") instanceof List<?> rawLangs) {
+                    for (Object l : rawLangs) {
+                        if (l instanceof String ls && !ls.isBlank()) {
+                            langs.add(ls.trim().toLowerCase(Locale.ROOT));
+                        }
+                    }
+                }
                 String fallbackName = normalizeName(baseOrDirName(rawDir, compId));
                 var info = new BuildCompInfo(node, rawDir, normDir, compId, fallbackName,
-                        tool.toUpperCase(Locale.ROOT), id);
+                        tool.toUpperCase(Locale.ROOT), Set.copyOf(langs), id);
                 buildComps.add(info);
                 buildCompsByNodeId.put(node.identity(), info);
                 if (!normDir.isEmpty()) {
@@ -460,78 +486,30 @@ public final class DeclarativeTopologyProjection {
                 .sorted(Comparator.comparingInt(String::length).reversed().thenComparing(Comparator.naturalOrder()))
                 .toList();
 
-        var testModuleDirs = new HashSet<String>();
-        for (String d : buildDirsByLength) {
-            if (isTestOnlyModuleDir(d)) {
-                testModuleDirs.add(d);
-            }
-        }
-
-        var aggregatorDirs = new HashSet<String>();
-        var foldedLayoutChildToParent = new HashMap<String, String>();
-        for (String d : buildDirsByLength) {
-            if (testModuleDirs.contains(d)) continue;
-            var nonTestChildren = new ArrayList<String>();
-            for (String other : buildDirsByLength) {
-                if (!other.equals(d) && !testModuleDirs.contains(other) && other.startsWith(d + "/")) {
-                    nonTestChildren.add(other);
-                }
-            }
-            if (nonTestChildren.isEmpty()) continue;
-            boolean singleLayoutSubdir = nonTestChildren.size() == 1
-                    && LAYOUT_CODE_SUBDIRS.contains(nonTestChildren.getFirst().substring(d.length() + 1).toLowerCase(Locale.ROOT));
-            if (singleLayoutSubdir) {
-                foldedLayoutChildToParent.put(nonTestChildren.getFirst(), d);
-            } else {
-                aggregatorDirs.add(d);
-            }
-        }
-        if (!buildDirsByLength.isEmpty()) {
-            aggregatorDirs.add("");
-        }
-
-        var servicesByName = new TreeMap<String, ServiceEntry>();
-        var servicesByDir = new TreeMap<String, ServiceEntry>();
-        var codeDirs = new HashSet<String>();
-        for (var bc : buildComps) {
-            if (bc.fallbackName().isEmpty()) continue;
-            if (aggregatorDirs.contains(bc.normDir()) || testModuleDirs.contains(bc.normDir())
-                    || foldedLayoutChildToParent.containsKey(bc.normDir())) {
-                continue;
-            }
-            var se = new ServiceEntry(bc.node().identity(), bc.fallbackName(), bc.normDir(), true, bc.isFrontendTool());
-            servicesByName.putIfAbsent(bc.fallbackName(), se);
-            if (!bc.normDir().isEmpty()) {
-                servicesByDir.putIfAbsent(bc.normDir(), se);
-                codeDirs.add(bc.normDir());
-            } else if (buildComps.size() == 1) {
-                servicesByDir.putIfAbsent("", se);
-            }
-        }
-        for (var fold : foldedLayoutChildToParent.entrySet()) {
-            ServiceEntry parentEntry = servicesByDir.get(fold.getValue());
-            if (parentEntry != null) {
-                servicesByDir.putIfAbsent(fold.getKey(), parentEntry);
-                codeDirs.add(fold.getKey());
-            }
-        }
-
-        // Pass 2: collect all syntax facts with longest-prefix directory attribution and test-source filtering.
+        // Pass 2: collect all syntax facts with O(depth) longest-prefix directory attribution and test-source filtering.
         var configIdentities = new ArrayList<ConfigIdentitySite>();
         var declSites = new ArrayList<DeclSite>();
         var docSlotToImage = new HashMap<String, String>();
         var dockerfileDirToImage = new HashMap<String, String>();
+        var dockerfilePathByDir = new TreeMap<String, String>();
         var portSites = new ArrayList<PortSite>();
         var envOrDepRefs = new ArrayList<RefSite>();
         var configRefs = new ArrayList<RefSite>();
         var scrapeTargets = new ArrayList<RefSite>();
         var gatewayRoutes = new ArrayList<RouteSite>();
         var springRoles = new ArrayList<RoleSite>();
+        var roleProofByDirAndRole = new HashMap<String, Map<String, ContentDigest>>();
         var configProps = new ArrayList<PropSite>();
         var httpCalls = new ArrayList<HttpCallSite>();
         var starterSites = new ArrayList<StarterSite>();
         var eventProducerProtosByDir = new HashMap<String, Set<String>>();
         var eventConsumerProtosByDir = new HashMap<String, Set<String>>();
+        var packagingByDir = new HashMap<String, String>();
+        var executableDirs = new HashSet<String>();
+        var descriptorTestProjectDirs = new HashSet<String>();
+        var dirsWithEndpointsOrRoutes = new HashSet<String>();
+        var dirsWithServiceCallsOrRpc = new HashSet<String>();
+        var routePrefixesByDir = new HashMap<String, Set<String>>();
 
         for (var node : store.valuesByKind("nodes", NON_BUILD_SYNTAX_KINDS, GraphSnapshotCodec::node, KnowledgeGraph.Node::kind)) {
             check(cancelled);
@@ -543,7 +521,7 @@ public final class DeclarativeTopologyProjection {
             var attrs = fact.get("attributes") instanceof Map<?, ?> m ? GraphJson.object(m) : Map.<String, Object>of();
             if (isTestSource(attrs, path)) continue;
 
-            String dir = resolveServiceDir(path, buildDirsByLength);
+            String dir = resolveServiceDirFast(path, buildCompsByDir);
             String doc = str(info.get("_document"));
             String nodeKind = str(fact.get("nodeKind"));
             String name = str(fact.get("name"));
@@ -578,8 +556,14 @@ public final class DeclarativeTopologyProjection {
                     if (isDockerfile) {
                         docSlotToImage.putIfAbsent(doc + "|", img);
                         String parentDir = parentDirOf(path);
-                        if (!parentDir.isEmpty()) dockerfileDirToImage.putIfAbsent(parentDir, img);
-                        if (!dir.isEmpty()) dockerfileDirToImage.putIfAbsent(dir, img);
+                        if (!parentDir.isEmpty()) {
+                            dockerfileDirToImage.putIfAbsent(parentDir, img);
+                            dockerfilePathByDir.putIfAbsent(parentDir, path);
+                        }
+                        if (!dir.isEmpty()) {
+                            dockerfileDirToImage.putIfAbsent(dir, img);
+                            dockerfilePathByDir.putIfAbsent(dir, path);
+                        }
                     }
                 }
                 case "SOURCE_INFRA_PORT" -> {
@@ -603,19 +587,39 @@ public final class DeclarativeTopologyProjection {
                     if (target.isEmpty()) target = str(attrs.get("target"));
                     gatewayRoutes.add(new RouteSite(node, doc, dir, path, nodeKind, target, str(attrs.get("port")),
                             configRepoFile, attrs, proof));
+                    String pathPrefix = str(attrs.get("pathPrefix"));
+                    if (!pathPrefix.isEmpty() && !dir.isEmpty()) {
+                        routePrefixesByDir.computeIfAbsent(dir, k -> new TreeSet<>()).add(pathPrefix);
+                    }
                 }
                 case "SOURCE_SPRING_CLOUD_ROLE" -> {
                     String role = str(attrs.get("role"));
                     if (!role.isEmpty()) {
                         springRoles.add(new RoleSite(node, doc, dir, role, proof));
+                        roleProofByDirAndRole.computeIfAbsent(dir, k -> new HashMap<>()).putIfAbsent(role, proof);
                     }
                 }
                 case "SOURCE_CONFIG_PROPERTY" -> {
                     String key = str(attrs.get("key"));
                     String value = str(attrs.get("value"));
-                    if (!key.isEmpty()) {
-                        configProps.add(new PropSite(node, doc, dir, key, value, str(attrs.get("target")),
-                                str(attrs.get("port")), configRepoFile, proof));
+                    if ("build_descriptor_metadata".equals(nodeKind)) {
+                        String propDir = parentDirOf(path);
+                        if ("build.isTestProject".equals(key) && "true".equalsIgnoreCase(value) && !propDir.isEmpty()) {
+                            descriptorTestProjectDirs.add(propDir);
+                        } else if ("build.packaging".equals(key) && !value.isEmpty()) {
+                            String pkg = value.toLowerCase(Locale.ROOT);
+                            boolean exec = "true".equalsIgnoreCase(str(attrs.get("executable")));
+                            if (!propDir.isEmpty()) {
+                                packagingByDir.putIfAbsent(propDir, pkg);
+                                if (exec) executableDirs.add(propDir);
+                            }
+                            if (!dir.isEmpty() && exec) {
+                                executableDirs.add(dir);
+                            }
+                        }
+                    } else if (!key.isEmpty()) {
+                        configProps.add(new PropSite(node, doc, dir, path, nodeKind, key, value, str(attrs.get("target")),
+                                str(attrs.get("port")), configRepoFile, attrs, proof));
                     }
                 }
                 case "SOURCE_HTTP_CALL_CANDIDATE" -> {
@@ -624,6 +628,7 @@ public final class DeclarativeTopologyProjection {
                     String propKey = str(attrs.get("propertyKey"));
                     if (!targetSvc.isEmpty() || !propKey.isEmpty() || !uri.isEmpty()) {
                         httpCalls.add(new HttpCallSite(node, doc, dir, uri, targetSvc, propKey, attrs, proof));
+                        if (!dir.isEmpty()) dirsWithServiceCallsOrRpc.add(dir);
                     }
                 }
                 case "SOURCE_INFRA_DEPENDENCY_STARTER" -> {
@@ -648,6 +653,118 @@ public final class DeclarativeTopologyProjection {
                     }
                 }
                 default -> {}
+            }
+        }
+
+        // Collect endpoint, route, and RPC presence by module directory (targeted kind lookup only).
+        for (var node : store.valuesByKind("nodes", ENDPOINT_AND_RPC_KINDS, GraphSnapshotCodec::node, KnowledgeGraph.Node::kind)) {
+            check(cancelled);
+            if ("ENDPOINT".equals(node.kind())) {
+                for (var id : node.evidence()) {
+                    var proof = evidence.get(id.value());
+                    if (proof == null || !ENDPOINT_EVIDENCE_FAMILIES.contains(proof.family())) continue;
+                    var raw = GraphJson.object(GraphJson.read(proof.canonicalJson(), GraphJson.Limits.defaults()));
+                    var route = raw.get("route") instanceof Map<?, ?> rm ? GraphJson.object(rm) : Map.<String, Object>of();
+                    String mod = str(route.get("module"));
+                    if (mod.isEmpty()) mod = str(raw.get("module"));
+                    String modDir = mod.isEmpty() ? "" : resolveServiceDirFast(mod, buildCompsByDir);
+                    if (!modDir.isEmpty()) {
+                        dirsWithEndpointsOrRoutes.add(modDir);
+                        String routePath = str(route.get("path"));
+                        if (!routePath.isEmpty()) {
+                            routePrefixesByDir.computeIfAbsent(modDir, k -> new TreeSet<>()).add(routePath);
+                        }
+                    }
+                    break;
+                }
+            } else {
+                var parsedOpt = readSyntax(node, evidence);
+                if (parsedOpt.isEmpty()) continue;
+                var info = parsedOpt.orElseThrow();
+                String path = str(info.get("_path"));
+                var fact = GraphJson.object(info.get("fact"));
+                var attrs = fact.get("attributes") instanceof Map<?, ?> m ? GraphJson.object(m) : Map.<String, Object>of();
+                if (isTestSource(attrs, path)) continue;
+                String dir = resolveServiceDirFast(path, buildCompsByDir);
+                if (dir.isEmpty()) continue;
+                if ("ROUTE_CANDIDATE".equals(node.kind())) {
+                    dirsWithEndpointsOrRoutes.add(dir);
+                    String routePath = unquoteLiteral(str(fact.get("name")));
+                    if (!routePath.isEmpty()) {
+                        routePrefixesByDir.computeIfAbsent(dir, k -> new TreeSet<>()).add(routePath);
+                    }
+                } else {
+                    dirsWithServiceCallsOrRpc.add(dir);
+                }
+            }
+        }
+
+        // Compute test-only modules (dir name + .csproj IsTestProject/xunit/nunit) and aggregators.
+        var testModuleDirs = new HashSet<String>();
+        for (String d : buildDirsByLength) {
+            if (isTestOnlyModuleDir(d) || descriptorTestProjectDirs.contains(d)) {
+                testModuleDirs.add(d);
+            }
+        }
+
+        var aggregatorDirs = new HashSet<String>();
+        var foldedLayoutChildToParent = new HashMap<String, String>();
+        for (String d : buildDirsByLength) {
+            if (testModuleDirs.contains(d)) continue;
+            var nonTestChildren = new ArrayList<String>();
+            for (String other : buildDirsByLength) {
+                if (!other.equals(d) && !testModuleDirs.contains(other) && other.startsWith(d + "/")) {
+                    nonTestChildren.add(other);
+                }
+            }
+            if (nonTestChildren.isEmpty()) continue;
+            boolean singleLayoutSubdir = nonTestChildren.size() == 1
+                    && LAYOUT_CODE_SUBDIRS.contains(nonTestChildren.getFirst().substring(d.length() + 1).toLowerCase(Locale.ROOT));
+            if (singleLayoutSubdir) {
+                foldedLayoutChildToParent.put(nonTestChildren.getFirst(), d);
+            } else {
+                aggregatorDirs.add(d);
+            }
+        }
+        if (!buildDirsByLength.isEmpty()) {
+            aggregatorDirs.add("");
+        }
+
+        var servicesByName = new TreeMap<String, ServiceEntry>();
+        var servicesByDir = new TreeMap<String, ServiceEntry>();
+        var servicesByNodeId = new LinkedHashMap<String, ServiceEntry>();
+        var codeDirs = new HashSet<String>();
+        var resolver = new CanonicalServiceIdentityResolver();
+        for (var bc : buildComps) {
+            if (bc.fallbackName().isEmpty()) continue;
+            if (aggregatorDirs.contains(bc.normDir()) || testModuleDirs.contains(bc.normDir())
+                    || foldedLayoutChildToParent.containsKey(bc.normDir())) {
+                continue;
+            }
+            var se = new ServiceEntry(bc.node().identity(), bc.fallbackName(), bc.normDir(), true, bc.isFrontendTool());
+            servicesByName.putIfAbsent(bc.fallbackName(), se);
+            servicesByNodeId.put(bc.node().identity(), se);
+            if (!bc.normDir().isEmpty()) {
+                servicesByDir.putIfAbsent(bc.normDir(), se);
+                codeDirs.add(bc.normDir());
+            } else if (buildComps.size() == 1) {
+                servicesByDir.putIfAbsent("", se);
+            }
+            String dfPath = dockerfilePathByDir.getOrDefault(bc.normDir(), "");
+            resolver.registerBuildComponent(new CanonicalServiceIdentityResolver.BuildModuleDescriptor(
+                    bc.node().identity(), bc.rawDir(), bc.normDir(), bc.compId(),
+                    bc.fallbackName(), bc.fallbackName(), bc.tool(), bc.languages(),
+                    packagingByDir.getOrDefault(bc.normDir(), ""),
+                    executableDirs.contains(bc.normDir()),
+                    descriptorTestProjectDirs.contains(bc.normDir()),
+                    !dfPath.isEmpty(), dfPath,
+                    Set.of(), routePrefixesByDir.getOrDefault(bc.normDir(), Set.of())));
+        }
+        for (var fold : foldedLayoutChildToParent.entrySet()) {
+            ServiceEntry parentEntry = servicesByDir.get(fold.getValue());
+            if (parentEntry != null) {
+                servicesByDir.putIfAbsent(fold.getKey(), parentEntry);
+                codeDirs.add(fold.getKey());
             }
         }
 
@@ -691,14 +808,18 @@ public final class DeclarativeTopologyProjection {
                 var updated = new ServiceEntry(bc.node().identity(), normSvc, bc.normDir(), true, bc.isFrontendTool());
                 servicesByDir.put(bc.normDir(), updated);
                 servicesByName.put(normSvc, updated);
+                servicesByNodeId.put(bc.node().identity(), updated);
                 if (!bc.fallbackName().isEmpty()) {
                     servicesByName.put(bc.fallbackName(), updated);
                 }
+                resolver.updateCanonicalName(bc.node().identity(), normSvc, bc.normDir(),
+                        CanonicalServiceIdentityResolver.EvidenceLayer.SPRING_CONFIG);
                 buildNodesWithCanonicalIdentity.add(bc.node().identity());
             } else {
                 var se = servicesByDir.getOrDefault(dir,
                         new ServiceEntry(ci.node().identity(), normSvc, dir, !dir.isEmpty(), false));
                 servicesByName.putIfAbsent(normSvc, se);
+                servicesByNodeId.putIfAbsent(se.nodeId(), se);
                 if (!dir.isEmpty()) servicesByDir.putIfAbsent(dir, se);
             }
         }
@@ -708,6 +829,7 @@ public final class DeclarativeTopologyProjection {
         for (var se : servicesByDir.values()) {
             if (se.hasCodeBuild() && !aggregatorDirs.contains(se.dirPrefix())) {
                 leafBuildServices.put(se.nodeId(), se);
+                servicesByNodeId.put(se.nodeId(), se);
             }
         }
 
@@ -745,14 +867,35 @@ public final class DeclarativeTopologyProjection {
         }
         refreshRoleOwners(roles, leafBuildServices.values(), servicesByName);
 
-        // Step 2.6: Map Compose/K8s/Proxy declarations onto existing ServiceEntries or promote INFRA_COMPONENTs.
+        // Step 2.6: Reconcile Compose/K8s/Proxy declarations via CanonicalServiceIdentityResolver or promote INFRA_COMPONENTs.
         var docSlotToService = new HashMap<String, ServiceEntry>();
         var dockerSocketMonitors = new ArrayList<MonitorSite>();
         var explicitIngress = new TreeMap<String, ServiceEntry>();
         var composeContainerServices = new TreeMap<String, ServiceEntry>();
+        var k8sWorkloadNodeIds = new HashSet<String>();
+        var composeWorkloadNodeIds = new HashSet<String>();
+        var infraOriginMeta = new LinkedHashMap<String, InfraOriginMeta>();
+        var infraEntries = new LinkedHashMap<String, ServiceEntry>();
+        var infraByBaseToken = new HashMap<String, ServiceEntry>();
         for (var se : leafBuildServices.values()) {
             composeContainerServices.put(se.nodeId(), se);
         }
+
+        // Pre-index declared ports by doc+slot so cross-layer port+route reconciliation has O(1) access.
+        var portsByDocSlot = new HashMap<String, Set<String>>();
+        for (var ps : portSites) {
+            if (ps.port().matches("\\d+") && !ps.doc().isEmpty() && !ps.owner().isEmpty()) {
+                portsByDocSlot.computeIfAbsent(ps.doc() + "|" + ps.owner(), k -> new TreeSet<>()).add(ps.port());
+            }
+        }
+
+        // Observe all normalized declaration names for data-driven shared prefix detection (e.g. "app-").
+        var observedDeclNames = new ArrayList<String>(declSites.size());
+        for (var d : declSites) {
+            String n = normalizeName(d.rawName());
+            if (!n.isEmpty()) observedDeclNames.add(n);
+        }
+        resolver.observeDeclarationNames(observedDeclNames);
 
         // Process container workloads (Compose/K8s Deployment/StatefulSet/DaemonSet) before
         // K8s Service aliases (which bind via spec.selector) and standalone reverse-proxy configs.
@@ -777,6 +920,8 @@ public final class DeclarativeTopologyProjection {
             String resolvedBuildDir = (!buildDir.isEmpty() && !declParent.isEmpty()
                     && !buildDir.startsWith(declParent + "/") && !buildDir.equals(declParent))
                     ? normDir(declParent + "/" + buildDir) : "";
+            String effectiveBuildDir = !resolvedBuildDir.isEmpty() && servicesByDir.containsKey(resolvedBuildDir)
+                    ? resolvedBuildDir : buildDir;
             boolean proxyDecl = isProxyDecl(decl.nodeKind(), decl.attrs());
             boolean standaloneProxyDecl = proxyDecl && !"compose_service".equals(decl.nodeKind()) && !decl.nodeKind().startsWith("k8s_");
             String img = !decl.slot().isEmpty() ? docSlotToImage.getOrDefault(decl.doc() + "|" + decl.slot(), "") : "";
@@ -796,39 +941,79 @@ public final class DeclarativeTopologyProjection {
             String selectorTarget = "k8s_service".equals(decl.nodeKind())
                     ? normalizeName(str(decl.attrs().get("selectorTarget"))) : "";
             boolean singleDeclDoc = !decl.doc().isEmpty() && docDeclCounts.getOrDefault(decl.doc(), 0) == 1;
+            var declLayer = "compose_service".equals(decl.nodeKind())
+                    ? CanonicalServiceIdentityResolver.EvidenceLayer.COMPOSE
+                    : (decl.nodeKind().startsWith("k8s_")
+                            ? CanonicalServiceIdentityResolver.EvidenceLayer.K8S
+                            : null);
+            Set<String> declPorts = !decl.slot().isEmpty()
+                    ? portsByDocSlot.getOrDefault(decl.doc() + "|" + decl.slot(), Set.of())
+                    : Set.of();
+            String declDockerfile = str(decl.attrs().get("dockerfile"));
+            if (declDockerfile.isEmpty() && !effectiveBuildDir.isEmpty()) {
+                declDockerfile = dockerfilePathByDir.getOrDefault(effectiveBuildDir, "");
+            }
 
             ServiceEntry matched = standaloneProxyDecl
                     ? resolveOwnerService(decl.dir(), decl.path(), servicesByDir)
                     : null;
             if (matched == null) {
-                matched = matchExistingServiceForDecl(norm, !resolvedBuildDir.isEmpty() && servicesByDir.containsKey(resolvedBuildDir) ? resolvedBuildDir : buildDir,
-                        containerName, imageTail, img,
-                        buildDirsByLength, servicesByDir, servicesByName, leafBuildServices.values(), roles);
+                boolean strictInfra = isDatastoreOrBrokerOrLogInfra(norm, img);
+                var signal = new CanonicalServiceIdentityResolver.DeclarationSignal(
+                        norm, effectiveBuildDir, declDockerfile, containerName, img, imageTail,
+                        declPorts, routePrefixesByDir.getOrDefault(decl.dir(), Set.of()),
+                        declLayer, strictInfra);
+                matched = resolver.resolveDeclaration(signal).map(servicesByNodeId::get).orElse(null);
+            }
+            if (matched == null && !isDatastoreOrBrokerOrLogInfra(norm, img)) {
+                matched = matchUniqueControlRoleAlias(norm, leafBuildServices.values(), roles);
             }
             if (matched == null && !selectorTarget.isEmpty()) {
                 matched = servicesByName.get(selectorTarget);
                 if (matched == null) {
-                    matched = matchExistingServiceForDecl(selectorTarget, "", "", "", "",
-                            buildDirsByLength, servicesByDir, servicesByName, leafBuildServices.values(), roles);
+                    var selSignal = new CanonicalServiceIdentityResolver.DeclarationSignal(
+                            selectorTarget, "", "", "", "", "", Set.of(), Set.of(),
+                            declLayer, isDatastoreOrBrokerOrLogInfra(selectorTarget, ""));
+                    matched = resolver.resolveDeclaration(selSignal).map(servicesByNodeId::get).orElse(null);
+                }
+                if (matched == null && !isDatastoreOrBrokerOrLogInfra(selectorTarget, "")) {
+                    matched = matchUniqueControlRoleAlias(selectorTarget, leafBuildServices.values(), roles);
                 }
             }
 
             boolean isKnownInfra = isInfraNameOrImage(norm, img);
             boolean noCodeDir = decl.dir().isEmpty() || (!codeDirs.contains(decl.dir()) && servicesByDir.get(decl.dir()) == null);
+            boolean k8sWorkload = isK8sWorkload(decl.nodeKind());
 
             if (matched != null) {
-                // Compose suffix service-identity fallback when leaf BUILD_COMPONENT lacks spring.application.name
+                if (declLayer != null) {
+                    resolver.recordLayer(matched.nodeId(), declLayer);
+                }
+                if ("compose_service".equals(decl.nodeKind())) {
+                    composeWorkloadNodeIds.add(matched.nodeId());
+                } else if (k8sWorkload) {
+                    k8sWorkloadNodeIds.add(matched.nodeId());
+                }
+                // Compose/K8s suffix service-identity fallback when leaf BUILD_COMPONENT lacks spring.application.name
+                String strippedNorm = CanonicalServiceIdentityResolver.stripSharedPrefix(norm, resolver.sharedDeclPrefix());
+                String identityCandidate = (!strippedNorm.isEmpty() && !strippedNorm.equals(norm)
+                        && (matched.canonicalName().replace('.', '-').endsWith("-" + strippedNorm)
+                                || matched.canonicalName().equals(strippedNorm)))
+                        ? strippedNorm : norm;
                 if (matched.hasCodeBuild() && !buildNodesWithCanonicalIdentity.contains(matched.nodeId())
-                        && norm.length() >= 2 && ("compose_service".equals(decl.nodeKind()) || decl.nodeKind().startsWith("k8s_"))) {
+                        && identityCandidate.length() >= 2
+                        && ("compose_service".equals(decl.nodeKind()) || decl.nodeKind().startsWith("k8s_"))) {
                     BuildCompInfo bc = buildCompsByNodeId.get(matched.nodeId());
-                    if (bc != null && bc.fallbackName().endsWith("-" + norm) && !norm.equals(matched.canonicalName())) {
+                    String fbDash = bc != null ? bc.fallbackName().replace('.', '-') : "";
+                    if (bc != null && fbDash.endsWith("-" + identityCandidate)
+                            && !identityCandidate.equals(matched.canonicalName())) {
                         var idProof = GraphEvidence.capture("architecture.service-identity", Map.of(
                                 "provider", PROVIDER,
-                                "serviceName", norm,
-                                "name", norm,
+                                "serviceName", identityCandidate,
+                                "name", identityCandidate,
                                 "directory", bc.rawDir(),
                                 "sourceEvidence", decl.proof(),
-                                "spec", "docker-compose",
+                                "spec", "compose_service".equals(decl.nodeKind()) ? "docker-compose" : "kubernetes",
                                 "trust", "DECLARATIVE_CONFIG",
                                 "runtimeObserved", false));
                         evidence.putIfAbsent(idProof.identity().value(), idProof);
@@ -838,15 +1023,17 @@ public final class DeclarativeTopologyProjection {
                         combined.add(idProof.identity());
                         additions.put(nodeKey, new KnowledgeGraph.Node(bc.node().identity(), bc.node().context(),
                                 bc.node().kind(), List.copyOf(combined)));
-                        var updated = new ServiceEntry(matched.nodeId(), norm, matched.dirPrefix(), true, matched.frontendBuild());
+                        var updated = new ServiceEntry(matched.nodeId(), identityCandidate, matched.dirPrefix(), true, matched.frontendBuild());
                         servicesByDir.put(matched.dirPrefix(), updated);
+                        servicesByNodeId.put(matched.nodeId(), updated);
                         for (var e : new ArrayList<>(servicesByName.entrySet())) {
                             if (e.getValue().nodeId().equals(matched.nodeId())) {
                                 servicesByName.put(e.getKey(), updated);
                             }
                         }
-                        servicesByName.put(norm, updated);
+                        servicesByName.put(identityCandidate, updated);
                         servicesByName.put(bc.fallbackName(), updated);
+                        resolver.updateCanonicalName(matched.nodeId(), identityCandidate, matched.dirPrefix(), declLayer);
                         leafBuildServices.put(matched.nodeId(), updated);
                         composeContainerServices.put(matched.nodeId(), updated);
                         buildNodesWithCanonicalIdentity.add(matched.nodeId());
@@ -864,6 +1051,9 @@ public final class DeclarativeTopologyProjection {
                 if (!imageTail.isEmpty() && !isInfraNameOrImage(imageTail, img)) {
                     servicesByName.putIfAbsent(imageTail, matched);
                 }
+                if (!matched.hasCodeBuild()) {
+                    resolver.registerInfraComponent(matched.nodeId(), norm, buildDir, imageTail, declPorts, declLayer);
+                }
                 composeContainerServices.put(matched.nodeId(), matched);
                 if (dockerSocket) {
                     dockerSocketMonitors.add(new MonitorSite(matched, decl.proof()));
@@ -880,17 +1070,57 @@ public final class DeclarativeTopologyProjection {
                 ServiceEntry entry;
                 if (existingByCanon != null) {
                     entry = existingByCanon;
+                    if (declLayer != null) resolver.recordLayer(entry.nodeId(), declLayer);
+                    if ("compose_service".equals(decl.nodeKind())) composeWorkloadNodeIds.add(entry.nodeId());
+                    else if (k8sWorkload) k8sWorkloadNodeIds.add(entry.nodeId());
                 } else {
-                    String infraId = KnowledgeGraph.derivedIdentity("infra-component", List.of(PROVIDER, root, canonicalInfra));
-                    var infraProof = GraphEvidence.capture("architecture.infra-component", Map.of(
-                            "provider", PROVIDER, "name", canonicalInfra, "image", img, "spec", decl.nodeKind(),
-                            "sourceEvidence", decl.proof(), "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
-                    evidence.putIfAbsent(infraProof.identity().value(), infraProof);
-                    additions.putIfAbsent(root + "|" + infraId, new KnowledgeGraph.Node(infraId, root, "INFRA_COMPONENT",
-                            List.of(infraProof.identity())));
-                    entry = new ServiceEntry(infraId, canonicalInfra, buildDir, false, false);
-                    roles.infraNodeIds.add(infraId);
-                    servicesByName.put(canonicalInfra, entry);
+                    String matchedDfDir = k8sWorkload && !isKnownInfra && !proxyDecl
+                            ? findUniqueDockerfileDir(norm, resolver.sharedDeclPrefix(), dockerfilePathByDir, servicesByDir)
+                            : "";
+                    if (!matchedDfDir.isEmpty()) {
+                        // Elevate standalone Dockerfile + K8s workload (without Maven/Gradle/build manifest) to SERVICE_COMPONENT.
+                        String svcId = KnowledgeGraph.derivedIdentity("service-component", List.of(PROVIDER, root, matchedDfDir, canonicalInfra));
+                        var svcProof = GraphEvidence.capture("architecture.service-identity", Map.ofEntries(
+                                Map.entry("provider", PROVIDER),
+                                Map.entry("serviceName", canonicalInfra),
+                                Map.entry("name", canonicalInfra),
+                                Map.entry("directory", matchedDfDir),
+                                Map.entry("sourceEvidence", decl.proof()),
+                                Map.entry("spec", "kubernetes-dockerfile"),
+                                Map.entry("hasDockerfile", true),
+                                Map.entry("componentRole", "SERVICE_COMPONENT"),
+                                Map.entry("evidenceLayers", List.of("K8S")),
+                                Map.entry("trust", "DECLARATIVE_CONFIG"),
+                                Map.entry("runtimeObserved", false)));
+                        evidence.putIfAbsent(svcProof.identity().value(), svcProof);
+                        additions.putIfAbsent(root + "|" + svcId, new KnowledgeGraph.Node(svcId, root, "SERVICE_COMPONENT",
+                                List.of(svcProof.identity())));
+                        entry = new ServiceEntry(svcId, canonicalInfra, matchedDfDir, true, false);
+                        servicesByName.put(canonicalInfra, entry);
+                        servicesByDir.putIfAbsent(matchedDfDir, entry);
+                        servicesByNodeId.put(svcId, entry);
+                        leafBuildServices.put(svcId, entry);
+                        codeDirs.add(matchedDfDir);
+                        k8sWorkloadNodeIds.add(svcId);
+                        resolver.recordLayer(svcId, CanonicalServiceIdentityResolver.EvidenceLayer.K8S);
+                    } else {
+                        String infraId = KnowledgeGraph.derivedIdentity("infra-component", List.of(PROVIDER, root, canonicalInfra));
+                        var infraProof = GraphEvidence.capture("architecture.infra-component", Map.of(
+                                "provider", PROVIDER, "name", canonicalInfra, "image", img, "spec", decl.nodeKind(),
+                                "sourceEvidence", decl.proof(), "trust", "DECLARATIVE_CONFIG", "runtimeObserved", false));
+                        evidence.putIfAbsent(infraProof.identity().value(), infraProof);
+                        additions.putIfAbsent(root + "|" + infraId, new KnowledgeGraph.Node(infraId, root, "INFRA_COMPONENT",
+                                List.of(infraProof.identity())));
+                        entry = new ServiceEntry(infraId, canonicalInfra, buildDir, false, false);
+                        roles.infraNodeIds.add(infraId);
+                        servicesByName.put(canonicalInfra, entry);
+                        servicesByNodeId.put(infraId, entry);
+                        infraOriginMeta.putIfAbsent(infraId, new InfraOriginMeta(canonicalInfra, img, decl.nodeKind(), decl.proof()));
+                        indexInfraEntry(entry, infraEntries, infraByBaseToken);
+                        resolver.registerInfraComponent(infraId, canonicalInfra, buildDir, imageTail, declPorts, declLayer);
+                        if ("compose_service".equals(decl.nodeKind())) composeWorkloadNodeIds.add(infraId);
+                        else if (k8sWorkload) k8sWorkloadNodeIds.add(infraId);
+                    }
                 }
                 if (!img.isEmpty()) roles.recordImage(entry.nodeId(), img);
                 if (!buildDir.isEmpty()) servicesByDir.putIfAbsent(buildDir, entry);
@@ -930,7 +1160,7 @@ public final class DeclarativeTopologyProjection {
         // Refresh role owners now that Compose/K8s infra components, Docker images, and ports are registered.
         refreshRoleOwners(roles, leafBuildServices.values(), servicesByName);
 
-        // Helper to resolve or promote referenced infrastructure components (reusing existing infra first).
+        // Helper to resolve or promote referenced infrastructure components (reusing existing infra first via O(1) index).
         java.util.function.Function<String, ServiceEntry> resolveOrPromoteTarget = rawTarget -> {
             String norm = normalizeName(rawTarget);
             if (norm.isEmpty()) return null;
@@ -939,11 +1169,12 @@ public final class DeclarativeTopologyProjection {
             if ("httpd".equals(norm) && servicesByName.containsKey("apache")) return servicesByName.get("apache");
             if ("apache".equals(norm) && servicesByName.containsKey("httpd")) return servicesByName.get("httpd");
             if (!isInfraNameOrImage(norm, "")) {
-                ServiceEntry alias = findUniqueBaseTokenMatch(norm, leafBuildServices.values());
+                ServiceEntry alias = resolver.findUniqueByBaseToken(norm).map(servicesByNodeId::get).orElse(null);
                 if (alias != null) return alias;
                 return null;
             }
-            ServiceEntry reusedInfra = findExistingInfra(servicesByName, roles, KNOWN_INFRA_NAMES.contains(norm), norm);
+            ServiceEntry reusedInfra = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken,
+                    roles, KNOWN_INFRA_NAMES.contains(norm), norm);
             if (reusedInfra != null) return reusedInfra;
             String infraId = KnowledgeGraph.derivedIdentity("infra-component", List.of(PROVIDER, root, norm));
             var infraProof = GraphEvidence.capture("architecture.infra-component", Map.of(
@@ -955,6 +1186,8 @@ public final class DeclarativeTopologyProjection {
             var promoted = new ServiceEntry(infraId, norm, "", false, false);
             roles.infraNodeIds.add(infraId);
             servicesByName.put(norm, promoted);
+            servicesByNodeId.put(infraId, promoted);
+            indexInfraEntry(promoted, infraEntries, infraByBaseToken);
             return promoted;
         };
 
@@ -1313,7 +1546,7 @@ public final class DeclarativeTopologyProjection {
             for (var src : leafBuildServices.values()) {
                 check(cancelled);
                 if (src.nodeId().equals(roles.eurekaServer.nodeId()) || roles.isEurekaDisabled(src)) continue;
-                ContentDigest roleProof = findRoleProof(springRoles, src.dirPrefix(), Set.of("EUREKA_CLIENT", "DISCOVERY_CLIENT"));
+                ContentDigest roleProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("EUREKA_CLIENT", "DISCOVERY_CLIENT"));
                 if (roleProof != null) {
                     emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.eurekaServer,
                             roleProof, "JAVA_EUREKA_CLIENT_ROLE", "SOURCE_SYNTAX", roles);
@@ -1324,10 +1557,10 @@ public final class DeclarativeTopologyProjection {
         // 6. Opt-In DFD_EXPORT Compatibility Rules (all derived actors/edges tagged trust="DERIVED_DFD_POLICY")
         if (profile == ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT) {
             // Rule 6a: Starter-evidenced & Spring-role control-plane / infra wiring
-            ServiceEntry existingRabbit = findExistingInfra(servicesByName, roles, true, "rabbitmq", "rabbit");
-            ServiceEntry existingKafka = findExistingInfra(servicesByName, roles, true, "kafka");
-            ServiceEntry existingConsul = findExistingInfra(servicesByName, roles, true, "consul");
-            ServiceEntry existingPrometheus = findExistingInfra(servicesByName, roles, true, "prometheus");
+            ServiceEntry existingRabbit = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "rabbitmq", "rabbit");
+            ServiceEntry existingKafka = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "kafka");
+            ServiceEntry existingConsul = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "consul");
+            ServiceEntry existingPrometheus = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "prometheus");
             boolean hasTurbineStream = leafBuildServices.values().stream()
                     .anyMatch(s -> roles.hasRole(s, "TURBINE_STREAM"));
 
@@ -1338,7 +1571,7 @@ public final class DeclarativeTopologyProjection {
                 // Discovery registration / lookup
                 ContentDigest eurekaProof = modStarters.get("eureka-client");
                 if (eurekaProof == null && (roles.hasRole(src, "EUREKA_CLIENT") || roles.hasRole(src, "DISCOVERY_CLIENT"))) {
-                    eurekaProof = findRoleProof(springRoles, src.dirPrefix(), Set.of("EUREKA_CLIENT", "DISCOVERY_CLIENT"));
+                    eurekaProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("EUREKA_CLIENT", "DISCOVERY_CLIENT"));
                 }
                 if (eurekaProof != null && roles.eurekaServer != null && !src.nodeId().equals(roles.eurekaServer.nodeId())
                         && !roles.isEurekaDisabled(src)) {
@@ -1389,7 +1622,7 @@ public final class DeclarativeTopologyProjection {
                 // OAuth2 resource server -> auth server
                 ContentDigest oauthProof = modStarters.getOrDefault("oauth2-resource", modStarters.get("oauth2-client"));
                 if (oauthProof == null && roles.isOAuth2Resource(src)) {
-                    oauthProof = findRoleProof(springRoles, src.dirPrefix(), Set.of("OAUTH2_RESOURCE", "OAUTH2_SSO"));
+                    oauthProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("OAUTH2_RESOURCE", "OAUTH2_SSO"));
                 }
                 if (oauthProof != null && roles.authServer != null && !src.nodeId().equals(roles.authServer.nodeId())) {
                     emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, roles.authServer,
@@ -1413,7 +1646,7 @@ public final class DeclarativeTopologyProjection {
                 // Logstash logback encoder
                 ContentDigest logstashProof = modStarters.get("logstash-logback");
                 if (logstashProof != null) {
-                    ServiceEntry logTarget = findExistingInfra(servicesByName, roles, true, "logstash", "elk");
+                    ServiceEntry logTarget = findExistingInfraIndexed(servicesByName, infraEntries, infraByBaseToken, roles, true, "logstash", "elk");
                     if (logTarget == null) logTarget = resolveOrPromoteTarget.apply("logstash");
                     if (logTarget != null && !src.nodeId().equals(logTarget.nodeId())) {
                         emitOrientedEdge(profile, addedEdges, evidence, existingCalls, root, src, logTarget,
@@ -1465,7 +1698,7 @@ public final class DeclarativeTopologyProjection {
 
                 // Stream consumers (Turbine Stream / Zipkin Stream Server) reading from concrete broker
                 if (roles.isStreamConsumer(src)) {
-                    ContentDigest streamRoleProof = findRoleProof(springRoles, src.dirPrefix(),
+                    ContentDigest streamRoleProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(),
                             Set.of("TURBINE_STREAM", "ZIPKIN_STREAM_SERVER"));
                     if (streamRoleProof == null) streamRoleProof = modStarters.get("turbine-stream");
                     ServiceEntry broker = existingRabbit != null ? existingRabbit : existingKafka;
@@ -1480,7 +1713,7 @@ public final class DeclarativeTopologyProjection {
                         && !hasExplicitTurbineMonitorRef && !roles.isControlPlane(src)
                         && !src.nodeId().equals(roles.turbineServer.nodeId())
                         && roles.hasRole(src, "CIRCUIT_BREAKER")) {
-                    ContentDigest cbProof = findRoleProof(springRoles, src.dirPrefix(), Set.of("CIRCUIT_BREAKER"));
+                    ContentDigest cbProof = findRoleProofFast(roleProofByDirAndRole, src.dirPrefix(), Set.of("CIRCUIT_BREAKER"));
                     if (cbProof != null) {
                         emitTopologyEdge(addedEdges, evidence, existingCalls, root, src, roles.turbineServer,
                                 cbProof, "DFD_HTTP_TURBINE_CIRCUIT_BREAKER", "DERIVED_DFD_POLICY");
@@ -1491,8 +1724,8 @@ public final class DeclarativeTopologyProjection {
             // Turbine -> Hystrix Dashboard flow when both exist in repository
             if (roles.turbineServer != null && roles.hystrixDashboard != null
                     && !roles.turbineServer.nodeId().equals(roles.hystrixDashboard.nodeId())) {
-                ContentDigest p = findRoleProof(springRoles, roles.hystrixDashboard.dirPrefix(), Set.of("HYSTRIX_DASHBOARD"));
-                if (p == null) p = findRoleProof(springRoles, roles.turbineServer.dirPrefix(), Set.of("TURBINE", "TURBINE_STREAM"));
+                ContentDigest p = findRoleProofFast(roleProofByDirAndRole, roles.hystrixDashboard.dirPrefix(), Set.of("HYSTRIX_DASHBOARD"));
+                if (p == null) p = findRoleProofFast(roleProofByDirAndRole, roles.turbineServer.dirPrefix(), Set.of("TURBINE", "TURBINE_STREAM"));
                 if (p != null) {
                     emitTopologyEdge(addedEdges, evidence, existingCalls, root, roles.turbineServer, roles.hystrixDashboard,
                             p, "DFD_TURBINE_DASHBOARD_STREAM", "DERIVED_DFD_POLICY");
@@ -1504,7 +1737,7 @@ public final class DeclarativeTopologyProjection {
                 if (!roles.hasRole(gw, "ZUUL_PROXY")) continue;
                 if (zuulIgnoredAllGlobal || zuulIgnoredAllNodeIds.contains(gw.nodeId())) continue;
                 if (explicitZuulRouteGatewayIds.contains(gw.nodeId())) continue;
-                ContentDigest gwProof = findRoleProof(springRoles, gw.dirPrefix(), Set.of("ZUUL_PROXY"));
+                ContentDigest gwProof = findRoleProofFast(roleProofByDirAndRole, gw.dirPrefix(), Set.of("ZUUL_PROXY"));
                 if (gwProof == null) gwProof = startersByService.getOrDefault(gw.nodeId(), Map.of()).get("zuul");
                 if (gwProof == null) continue;
                 for (var target : leafBuildServices.values()) {
@@ -1582,6 +1815,141 @@ public final class DeclarativeTopologyProjection {
                             actorProof.identity(), "DFD_EXTERNAL_ENTRY_RESPONSE", "DERIVED_DFD_POLICY");
                 }
             }
+        }
+
+        // Step 7: Materialize cross-layer evidenceLayers, test-only flags, Dockerfile+K8s SERVICE_COMPONENT
+        // elevation, and SHARED_LIBRARY_MODULE classification deterministically without dropping endpoints.
+        boolean repoHasContainerServices = !k8sWorkloadNodeIds.isEmpty() || !composeWorkloadNodeIds.isEmpty();
+        boolean repoHasDeployableServices = repoHasContainerServices
+                || !dirsWithEndpointsOrRoutes.isEmpty()
+                || !executableDirs.isEmpty()
+                || !springRoles.isEmpty();
+        int totalLeafBuildCount = leafBuildServices.size();
+
+        for (var bc : buildComps) {
+            if (aggregatorDirs.contains(bc.normDir()) || foldedLayoutChildToParent.containsKey(bc.normDir())) {
+                continue;
+            }
+            String nodeId = bc.node().identity();
+            String nodeKey = bc.node().context() + "|" + nodeId;
+            boolean isTestOnly = testModuleDirs.contains(bc.normDir());
+            if (isTestOnly) {
+                var classProof = GraphEvidence.capture("architecture.component-classification", Map.of(
+                        "provider", PROVIDER,
+                        "role", CanonicalServiceIdentityResolver.ComponentRole.TEST_ONLY_MODULE.name(),
+                        "isTestOnlyModule", true,
+                        "directory", bc.rawDir(),
+                        "packaging", packagingByDir.getOrDefault(bc.normDir(), ""),
+                        "evidenceLayers", List.of("BUILD"),
+                        "trust", "DECLARATIVE_CONFIG",
+                        "runtimeObserved", false));
+                evidence.putIfAbsent(classProof.identity().value(), classProof);
+                var baseNode = additions.getOrDefault(nodeKey, bc.node());
+                var combined = new TreeSet<>(baseNode.evidence());
+                combined.add(classProof.identity());
+                additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
+                        bc.node().kind(), List.copyOf(combined)));
+                continue;
+            }
+
+            ServiceEntry se = servicesByNodeId.get(nodeId);
+            String svcName = se != null ? se.canonicalName() : bc.fallbackName();
+            boolean hasDf = dockerfilePathByDir.containsKey(bc.normDir()) || resolver.hasDockerfile(nodeId);
+            boolean hasCompose = composeWorkloadNodeIds.contains(nodeId);
+            boolean hasK8s = k8sWorkloadNodeIds.contains(nodeId);
+            boolean hasSpringRole = !roles.rolesByNodeId.getOrDefault(nodeId, Set.of()).isEmpty();
+            boolean hasSpringApp = bestIdentityByDir.containsKey(bc.normDir());
+            boolean hasPort = !roles.portsByNodeId.getOrDefault(nodeId, Set.of()).isEmpty();
+            boolean hasEp = dirsWithEndpointsOrRoutes.contains(bc.normDir());
+            boolean hasCallOrRpc = dirsWithServiceCallsOrRpc.contains(bc.normDir());
+            boolean hasEv = !roles.eventProducerProtosByNodeId.getOrDefault(nodeId, Set.of()).isEmpty()
+                    || !roles.eventConsumerProtosByNodeId.getOrDefault(nodeId, Set.of()).isEmpty();
+            String pkg = packagingByDir.getOrDefault(bc.normDir(), "");
+            boolean execPkg = executableDirs.contains(bc.normDir());
+
+            var role = CanonicalServiceIdentityResolver.classifyBuildComponent(
+                    new CanonicalServiceIdentityResolver.ClassificationSignals(
+                            false, false, false, bc.tool(), bc.compId(), bc.languages(),
+                            pkg, execPkg, hasDf, hasCompose, hasK8s,
+                            hasSpringRole, hasSpringApp, hasPort, hasEp, hasCallOrRpc, hasEv,
+                            totalLeafBuildCount, repoHasDeployableServices, repoHasContainerServices));
+            List<String> layers = resolver.evidenceLayers(nodeId);
+            if (layers.isEmpty()) layers = List.of("BUILD");
+
+            var baseNode = additions.getOrDefault(nodeKey, bc.node());
+            if (role == CanonicalServiceIdentityResolver.ComponentRole.SERVICE_COMPONENT) {
+                var idProof = GraphEvidence.capture("architecture.service-identity", Map.ofEntries(
+                        Map.entry("provider", PROVIDER),
+                        Map.entry("serviceName", svcName),
+                        Map.entry("name", svcName),
+                        Map.entry("directory", bc.rawDir()),
+                        Map.entry("spec", "cross-layer-reconciliation"),
+                        Map.entry("hasDockerfile", hasDf),
+                        Map.entry("componentRole", role.name()),
+                        Map.entry("isTestOnlyModule", false),
+                        Map.entry("evidenceLayers", layers),
+                        Map.entry("trust", "DECLARATIVE_CONFIG"),
+                        Map.entry("runtimeObserved", false)));
+                evidence.putIfAbsent(idProof.identity().value(), idProof);
+                var combined = new TreeSet<>(baseNode.evidence());
+                combined.add(idProof.identity());
+                additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
+                        "SERVICE_COMPONENT", List.copyOf(combined)));
+            } else if (role == CanonicalServiceIdentityResolver.ComponentRole.SHARED_LIBRARY_MODULE) {
+                var classProof = GraphEvidence.capture("architecture.component-classification", Map.of(
+                        "provider", PROVIDER,
+                        "role", role.name(),
+                        "isTestOnlyModule", false,
+                        "directory", bc.rawDir(),
+                        "packaging", pkg,
+                        "evidenceLayers", layers,
+                        "trust", "DECLARATIVE_CONFIG",
+                        "runtimeObserved", false));
+                evidence.putIfAbsent(classProof.identity().value(), classProof);
+                var combined = new TreeSet<>(baseNode.evidence());
+                combined.add(classProof.identity());
+                additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
+                        "SHARED_LIBRARY_MODULE", List.copyOf(combined)));
+            } else if (layers.size() >= 2) {
+                var idProof = GraphEvidence.capture("architecture.service-identity", Map.ofEntries(
+                        Map.entry("provider", PROVIDER),
+                        Map.entry("serviceName", svcName),
+                        Map.entry("name", svcName),
+                        Map.entry("directory", bc.rawDir()),
+                        Map.entry("spec", "cross-layer-reconciliation"),
+                        Map.entry("hasDockerfile", hasDf),
+                        Map.entry("componentRole", role.name()),
+                        Map.entry("isTestOnlyModule", false),
+                        Map.entry("evidenceLayers", layers),
+                        Map.entry("trust", "DECLARATIVE_CONFIG"),
+                        Map.entry("runtimeObserved", false)));
+                evidence.putIfAbsent(idProof.identity().value(), idProof);
+                var combined = new TreeSet<>(baseNode.evidence());
+                combined.add(idProof.identity());
+                additions.put(nodeKey, new KnowledgeGraph.Node(nodeId, bc.node().context(),
+                        baseNode.kind(), List.copyOf(combined)));
+            }
+        }
+
+        // Attach final multi-layer evidenceLayers onto promoted INFRA_COMPONENTs while preserving
+        // the invariant that INFRA_COMPONENT carries only architecture.infra-component evidence.
+        for (var entry : infraOriginMeta.entrySet()) {
+            String infraId = entry.getKey();
+            List<String> layers = resolver.evidenceLayers(infraId);
+            if (layers.size() < 2) continue;
+            var meta = entry.getValue();
+            var updatedProof = GraphEvidence.capture("architecture.infra-component", Map.of(
+                    "provider", PROVIDER,
+                    "name", meta.name(),
+                    "image", meta.image(),
+                    "spec", meta.spec(),
+                    "sourceEvidence", meta.sourceProof(),
+                    "evidenceLayers", layers,
+                    "trust", "DECLARATIVE_CONFIG",
+                    "runtimeObserved", false));
+            evidence.putIfAbsent(updatedProof.identity().value(), updatedProof);
+            additions.put(root + "|" + infraId, new KnowledgeGraph.Node(infraId, root, "INFRA_COMPONENT",
+                    List.of(updatedProof.identity())));
         }
 
         nodes.putAll(additions);
@@ -1921,18 +2289,7 @@ public final class DeclarativeTopologyProjection {
 
     private static ServiceEntry resolveOwnerService(String dir, String path, Map<String, ServiceEntry> servicesByDir) {
         if (path != null && !path.isEmpty()) {
-            String clean = path.replace('\\', '/');
-            while (clean.startsWith("./")) clean = clean.substring(2);
-            ServiceEntry best = null;
-            int bestLen = -1;
-            for (var entry : servicesByDir.entrySet()) {
-                String key = entry.getKey();
-                if (key.isEmpty()) continue;
-                if ((clean.equals(key) || clean.startsWith(key + "/")) && key.length() > bestLen) {
-                    best = entry.getValue();
-                    bestLen = key.length();
-                }
-            }
+            ServiceEntry best = CanonicalServiceIdentityResolver.resolveNearestDir(path, servicesByDir);
             if (best != null) return best;
         }
         if (dir != null && !dir.isEmpty()) {
@@ -2189,6 +2546,110 @@ public final class DeclarativeTopologyProjection {
             case "mysql" -> findExistingInfra(servicesByName, roles, true, "mysql", "mariadb");
             default -> findExistingInfra(servicesByName, roles, true, infraKind);
         };
+    }
+
+    private static final ServiceEntry AMBIGUOUS_INFRA = new ServiceEntry("__AMBIGUOUS__", "", "", false, false);
+
+    private static void indexInfraEntry(ServiceEntry entry, Map<String, ServiceEntry> infraEntries,
+            Map<String, ServiceEntry> infraByBaseToken) {
+        infraEntries.putIfAbsent(entry.nodeId(), entry);
+        String tok = canonicalBaseToken(entry.canonicalName());
+        if (tok.length() >= 2) {
+            ServiceEntry prev = infraByBaseToken.get(tok);
+            if (prev == null) {
+                infraByBaseToken.put(tok, entry);
+            } else if (!prev.nodeId().equals(entry.nodeId())) {
+                infraByBaseToken.put(tok, AMBIGUOUS_INFRA);
+            }
+        }
+    }
+
+    private static ServiceEntry findExistingInfraIndexed(
+            Map<String, ServiceEntry> servicesByName,
+            Map<String, ServiceEntry> infraEntries,
+            Map<String, ServiceEntry> infraByBaseToken,
+            RoleContext roles,
+            boolean allowImageMatch,
+            String... names) {
+        for (String name : names) {
+            ServiceEntry se = servicesByName.get(name);
+            if (se != null && !se.hasCodeBuild()) return se;
+        }
+        for (String name : names) {
+            String targetTok = canonicalBaseToken(name);
+            if (targetTok.length() < 2) continue;
+            ServiceEntry byTok = infraByBaseToken.get(targetTok);
+            if (byTok != null && byTok != AMBIGUOUS_INFRA) return byTok;
+        }
+        if (allowImageMatch && !infraEntries.isEmpty()) {
+            for (String name : names) {
+                String imgTok = imageSearchToken(name);
+                if (imgTok.isEmpty()) continue;
+                ServiceEntry found = null;
+                for (var se : infraEntries.values()) {
+                    String img = roles.imageOf(se).toLowerCase(Locale.ROOT);
+                    if (!img.isEmpty() && img.contains(imgTok)) {
+                        if (found != null && !found.nodeId().equals(se.nodeId())) {
+                            found = null;
+                            break;
+                        }
+                        found = se;
+                    }
+                }
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isK8sWorkload(String nodeKind) {
+        return "k8s_deployment".equals(nodeKind)
+                || "k8s_statefulset".equals(nodeKind)
+                || "k8s_daemonset".equals(nodeKind)
+                || "k8s_pod".equals(nodeKind);
+    }
+
+    private static String findUniqueDockerfileDir(String norm, String sharedPrefix,
+            Map<String, String> dockerfilePathByDir, Map<String, ServiceEntry> servicesByDir) {
+        if (norm == null || norm.isEmpty() || dockerfilePathByDir.isEmpty()) return "";
+        String stripped = CanonicalServiceIdentityResolver.stripSharedPrefix(norm, sharedPrefix);
+        String found = null;
+        for (String dfDir : dockerfilePathByDir.keySet()) {
+            if (dfDir.isEmpty() || servicesByDir.containsKey(dfDir)) continue;
+            String base = normalizeName(baseOrDirName(dfDir, ""));
+            String baseDash = base.replace('.', '-');
+            boolean matches = base.equals(norm)
+                    || (!stripped.isEmpty() && base.equals(stripped))
+                    || baseDash.endsWith("-" + norm)
+                    || (!stripped.isEmpty() && baseDash.endsWith("-" + stripped));
+            if (matches) {
+                if (found != null && !found.equals(dfDir)) return "";
+                found = dfDir;
+            }
+        }
+        return found == null ? "" : found;
+    }
+
+    private static String resolveServiceDirFast(String normPath, Map<String, BuildCompInfo> buildCompsByDir) {
+        if (normPath == null || normPath.isBlank()) return "";
+        String clean = normPath.replace('\\', '/');
+        while (clean.startsWith("./")) clean = clean.substring(2);
+        BuildCompInfo matched = CanonicalServiceIdentityResolver.resolveNearestDir(clean, buildCompsByDir);
+        if (matched != null && !matched.normDir().isEmpty()) {
+            return matched.normDir();
+        }
+        return topServiceDir(clean);
+    }
+
+    private static ContentDigest findRoleProofFast(Map<String, Map<String, ContentDigest>> roleProofByDirAndRole,
+            String dir, Set<String> wantedRoles) {
+        var byRole = roleProofByDirAndRole.get(dir);
+        if (byRole == null || byRole.isEmpty()) return null;
+        for (String r : wantedRoles) {
+            ContentDigest p = byRole.get(r);
+            if (p != null) return p;
+        }
+        return null;
     }
 
     private static ServiceEntry findExistingInfra(Map<String, ServiceEntry> servicesByName, RoleContext roles,

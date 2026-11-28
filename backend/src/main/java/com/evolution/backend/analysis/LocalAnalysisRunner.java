@@ -1791,10 +1791,15 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
     private static Map<ContentDigest, com.evolution.analysis.acquisition.AcquiredFile> extractPolyglotBytes(
             RepositoryAcquisitionResult acquisition) {
         var map = new HashMap<ContentDigest, com.evolution.analysis.acquisition.AcquiredFile>();
+        long javaBudget = 32L * 1024L * 1024L;
         for (var file : acquisition.files()) {
             String p = file.path();
             if (!p.endsWith(".java") || p.endsWith("Grpc.java") || p.contains("grpc")) {
                 map.putIfAbsent(file.contentDigest(), file);
+            } else if (file.bytes().length <= 512_000 && javaBudget >= file.bytes().length) {
+                if (map.putIfAbsent(file.contentDigest(), file) == null) {
+                    javaBudget -= file.bytes().length;
+                }
             }
         }
         return map;

@@ -2127,11 +2127,19 @@ public final class ArchitectureQueryService {
         if (evidence.family().equals("architecture.service-identity")) {
             return new EvidenceView(evidence.identity(), evidence.family(), true,
                     select(read(evidence, budget),
-                            Set.of("serviceName", "name", "directory", "spec", "trust", "runtimeObserved")));
+                            Set.of("serviceName", "name", "directory", "spec", "trust", "runtimeObserved",
+                                    "evidenceLayers", "hasDockerfile", "componentRole", "isTestOnlyModule")));
+        }
+        if (evidence.family().equals("architecture.component-classification")) {
+            return new EvidenceView(evidence.identity(), evidence.family(), true,
+                    select(read(evidence, budget),
+                            Set.of("role", "isTestOnlyModule", "directory", "packaging", "evidenceLayers",
+                                    "trust", "runtimeObserved")));
         }
         if (evidence.family().equals("architecture.infra-component")) {
             return new EvidenceView(evidence.identity(), evidence.family(), true,
-                    select(read(evidence, budget), Set.of("name", "image", "spec", "trust", "runtimeObserved")));
+                    select(read(evidence, budget), Set.of("name", "image", "spec", "trust", "runtimeObserved",
+                            "evidenceLayers")));
         }
         if (evidence.family().equals("architecture.external-actor")) {
             return new EvidenceView(evidence.identity(), evidence.family(), true,

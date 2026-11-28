@@ -27,8 +27,9 @@ public final class StaticPolyglotScan {
     private static final int MEMORY_ROW_CAP = 65_536;
     private static final int PARSE_WORKERS = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), 8));
     private static final int PARSE_BATCH_LIMIT = 512;
-    static final String DECLARATIVE_PROVIDER = "source.declarative-infra:m8.4-v3";
+    static final String DECLARATIVE_PROVIDER = "source.declarative-infra:m8.4-v4";
     private static final String DECLARATIVE_TOOL_IDENTITY = ContentDigest.sha256Utf8(DECLARATIVE_PROVIDER).value();
+    private static final Pattern PYTHON_FROM_IMPORT = Pattern.compile("^from\\s+([A-Za-z_][A-Za-z0-9_.]*)\\s+import\\b");
     private static final Pattern DOCKERFILE_FROM = Pattern.compile(
             "(?i)^FROM\\s+(?:--[^\\s]+\\s+)*([^\\s#]+)(?:\\s+AS\\s+([A-Za-z0-9_.-]+))?");
     private static final Pattern DOCKERFILE_EXPOSE = Pattern.compile("(?i)^EXPOSE\\s+(.+)");
@@ -377,9 +378,17 @@ public final class StaticPolyglotScan {
             BooleanSupplier cancelled) throws IOException {
         int n = batch.size();
         ParseOutput[] results = new ParseOutput[n];
+        // Share CAS-verified bytes across tasks in the same batch (e.g. JAVA_GRPC + JAVA_SERVICE_SYNTAX
+        // on the same .java file) to avoid duplicate disk reads and SHA-256 verification.
+        var batchByteCache = new ConcurrentHashMap<ContentDigest, byte[]>();
+        Function<ContentDigest, byte[]> sharedVerifiedBytes = digest -> {
+            byte[] pre = verifiedBytes.apply(digest);
+            if (pre != null) return pre;
+            return batchByteCache.get(digest);
+        };
         if (n == 1 || PARSE_WORKERS <= 1) {
             for (int i = 0; i < n; i++) {
-                var out = parseOne(batch.get(i), content, fileBudget, verifiedBytes, fastArchitecture,
+                var out = parseOne(batch.get(i), content, fileBudget, sharedVerifiedBytes, batchByteCache, fastArchitecture,
                         supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache, toolIdentities,
                         cancelled);
                 if (out.cancelledError())
@@ -410,9 +419,9 @@ public final class StaticPolyglotScan {
                                         "SYNTAX_CANCELLED", true, false);
                                 return null;
                             }
-                            ParseOutput out = parseOne(orderedBatch.get(idx), content, fileBudget, verifiedBytes,
-                                    fastArchitecture, supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax,
-                                    polyglotCache, toolIdentities, cancelled);
+                            ParseOutput out = parseOne(orderedBatch.get(idx), content, fileBudget, sharedVerifiedBytes,
+                                    batchByteCache, fastArchitecture, supportedGrammars, treeSitter, javaGrpc,
+                                    javaServiceSyntax, polyglotCache, toolIdentities, cancelled);
                             results[idx] = out;
                             if (out.cancelledError()) {
                                 cancelFlag.set(true);
@@ -524,6 +533,7 @@ public final class StaticPolyglotScan {
             RepositoryContentStore content,
             int fileBudget,
             Function<ContentDigest, byte[]> verifiedBytes,
+            ConcurrentHashMap<ContentDigest, byte[]> batchByteCache,
             boolean fastArchitecture,
             Set<String> supportedGrammars,
             TreeSitterSourceFrontend treeSitter,
@@ -559,7 +569,7 @@ public final class StaticPolyglotScan {
                                 : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
                 }
-                byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
+                byte[] bytes = sourceCached(content, task.source(), fileBudget, verifiedBytes, batchByteCache);
                 if (!JavaServiceSyntaxExtractor.candidate(bytes)) {
                     if (cacheKey != null) {
                         polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
@@ -588,45 +598,18 @@ public final class StaticPolyglotScan {
             }
 
             if (task.mode() == TaskMode.YAML_CONFIG_PROBE) {
-                byte[] probe;
-                try {
-                    probe = source(content, task.source(), fileBudget, verifiedBytes);
-                } catch (IOException ignored) {
-                    return ParseOutput.skip(task);
-                }
-                var coords = new SourceCoordinates(probe, "UTF-8");
-                String text = coords.text();
-                String configKind;
-                if (DeclarativeTopologyParsers.looksLikeKubernetesYaml(text)) {
-                    if (DeclarativeTopologyParsers.isHelmTemplatePath(task.path())) {
-                        return new ParseOutput(task, null, List.of(), "UNRENDERED_HELM_TEMPLATE", false, false);
-                    }
-                    configKind = "k8s";
-                } else if (DeclarativeTopologyParsers.looksLikePrometheusYaml(task.path(), text)) {
-                    configKind = "prometheus";
-                } else if (DeclarativeTopologyParsers.looksLikeGrafanaDatasources(task.path(), text)) {
-                    configKind = "grafana";
-                } else if (DeclarativeTopologyParsers.looksLikeFilebeatYaml(task.path(), text)) {
-                    configKind = "filebeat";
-                } else if (DeclarativeTopologyParsers.looksLikeSpringConfig(task.path(), text)) {
-                    if (DeclarativeTopologyParsers.isTestSourcePath(task.path())) {
-                        return ParseOutput.skip(task);
-                    }
-                    configKind = task.path().toLowerCase(Locale.ROOT).endsWith(".properties")
-                            ? "spring-props"
-                            : "spring-yaml";
-                } else {
-                    return ParseOutput.skip(task);
-                }
-                String configRepoStem = ("spring-yaml".equals(configKind) || "spring-props".equals(configKind))
-                        ? DeclarativeTopologyParsers.configRepoFileStem(task.path())
-                        : "";
-                String cacheSlot = configRepoStem.isEmpty()
-                        ? "config-" + configKind
-                        : "config-" + configKind + "@" + configRepoStem;
+                String lowerPath = task.path().toLowerCase(Locale.ROOT);
+                String configRepoStem = DeclarativeTopologyParsers.configRepoFileStem(task.path());
+                boolean isHelmPath = DeclarativeTopologyParsers.isHelmTemplatePath(task.path());
+                boolean isTestPath = DeclarativeTopologyParsers.isTestSourcePath(task.path());
+                String extTag = lowerPath.endsWith(".properties") ? "props" : "yaml";
+                int slashIdx = lowerPath.lastIndexOf('/');
+                String baseName = slashIdx >= 0 ? lowerPath.substring(slashIdx + 1) : lowerPath;
+                String probeSlot = "yaml-probe@" + extTag + "@" + baseName + "@" + configRepoStem
+                        + "@" + (isHelmPath ? "h" : "n") + (isTestPath ? "t" : "m");
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
-                                cacheSlot, task.source().digest(), task.source().size(), fastArchitecture)
+                                probeSlot, task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
                 if (cacheKey != null) {
                     var cachedSlot = polyglotCache.lookup(cacheKey);
@@ -642,6 +625,45 @@ public final class StaticPolyglotScan {
                                 ? ParseOutput.skip(task)
                                 : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
+                }
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    return ParseOutput.skip(task);
+                }
+                var coords = new SourceCoordinates(probe, "UTF-8");
+                String text = coords.text();
+                String configKind;
+                if (DeclarativeTopologyParsers.looksLikeKubernetesYaml(text)) {
+                    if (isHelmPath) {
+                        if (cacheKey != null) {
+                            polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.UNRENDERED_HELM_TEMPLATE);
+                        }
+                        return new ParseOutput(task, null, List.of(), "UNRENDERED_HELM_TEMPLATE", false, false);
+                    }
+                    configKind = "k8s";
+                } else if (DeclarativeTopologyParsers.looksLikePrometheusYaml(task.path(), text)) {
+                    configKind = "prometheus";
+                } else if (DeclarativeTopologyParsers.looksLikeGrafanaDatasources(task.path(), text)) {
+                    configKind = "grafana";
+                } else if (DeclarativeTopologyParsers.looksLikeFilebeatYaml(task.path(), text)) {
+                    configKind = "filebeat";
+                } else if (DeclarativeTopologyParsers.looksLikeSpringConfig(task.path(), text)) {
+                    if (isTestPath) {
+                        if (cacheKey != null) {
+                            polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                        }
+                        return ParseOutput.skip(task);
+                    }
+                    configKind = lowerPath.endsWith(".properties")
+                            ? "spring-props"
+                            : "spring-yaml";
+                } else {
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
                 }
                 var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
                 long[] stats = { 0L, 0L };
@@ -675,25 +697,13 @@ public final class StaticPolyglotScan {
             }
 
             if (task.mode() == TaskMode.PROXY_CONFIG_PROBE) {
-                byte[] probe;
-                try {
-                    probe = source(content, task.source(), fileBudget, verifiedBytes);
-                } catch (IOException ignored) {
-                    return ParseOutput.skip(task);
-                }
-                var coords = new SourceCoordinates(probe, "UTF-8");
-                String text = coords.text();
                 boolean apache = isApacheConfigPath(task.path());
-                if (!apache && !DeclarativeTopologyParsers.looksLikeNginxConfig(text)) {
-                    if (isUnsupportedConfigDslCandidate(task.path())) {
-                        return new ParseOutput(task, null, List.of(), "UNSUPPORTED_CONFIG_DSL", false, false);
-                    }
-                    return ParseOutput.skip(task);
-                }
+                boolean unsupportedDsl = !apache && isUnsupportedConfigDslCandidate(task.path());
                 String kind = apache ? "apache-httpd" : "nginx";
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
-                                "proxy-" + kind, task.source().digest(), task.source().size(), fastArchitecture)
+                                "proxy-probe-" + kind + (unsupportedDsl ? "-u" : ""),
+                                task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
                 if (cacheKey != null) {
                     var cachedSlot = polyglotCache.lookup(cacheKey);
@@ -707,6 +717,23 @@ public final class StaticPolyglotScan {
                                 ? ParseOutput.skip(task)
                                 : new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
+                }
+                byte[] probe;
+                try {
+                    probe = source(content, task.source(), fileBudget, verifiedBytes);
+                } catch (IOException ignored) {
+                    return ParseOutput.skip(task);
+                }
+                var coords = new SourceCoordinates(probe, "UTF-8");
+                String text = coords.text();
+                if (!apache && !DeclarativeTopologyParsers.looksLikeNginxConfig(text)) {
+                    if (unsupportedDsl) {
+                        return new ParseOutput(task, null, List.of(), "UNSUPPORTED_CONFIG_DSL", false, false);
+                    }
+                    if (cacheKey != null) {
+                        polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
+                    }
+                    return ParseOutput.skip(task);
                 }
                 var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
                 long[] stats = { 0L, 0L };
@@ -779,7 +806,9 @@ public final class StaticPolyglotScan {
                         ? "maven"
                         : (lowerPath.endsWith("build.gradle") || lowerPath.endsWith("build.gradle.kts"))
                                 ? "gradle"
-                                : "other";
+                                : (lowerPath.endsWith(".csproj") || lowerPath.endsWith(".vbproj") || lowerPath.endsWith(".fsproj"))
+                                        ? "dotnet"
+                                        : "other";
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
                                 "build-" + descKind, task.source().digest(), task.source().size(), fastArchitecture)
@@ -807,6 +836,8 @@ public final class StaticPolyglotScan {
                 var recordedFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
                 long[] stats = { 0L, 0L };
                 DeclarativeTopologyParsers.parseBuildDescriptorStarters(
+                        task.path(), coords.text(), coords, recordedFacts, stats, cancelled);
+                DeclarativeTopologyParsers.parseBuildDescriptorMetadata(
                         task.path(), coords.text(), coords, recordedFacts, stats, cancelled);
                 if (recordedFacts.isEmpty()) {
                     if (cacheKey != null) {
@@ -839,7 +870,7 @@ public final class StaticPolyglotScan {
                         return new ParseOutput(task, entry.summary(), entry.facts(), null, false, false);
                     }
                 }
-                byte[] bytes = source(content, task.source(), fileBudget, verifiedBytes);
+                byte[] bytes = sourceCached(content, task.source(), fileBudget, verifiedBytes, batchByteCache);
                 if (!JavaGrpcSourceFrontend.candidate(bytes)) {
                     if (cacheKey != null) {
                         polyglotCache.putProbe(cacheKey, IncrementalPolyglotCache.ProbeStatus.NOT_CANDIDATE);
@@ -1097,7 +1128,21 @@ public final class StaticPolyglotScan {
         String norm = path.replace('\\', '/');
         int slash = norm.lastIndexOf('/');
         String base = (slash < 0 ? norm : norm.substring(slash + 1)).toLowerCase(Locale.ROOT);
-        return base.equals("pom.xml") || base.equals("build.gradle") || base.equals("build.gradle.kts");
+        return base.equals("pom.xml") || base.equals("build.gradle") || base.equals("build.gradle.kts")
+                || base.endsWith(".csproj") || base.endsWith(".vbproj") || base.endsWith(".fsproj");
+    }
+
+    private static byte[] sourceCached(
+            RepositoryContentStore content,
+            ContentHandle handle,
+            int fileBudget,
+            Function<ContentDigest, byte[]> verifiedBytes,
+            ConcurrentHashMap<ContentDigest, byte[]> batchByteCache) throws IOException {
+        byte[] bytes = source(content, handle, fileBudget, verifiedBytes);
+        if (bytes.length <= 512_000 && batchByteCache != null) {
+            batchByteCache.putIfAbsent(handle.digest(), bytes);
+        }
+        return bytes;
     }
 
     private static String parentDir(String path) {
@@ -2558,8 +2603,7 @@ public final class StaticPolyglotScan {
             }
         }
         if ("python".equals(site.langGroup())) {
-            var m = java.util.regex.Pattern.compile("^from\\s+([A-Za-z_][A-Za-z0-9_.]*)\\s+import\\b")
-                    .matcher(written.trim());
+            var m = PYTHON_FROM_IMPORT.matcher(written.trim());
             if (m.find()) {
                 return m.group(1).replace('.', '/');
             }

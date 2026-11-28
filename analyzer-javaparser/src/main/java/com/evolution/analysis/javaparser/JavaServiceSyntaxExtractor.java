@@ -99,6 +99,16 @@ public final class JavaServiceSyntaxExtractor {
             "org.springframework.amqp.core.AmqpTemplate",
             "org.springframework.kafka.core.KafkaTemplate");
 
+    private static final ParserConfiguration SHARED_PARSER_CONFIG = new ParserConfiguration()
+            .setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE)
+            .setStoreTokens(true)
+            .setTabSize(1);
+
+    private static final List<String> KNOWN_CLIENT_INITS = List.of(
+            "RestClient", "WebClient", "RestTemplate", "RestOperations",
+            "OAuth2RestTemplate", "OAuth2RestOperations",
+            "WebTarget", "Client", "ClientBuilder");
+
     private static volatile String cachedToolIdentity;
 
     public static boolean candidate(byte[] bytes) {
@@ -121,10 +131,7 @@ public final class JavaServiceSyntaxExtractor {
             return new JavaGrpcSourceFrontend.Summary(0, 0, 0, PROVIDER, toolIdentity());
         }
         String input = text.startsWith("\ufeff") ? " " + text.substring(1) : text;
-        var parser = new JavaParser(new ParserConfiguration()
-                .setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE)
-                .setStoreTokens(true)
-                .setTabSize(1));
+        var parser = new JavaParser(SHARED_PARSER_CONFIG);
         var parsed = parser.parse(input);
         if (parsed.getResult().isEmpty()) {
             return new JavaGrpcSourceFrontend.Summary(0, 0, parsed.getProblems().size(), PROVIDER, toolIdentity());
@@ -148,6 +155,7 @@ public final class JavaServiceSyntaxExtractor {
             });
             Map<String, ClientBaseSpec> typeClientBases = collectTypeClientBases(
                     typeDecl, typeConstants, typePropKeys, imports);
+            Map<String, String> typeFieldVarTypes = collectTypeFieldVarTypes(typeDecl, imports);
 
             // 1. Control-plane role annotations
             for (AnnotationExpr ann : typeDecl.getAnnotations()) {
@@ -180,7 +188,7 @@ public final class JavaServiceSyntaxExtractor {
                         coordinates, recovered, sink, counts);
                 if (method.getBody().isPresent()) {
                     extractBodyCalls(method.getBody().orElseThrow(), typeDecl, method.getParameters(),
-                            typeConstants, typePropKeys, typeClientBases, imports,
+                            typeConstants, typePropKeys, typeClientBases, typeFieldVarTypes, imports,
                             activeSlot, coordinates, recovered, sink, counts, cancelled);
                 }
             }
@@ -188,7 +196,7 @@ public final class JavaServiceSyntaxExtractor {
                 check(cancelled);
                 String activeSlot = slot(ctor, coordinates);
                 extractBodyCalls(ctor.getBody(), typeDecl, ctor.getParameters(),
-                        typeConstants, typePropKeys, typeClientBases, imports,
+                        typeConstants, typePropKeys, typeClientBases, typeFieldVarTypes, imports,
                         activeSlot.isEmpty() ? ownerSlot : activeSlot, coordinates, recovered, sink, counts, cancelled);
             }
         }
@@ -316,16 +324,43 @@ public final class JavaServiceSyntaxExtractor {
     private static void extractBodyCalls(BlockStmt body, ClassOrInterfaceDeclaration ownerType,
             NodeList<Parameter> parameters, Map<String, String> typeConstants,
             Map<String, String> typePropKeys, Map<String, ClientBaseSpec> typeClientBases,
-            ImportIndex imports, String ownerSlot,
+            Map<String, String> typeFieldVarTypes, ImportIndex imports, String ownerSlot,
             SourceCoordinates coordinates, boolean recovered, JavaGrpcSourceFrontend.Sink sink,
             long[] counts, BooleanSupplier cancelled) throws IOException {
+        // Single-pass AST walk over method body (replaces 6+ separate body.findAll calls).
+        var methodCalls = new ArrayList<MethodCallExpr>();
+        var varDecls = new ArrayList<VariableDeclarationExpr>();
+        var varDeclarators = new ArrayList<VariableDeclarator>();
+        var reassigned = new HashSet<String>();
+        body.walk(Node.TreeTraversal.PREORDER, node -> {
+            if (node instanceof MethodCallExpr mc) {
+                methodCalls.add(mc);
+            } else if (node instanceof VariableDeclarationExpr vde) {
+                varDecls.add(vde);
+            } else if (node instanceof VariableDeclarator vd) {
+                varDeclarators.add(vd);
+            } else if (node instanceof AssignExpr a && a.getTarget() instanceof NameExpr n) {
+                reassigned.add(n.getNameAsString());
+            } else if (node instanceof UnaryExpr u && u.getExpression() instanceof NameExpr n) {
+                reassigned.add(n.getNameAsString());
+            }
+        });
+        if (methodCalls.isEmpty()) {
+            return;
+        }
         Map<String, String> constants = new LinkedHashMap<>(typeConstants);
         Map<String, String> propKeys = new LinkedHashMap<>(typePropKeys);
+        Map<String, String> varTypes = new HashMap<>(typeFieldVarTypes);
         for (Parameter p : parameters) {
             String paramName = p.getNameAsString();
             constants.remove(paramName);
             propKeys.remove(paramName);
-            if (isStringType(p.getType().asString())) {
+            String rawType = p.getType().asString();
+            String springType = resolveImportedSpringType(rawType, imports);
+            if (!springType.isEmpty()) {
+                varTypes.put(paramName, springType);
+            }
+            if (isStringType(rawType)) {
                 Optional<AnnotationExpr> valAnn = findSpringAnnotation(p.getAnnotations(), "Value",
                         imports, Set.of("org.springframework.beans.factory.annotation."));
                 if (valAnn.isPresent()) {
@@ -339,12 +374,51 @@ public final class JavaServiceSyntaxExtractor {
                 }
             }
         }
-        collectLocalConstants(body, constants, propKeys);
-        Map<String, String> varTypes = collectDeclaredSpringVarTypes(ownerType, body, imports);
+        for (VariableDeclarationExpr local : varDecls) {
+            if (!isStringType(local.getCommonType().asString())) continue;
+            for (VariableDeclarator v : local.getVariables()) {
+                String varName = v.getNameAsString();
+                constants.remove(varName);
+                propKeys.remove(varName);
+                if (!local.isFinal() && reassigned.contains(varName)) continue;
+                v.getInitializer().ifPresent(init -> {
+                    String s = HttpClientConstants.syntaxUri(init, constants);
+                    if (!s.isEmpty()) constants.put(varName, s);
+                    String pk = extractPropertyKey(init, constants, propKeys, 0);
+                    if (!pk.isEmpty()) propKeys.put(varName, pk);
+                });
+            }
+        }
         Map<String, ClientBaseSpec> clientBases = new LinkedHashMap<>(typeClientBases);
-        collectLocalClientBases(body, constants, propKeys, clientBases, imports);
+        Map<String, List<VariableDeclarator>> localDeclaratorsByName = null;
+        for (VariableDeclarator v : varDeclarators) {
+            String t = resolveImportedSpringType(v.getType().asString(), imports);
+            if (!t.isEmpty()) {
+                varTypes.put(v.getNameAsString(), t);
+            } else if (v.getInitializer().isPresent()) {
+                String init = v.getInitializer().orElseThrow().toString();
+                for (String known : KNOWN_CLIENT_INITS) {
+                    if ((init.startsWith(known + ".") || init.startsWith("new " + known + "("))) {
+                        String resolvedKnown = resolveImportedSpringType(known, imports);
+                        if (!resolvedKnown.isEmpty()) {
+                            varTypes.put(v.getNameAsString(), resolvedKnown);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (v.getInitializer().isPresent()) {
+                ClientBaseSpec spec = extractFluentBaseSpec(v.getInitializer().orElseThrow(), constants, propKeys, clientBases, imports);
+                if (spec != null) {
+                    clientBases.put(v.getNameAsString(), spec);
+                }
+                if (localDeclaratorsByName == null) localDeclaratorsByName = new HashMap<>();
+                localDeclaratorsByName.computeIfAbsent(v.getNameAsString(), k -> new ArrayList<>()).add(v);
+            }
+        }
+        final Map<String, List<VariableDeclarator>> indexedDeclarators = localDeclaratorsByName == null ? Map.of() : localDeclaratorsByName;
 
-        for (MethodCallExpr call : body.findAll(MethodCallExpr.class)) {
+        for (MethodCallExpr call : methodCalls) {
             check(cancelled);
             String name = call.getNameAsString();
             String scopeRoot = rootIdentifier(call.getScope().orElse(null));
@@ -390,7 +464,7 @@ public final class JavaServiceSyntaxExtractor {
 
             // 3. Standard JAX-RS client WebTarget/ClientBuilder calls (when JARs absent under --build=off)
             if (name.equals("request") && isJaxRsWebTargetChain(call, varTypes, imports)) {
-                String jaxRsUri = resolveJaxRsWebTargetUri(call, ownerType, body, constants);
+                String jaxRsUri = resolveJaxRsWebTargetUri(call, ownerType, indexedDeclarators, constants);
                 if (!jaxRsUri.isEmpty()) {
                     String jaxRsVerb = jaxRsInvocationVerb(call, constants);
                     var attrs = new TreeMap<String, String>();
@@ -443,42 +517,12 @@ public final class JavaServiceSyntaxExtractor {
         }
     }
 
-    private static Map<String, String> collectDeclaredSpringVarTypes(ClassOrInterfaceDeclaration ownerType,
-            BlockStmt body, ImportIndex imports) {
+    private static Map<String, String> collectTypeFieldVarTypes(ClassOrInterfaceDeclaration ownerType,
+            ImportIndex imports) {
         var map = new HashMap<String, String>();
         for (FieldDeclaration f : ownerType.getFields()) {
             String t = resolveImportedSpringType(f.getCommonType().asString(), imports);
             if (!t.isEmpty()) f.getVariables().forEach(v -> map.put(v.getNameAsString(), t));
-        }
-        ownerType.getMethods().forEach(m -> m.getParameters().forEach(p -> {
-            if (body.getParentNode().filter(m::equals).isPresent()) {
-                String t = resolveImportedSpringType(p.getType().asString(), imports);
-                if (!t.isEmpty()) map.put(p.getNameAsString(), t);
-            }
-        }));
-        ownerType.getConstructors().forEach(c -> {
-            if (body.equals(c.getBody())) {
-                c.getParameters().forEach(p -> {
-                    String t = resolveImportedSpringType(p.getType().asString(), imports);
-                    if (!t.isEmpty()) map.put(p.getNameAsString(), t);
-                });
-            }
-        });
-        for (VariableDeclarator v : body.findAll(VariableDeclarator.class)) {
-            String t = resolveImportedSpringType(v.getType().asString(), imports);
-            if (!t.isEmpty()) map.put(v.getNameAsString(), t);
-            else if (v.getInitializer().isPresent()) {
-                String init = v.getInitializer().orElseThrow().toString();
-                for (String known : List.of("RestClient", "WebClient", "RestTemplate", "RestOperations",
-                        "OAuth2RestTemplate", "OAuth2RestOperations",
-                        "WebTarget", "Client", "ClientBuilder")) {
-                    if ((init.startsWith(known + ".") || init.startsWith("new " + known + "("))
-                            && !resolveImportedSpringType(known, imports).isEmpty()) {
-                        map.put(v.getNameAsString(), resolveImportedSpringType(known, imports));
-                        break;
-                    }
-                }
-            }
         }
         return map;
     }
@@ -543,7 +587,9 @@ public final class JavaServiceSyntaxExtractor {
     }
 
     private static String resolveJaxRsWebTargetUri(MethodCallExpr requestCall,
-            ClassOrInterfaceDeclaration ownerType, BlockStmt body, Map<String, String> constants) {
+            ClassOrInterfaceDeclaration ownerType,
+            Map<String, List<VariableDeclarator>> indexedDeclarators,
+            Map<String, String> constants) {
         var pathSegments = new ArrayList<String>();
         String baseUri = "";
         Expression cur = requestCall.getScope().orElse(null);
@@ -566,12 +612,12 @@ public final class JavaServiceSyntaxExtractor {
                 continue;
             }
             if (cur instanceof NameExpr n && visitedVars.add(n.getNameAsString())) {
-                cur = findTargetInitializer(requestCall, ownerType, body, n.getNameAsString()).orElse(null);
+                cur = findTargetInitializer(requestCall, ownerType, indexedDeclarators, n.getNameAsString()).orElse(null);
                 continue;
             }
             if (cur instanceof FieldAccessExpr f && f.getScope() instanceof ThisExpr
                     && visitedVars.add(f.getNameAsString())) {
-                cur = findTargetInitializer(requestCall, ownerType, body, f.getNameAsString()).orElse(null);
+                cur = findTargetInitializer(requestCall, ownerType, indexedDeclarators, f.getNameAsString()).orElse(null);
                 continue;
             }
             break;
@@ -586,9 +632,11 @@ public final class JavaServiceSyntaxExtractor {
     }
 
     private static Optional<Expression> findTargetInitializer(MethodCallExpr from,
-            ClassOrInterfaceDeclaration ownerType, BlockStmt body, String varName) {
-        for (VariableDeclarator vd : body.findAll(VariableDeclarator.class)) {
-            if (vd.getNameAsString().equals(varName) && vd.getInitializer().isPresent()
+            ClassOrInterfaceDeclaration ownerType,
+            Map<String, List<VariableDeclarator>> indexedDeclarators,
+            String varName) {
+        for (VariableDeclarator vd : indexedDeclarators.getOrDefault(varName, List.of())) {
+            if (vd.getInitializer().isPresent()
                     && from.getRange().map(fr -> vd.getRange().map(vr -> vr.isBefore(fr.begin)).orElse(true))
                             .orElse(true)) {
                 return vd.getInitializer();

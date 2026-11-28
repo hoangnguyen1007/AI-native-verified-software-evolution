@@ -202,13 +202,16 @@ public final class ResolutionEnvironment {
         // An incomplete build closure does not invalidate the independently verified inputs.
         // Missing targets remain unresolved at the individual observation, never filled by host lookup.
         try {
+            var activeArtifactSession = com.evolution.analysis.input.VerifiedArtifactSession.current().orElse(null);
             var platformPaths = new HashSet<Path>();
             var platformArchiveSolvers = new ArrayList<AsmTypeSolver>();
             var platformArchives = new ArrayList<AsmBytecodeIndex>();
             var platformGroupDigests = new ArrayList<ContentDigest>();
             for (var artifact : request.platform().artifacts()) {
                 if (request.sourceRecovery() && "false".equals(request.manifest().configuration().values().get(FrontendRequest.RECOVERY_PLATFORM_COMPATIBLE))) continue;
-                Path real = artifact.path().toRealPath();
+                Path real = activeArtifactSession != null
+                        ? activeArtifactSession.resolveCachedRealPath(artifact.path())
+                        : artifact.path().toRealPath();
                 if (!platformPaths.add(real)) {
                     throw new FrontendInputException("frontend.duplicate-platform-artifact", "Aliased platform artifacts are not allowed");
                 }
@@ -286,7 +289,9 @@ public final class ResolutionEnvironment {
             }
             var paths = new HashSet<Path>();
             for (var input : request.dependencies()) {
-                Path real = input.path().toRealPath();
+                Path real = activeArtifactSession != null
+                        ? activeArtifactSession.resolveCachedRealPath(input.path())
+                        : input.path().toRealPath();
                 if (!paths.add(real)) throw new FrontendInputException("frontend.duplicate-binary", "Aliased binary inputs are not allowed");
                 var key = new JarCacheKey(release, input.entry().contentDigest());
                 var cached = JAR_CACHE.get(key);

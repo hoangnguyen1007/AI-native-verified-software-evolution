@@ -97,6 +97,28 @@ class PassiveReadinessDiscoveryTest {
                 "platform/Billing/Billing.csproj","<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>"));
         var multiMods=multi.modules().stream().filter(m->m.id().startsWith("DOTNET:")).map(com.evolution.analysis.readiness.ReadinessPlan.Module::directory).collect(java.util.stream.Collectors.toSet());
         assertEquals(Set.of("platform/Catalog","platform/Billing"),multiMods,"multi-service .sln must preserve each distinct service project");
+
+        // .csproj referencing xunit, nunit, or <IsTestProject>true</IsTestProject> in non-conventional dirs still fold as test contexts
+        String xunitNunitSln="""
+                Microsoft Visual Studio Solution File, Format Version 12.00
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ledger", "src\\ledger.csproj", "{11111111-1111-1111-1111-111111111111}"
+                EndProject
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ledger.verify", "verify\\ledger.verify.csproj", "{22222222-2222-2222-2222-222222222222}"
+                EndProject
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ledger.checks", "checks\\ledger.checks.csproj", "{33333333-3333-3333-3333-333333333333}"
+                EndProject
+                Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ledger.qa", "qa\\ledger.qa.csproj", "{44444444-4444-4444-4444-444444444444}"
+                EndProject
+                """;
+        var xunitNunit=discover(Map.of(
+                "services/ledger/ledger.sln",xunitNunitSln,
+                "services/ledger/src/ledger.csproj","<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>",
+                "services/ledger/verify/ledger.verify.csproj","<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"xunit\" Version=\"2.7.0\"/></ItemGroup></Project>",
+                "services/ledger/checks/ledger.checks.csproj","<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"NUnit\" Version=\"4.1.0\"/></ItemGroup></Project>",
+                "services/ledger/qa/ledger.qa.csproj","<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>"));
+        var ledgerMods=xunitNunit.modules().stream().filter(m->m.id().startsWith("DOTNET:")).map(com.evolution.analysis.readiness.ReadinessPlan.Module::directory).toList();
+        assertEquals(List.of("services/ledger"),ledgerMods,"xunit, nunit, and <IsTestProject>true</IsTestProject> projects must fold into 1 service module");
+        assertTrue(xunitNunit.contexts().stream().anyMatch(c->c.sourceSet().equals("test")&&c.sourceRoots().containsAll(List.of("services/ledger/verify","services/ledger/checks","services/ledger/qa"))));
     }
     private static ReadinessDiscovery.Projection discover(Map<String,String> files){
         var descriptors=new TreeMap<String,ReadinessDiscovery.Descriptor>();files.forEach((path,text)->{byte[] bytes=text.getBytes(StandardCharsets.UTF_8);descriptors.put(path,new ReadinessDiscovery.Descriptor(path,new ContentHandle(ContentDigest.sha256(bytes),bytes.length),bytes));});

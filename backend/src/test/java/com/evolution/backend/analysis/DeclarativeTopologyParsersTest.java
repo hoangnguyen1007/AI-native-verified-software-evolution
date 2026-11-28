@@ -675,6 +675,46 @@ class DeclarativeTopologyParsersTest {
                 "org.springframework.cloud", "spring-cloud-starter-netflix-turbine"));
     }
 
+    @Test
+    void buildDescriptorMetadataExtractsPackagingExecutableAndDotNetTestProjectFlags() throws Exception {
+        String warPom = "<project><groupId>acme</groupId><artifactId>web</artifactId><packaging>war</packaging></project>";
+        var warFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        DeclarativeTopologyParsers.parseBuildDescriptorMetadata("services/web/pom.xml", warPom, coords(warPom), warFacts, new long[2], () -> false);
+        assertEquals(1, warFacts.size());
+        assertEquals("war", warFacts.getFirst().attributes().get("value"));
+        assertEquals("true", warFacts.getFirst().attributes().get("executable"));
+
+        String libPom = "<project><groupId>acme</groupId><artifactId>common</artifactId></project>";
+        var libFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        DeclarativeTopologyParsers.parseBuildDescriptorMetadata("utilities/common/pom.xml", libPom, coords(libPom), libFacts, new long[2], () -> false);
+        assertEquals(1, libFacts.size());
+        assertEquals("jar", libFacts.getFirst().attributes().get("value"));
+        assertEquals("false", libFacts.getFirst().attributes().get("executable"));
+
+        String bootPom = "<project><artifactId>api</artifactId><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>";
+        var bootFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        DeclarativeTopologyParsers.parseBuildDescriptorMetadata("services/api/pom.xml", bootPom, coords(bootPom), bootFacts, new long[2], () -> false);
+        assertEquals("true", bootFacts.getFirst().attributes().get("executable"));
+
+        String xunitCsproj = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"xunit\" Version=\"2.7.0\"/></ItemGroup></Project>";
+        var xunitFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        DeclarativeTopologyParsers.parseBuildDescriptorMetadata("svc/tests/Svc.Tests.csproj", xunitCsproj, coords(xunitCsproj), xunitFacts, new long[2], () -> false);
+        assertEquals(1, xunitFacts.size());
+        assertEquals("build.isTestProject", xunitFacts.getFirst().attributes().get("key"));
+        assertEquals("true", xunitFacts.getFirst().attributes().get("value"));
+
+        String nunitCsproj = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"NUnit\" Version=\"4.1.0\"/></ItemGroup></Project>";
+        var nunitFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        DeclarativeTopologyParsers.parseBuildDescriptorMetadata("svc/spec/Svc.Spec.csproj", nunitCsproj, coords(nunitCsproj), nunitFacts, new long[2], () -> false);
+        assertEquals(1, nunitFacts.size());
+        assertEquals("true", nunitFacts.getFirst().attributes().get("value"));
+
+        String normalCsproj = "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>";
+        var normalFacts = new ArrayList<TreeSitterSourceFrontend.Fact>();
+        DeclarativeTopologyParsers.parseBuildDescriptorMetadata("svc/src/Svc.csproj", normalCsproj, coords(normalCsproj), normalFacts, new long[2], () -> false);
+        assertTrue(normalFacts.isEmpty(), "Non-test .csproj must not inflate syntax parsed counts");
+    }
+
     private static void assertRef(List<TreeSitterSourceFrontend.Fact> refs, String role, String target, String port) {
         boolean found = refs.stream().anyMatch(f ->
                 role.equals(f.attributes().get("role"))

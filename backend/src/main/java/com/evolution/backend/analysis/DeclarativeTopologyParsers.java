@@ -73,6 +73,17 @@ final class DeclarativeTopologyParsers {
             "(?is)<groupId\\b[^>]*>\\s*([^<\\s]+)\\s*</groupId>");
     private static final Pattern POM_SCOPE = Pattern.compile(
             "(?is)<scope\\b[^>]*>\\s*([^<\\s]+)\\s*</scope>");
+    private static final Pattern POM_STRIP_FOR_PACKAGING = Pattern.compile(
+            "(?is)<(parent|dependencies|dependencyManagement|build|profiles|reporting|pluginManagement)\\b[^>]*>.*?</\\1>");
+    private static final Pattern POM_PACKAGING = Pattern.compile(
+            "(?is)<packaging\\b[^>]*>\\s*([A-Za-z0-9_.-]+)\\s*</packaging>");
+    private static final Pattern GRADLE_BUILDSCRIPT = Pattern.compile("\\bbuildscript\\s*\\{");
+    private static final Pattern GRADLE_WAR_PLUGIN = Pattern.compile(
+            "(?i)(?:id\\s*\\(?\\s*['\"]war['\"]\\s*\\)?|plugin\\s*:\\s*['\"]war['\"]|\\bwar\\b\\s*(?:\\{|\\n))");
+    private static final Pattern GRADLE_EXEC_PLUGIN = Pattern.compile(
+            "(?i)(?:org\\.springframework\\.boot|id\\s*\\(?\\s*['\"]application['\"]\\s*\\)?|plugin\\s*:\\s*['\"]application['\"]|\\bmainClass(?:Name)?\\b|\\bbootJar\\b|\\bshadowJar\\b)");
+    private static final Pattern DOTNET_TEST_PROJECT = Pattern.compile(
+            "(?i)(?:<IsTestProject>\\s*true\\s*</IsTestProject>|Microsoft\\.NET\\.Test\\.Sdk|MSTest\\.TestFramework|\\bxunit\\b|\\bnunit\\b)");
 
     private static final Pattern GRADLE_STRING_COORD = Pattern.compile(
             "['\"]([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::[^'\"]*)?['\"]");
@@ -1497,6 +1508,74 @@ final class DeclarativeTopologyParsers {
         }
     }
 
+    /**
+     * Emits passive, open-standard build-module packaging and test-project metadata facts
+     * ({@code build.packaging}, {@code build.isTestProject}) from Maven POM, Gradle build scripts,
+     * and .NET project descriptors ({@code *.csproj}, {@code *.vbproj}, {@code *.fsproj}).
+     */
+    static void parseBuildDescriptorMetadata(String path, String text, SourceCoordinates coords,
+            List<TreeSitterSourceFrontend.Fact> out, long[] stats, BooleanSupplier cancelled) throws IOException {
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IOException("SYNTAX_CANCELLED");
+        if (text == null || text.isEmpty()) return;
+        String lower = baseName(path).toLowerCase(Locale.ROOT);
+        int spanEnd = Math.min(text.length(), Math.max(1, text.indexOf('\n') > 0 ? text.indexOf('\n') : Math.min(text.length(), 64)));
+        if (lower.equals("pom.xml")) {
+            String noComments = maskMatchesWithSpaces(text, XML_COMMENT);
+            String stripped = maskMatchesWithSpaces(noComments, POM_STRIP_FOR_PACKAGING);
+            String packaging = "jar";
+            int start = 0;
+            int end = spanEnd;
+            Matcher pm = POM_PACKAGING.matcher(stripped);
+            if (pm.find()) {
+                packaging = pm.group(1).trim().toLowerCase(Locale.ROOT);
+                start = pm.start();
+                end = Math.max(start + 1, pm.end());
+            }
+            String lowerXml = noComments.toLowerCase(Locale.ROOT);
+            boolean executable = "war".equals(packaging) || "ear".equals(packaging)
+                    || lowerXml.contains("spring-boot-maven-plugin")
+                    || lowerXml.contains("quarkus-maven-plugin")
+                    || lowerXml.contains("micronaut-maven-plugin");
+            var span = coords.range(start, end, SourceCoordinates.Encoding.UTF16);
+            var attrs = new TreeMap<String, String>();
+            attrs.put("key", "build.packaging");
+            attrs.put("value", packaging);
+            attrs.put("packaging", packaging);
+            attrs.put("executable", Boolean.toString(executable));
+            attrs.put("spec", "maven");
+            out.add(new TreeSitterSourceFrontend.Fact("CONFIG_PROPERTY", "build_descriptor_metadata",
+                    "build.packaging", packaging, span, "", false, attrs));
+            stats[0]++;
+        } else if (lower.equals("build.gradle") || lower.equals("build.gradle.kts")) {
+            String masked = maskGradleCommentsAndBuildscript(text);
+            boolean isWar = GRADLE_WAR_PLUGIN.matcher(masked).find();
+            boolean executable = isWar || GRADLE_EXEC_PLUGIN.matcher(masked).find();
+            String packaging = isWar ? "war" : "jar";
+            var span = coords.range(0, spanEnd, SourceCoordinates.Encoding.UTF16);
+            var attrs = new TreeMap<String, String>();
+            attrs.put("key", "build.packaging");
+            attrs.put("value", packaging);
+            attrs.put("packaging", packaging);
+            attrs.put("executable", Boolean.toString(executable));
+            attrs.put("spec", "gradle");
+            out.add(new TreeSitterSourceFrontend.Fact("CONFIG_PROPERTY", "build_descriptor_metadata",
+                    "build.packaging", packaging, span, "", false, attrs));
+            stats[0]++;
+        } else if (lower.endsWith(".csproj") || lower.endsWith(".vbproj") || lower.endsWith(".fsproj")) {
+            String noComments = maskMatchesWithSpaces(text, XML_COMMENT);
+            if (DOTNET_TEST_PROJECT.matcher(noComments).find()) {
+                var span = coords.range(0, spanEnd, SourceCoordinates.Encoding.UTF16);
+                var testAttrs = new TreeMap<String, String>();
+                testAttrs.put("key", "build.isTestProject");
+                testAttrs.put("value", "true");
+                testAttrs.put("spec", "dotnet");
+                out.add(new TreeSitterSourceFrontend.Fact("CONFIG_PROPERTY", "build_descriptor_metadata",
+                        "build.isTestProject", "true", span, "", false, testAttrs));
+                stats[0]++;
+            }
+        }
+    }
+
     private static void parseMavenPomStarters(String text, SourceCoordinates coords,
             List<TreeSitterSourceFrontend.Fact> out, long[] stats, BooleanSupplier cancelled) throws IOException {
         String masked = maskMatchesWithSpaces(text, XML_COMMENT);
@@ -1785,7 +1864,7 @@ final class DeclarativeTopologyParsers {
         }
         // Mask top-level buildscript { ... } block so Gradle plugin classpath deps are skipped.
         String noComments = new String(chars);
-        Matcher bs = Pattern.compile("\\bbuildscript\\s*\\{").matcher(noComments);
+        Matcher bs = GRADLE_BUILDSCRIPT.matcher(noComments);
         while (bs.find()) {
             int start = bs.start();
             int idx = bs.end();

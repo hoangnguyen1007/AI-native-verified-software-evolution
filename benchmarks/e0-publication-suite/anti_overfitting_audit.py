@@ -60,6 +60,9 @@ BANNED_BENCHMARK_REPOS = [
     "rohitghatol",
     "shabbirdwd53",
     "sqshq",
+    "thingsboard",
+    "openmrs",
+    "microsecend",
 ]
 
 # 2. Online Boutique, TeaStore, PetClinic & flagship service names
