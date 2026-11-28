@@ -277,6 +277,206 @@
         "blind_holdout": true,
         "metadata_only": true
       }
+    ],
+    "spring_sat_20_oss": [
+      {
+        "id": "spring-sat-oss/spring-cloud-gateway",
+        "repo": "spring-cloud/spring-cloud-gateway",
+        "url": "https://github.com/spring-cloud/spring-cloud-gateway",
+        "boot_generation": "boot3",
+        "category": "api-gateway",
+        "build": "maven",
+        "core_g1_repo": true,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/spring-authorization-server",
+        "repo": "spring-projects/spring-authorization-server",
+        "url": "https://github.com/spring-projects/spring-authorization-server",
+        "boot_generation": "boot3",
+        "category": "security-oauth2",
+        "build": "gradle",
+        "core_g1_repo": true,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/sba",
+        "repo": "codecentric/spring-boot-admin",
+        "url": "https://github.com/codecentric/spring-boot-admin",
+        "boot_generation": "boot3",
+        "category": "observability-admin",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/halo",
+        "repo": "halo-dev/halo",
+        "url": "https://github.com/halo-dev/halo",
+        "boot_generation": "boot3",
+        "category": "cms-platform",
+        "build": "gradle",
+        "core_g1_repo": true,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/flowable-engine",
+        "repo": "flowable/flowable-engine",
+        "url": "https://github.com/flowable/flowable-engine",
+        "boot_generation": "boot3",
+        "category": "workflow-bpm",
+        "build": "maven",
+        "core_g1_repo": true,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/shenyu",
+        "repo": "apache/shenyu",
+        "url": "https://github.com/apache/shenyu",
+        "boot_generation": "boot3",
+        "category": "api-gateway",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/jhipster-sample-app",
+        "repo": "jhipster/jhipster-sample-app",
+        "url": "https://github.com/jhipster/jhipster-sample-app",
+        "boot_generation": "boot3",
+        "category": "fullstack-enterprise",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/RuoYi-Cloud",
+        "repo": "dromara/RuoYi-Cloud",
+        "url": "https://github.com/dromara/RuoYi-Cloud",
+        "boot_generation": "boot3",
+        "category": "microservices-rbac",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/mall",
+        "repo": "macrozheng/mall",
+        "url": "https://github.com/macrozheng/mall",
+        "boot_generation": "boot3",
+        "category": "ecommerce-platform",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/jeecg-boot",
+        "repo": "jeecgboot/jeecg-boot",
+        "url": "https://github.com/jeecgboot/jeecg-boot",
+        "boot_generation": "boot3",
+        "category": "lowcode-enterprise",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/pybbs",
+        "repo": "tomoya92/pybbs",
+        "url": "https://github.com/tomoya92/pybbs",
+        "boot_generation": "boot2",
+        "category": "community-forum",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/shopizer",
+        "repo": "shopizer-ecommerce/shopizer",
+        "url": "https://github.com/shopizer-ecommerce/shopizer",
+        "boot_generation": "boot2",
+        "category": "ecommerce-platform",
+        "build": "maven",
+        "core_g1_repo": true,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/spring-petclinic",
+        "repo": "spring-projects/spring-petclinic",
+        "url": "https://github.com/spring-projects/spring-petclinic",
+        "boot_generation": "boot4",
+        "category": "reference-monolith",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/spring-petclinic-microservices",
+        "repo": "spring-petclinic/spring-petclinic-microservices",
+        "url": "https://github.com/spring-petclinic/spring-petclinic-microservices",
+        "boot_generation": "boot3",
+        "category": "reference-microservices",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/java-microservice",
+        "repo": "apssouza22/java-microservice",
+        "url": "https://github.com/apssouza22/java-microservice",
+        "boot_generation": "boot2",
+        "category": "reference-microservices",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/piggymetrics",
+        "repo": "sqshq/piggymetrics",
+        "url": "https://github.com/sqshq/piggymetrics",
+        "boot_generation": "boot2",
+        "category": "reference-microservices",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/eladmin",
+        "repo": "elunez/eladmin",
+        "url": "https://github.com/elunez/eladmin",
+        "boot_generation": "boot2",
+        "category": "admin-rbac",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      },
+      {
+        "id": "spring-sat-oss/thingsboard",
+        "repo": "thingsboard/thingsboard",
+        "url": "https://github.com/thingsboard/thingsboard",
+        "boot_generation": "boot3",
+        "category": "iot-platform",
+        "build": "maven",
+        "core_g1_repo": false,
+        "blind_oracle": true,
+        "offline_sandbox_required": true
+      }
     ]
   }
 }
