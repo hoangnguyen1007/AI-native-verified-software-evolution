@@ -10,7 +10,11 @@ if str(SUITE_DIR) not in sys.path:
 
 import env_provenance as envp  # noqa: E402
 import run_e0_benchmark as e0  # noqa: E402
+import run_online_microsecend_benchmark as micro  # noqa: E402
 import run_three_way_benchmark as tw  # noqa: E402
+
+REPO_ROOT = SUITE_DIR.parent.parent
+EMSE_REPLICATION_DIR = Path(r"D:\UIT\evo-benchmark-cache\EMSE2025SAR-Replication")
 
 
 class TestE0BenchmarkHarness(unittest.TestCase):
@@ -249,6 +253,543 @@ class TestE0BenchmarkHarness(unittest.TestCase):
         self.assertIn("rm -rf '/tmp/bench-repo/.git'", chown_cmd[6])
         self.assertIn("chown -R", chown_cmd[6])
         self.assertNotIn("|| true", chown_cmd[6])
+
+
+class TestOnlineMicroSecEnDHarnessWP05(unittest.TestCase):
+    def test_parse_emse_baselines_synthetic_fp_blocks_and_weighted_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rep = Path(tmp)
+            pr = rep / "tool_comparison" / "results" / "recovery_correctness" / "processed_results"
+
+            # Tool 1: mixed FP: block (component + '->' + ' - ' + malformed 'consul- consul') and bare FP block
+            agg_dir = pr / "synthetic-agg"
+            agg_dir.mkdir(parents=True)
+            (agg_dir / "app1.txt").write_text(
+                "\n".join([
+                    "Components:",
+                    "TP svc_a (a)",
+                    "FN svc_b",
+                    "",
+                    "Connections:",
+                    "TP svc_a -> svc_b",
+                    "FN svc_b -> svc_a",
+                    "",
+                    "FP:",
+                    "docker host",
+                    "redis:latest",
+                    "outside - svc_a",
+                    "consul- consul",
+                ]),
+                encoding="utf-8",
+            )
+            (agg_dir / "app2.txt").write_text(
+                "\n".join([
+                    "Components:",
+                    "TP svc_c",
+                    "",
+                    "Connections:",
+                    "TP svc_c -> svc_d",
+                    "",
+                    "FP",
+                    "outside",
+                    "outside - svc_c",
+                    "svc_c -> svc_c",
+                ]),
+                encoding="utf-8",
+            )
+
+            # Tool 2: weighted Endpoints TP(k)/FP(k)/FN(k) + trailing inline connection FP after Endpoints
+            ep_dir = pr / "synthetic-ep"
+            ep_dir.mkdir(parents=True)
+            (ep_dir / "app1.txt").write_text(
+                "\n".join([
+                    "Components:",
+                    "/ svc_a",
+                    "",
+                    "Connections:",
+                    "TP svc_a -> svc_b",
+                    "FN svc_b -> svc_a",
+                    "",
+                    "Endpoints:",
+                    'TP(3) svc_a: "/", "/items", "/items/{id}"',
+                    'FP(2) svc_a: "/legacy", "/debug"',
+                    'FN(1) svc_b: "/health"',
+                    "",
+                    "FP svc_a -> svc_c",
+                ]),
+                encoding="utf-8",
+            )
+
+            parsed = {row["tool"]: row for row in micro.parse_emse_baselines(rep)}
+            self.assertEqual({"synthetic-agg", "synthetic-ep"}, set(parsed.keys()))
+
+            agg = parsed["synthetic-agg"]
+            self.assertEqual(2, agg["apps_completed"])
+            self.assertEqual((2, 3, 1), (agg["components"]["tp"], agg["components"]["fp"], agg["components"]["fn"]))
+            self.assertEqual((2, 4, 1), (agg["connections"]["tp"], agg["connections"]["fp"], agg["connections"]["fn"]))
+            self.assertEqual((0, 0, 0), (agg["endpoints"]["tp"], agg["endpoints"]["fp"], agg["endpoints"]["fn"]))
+
+            ep = parsed["synthetic-ep"]
+            self.assertEqual(1, ep["apps_completed"])
+            self.assertEqual((0, 0, 0), (ep["components"]["tp"], ep["components"]["fp"], ep["components"]["fn"]))
+            self.assertEqual((1, 1, 1), (ep["connections"]["tp"], ep["connections"]["fp"], ep["connections"]["fn"]))
+            self.assertEqual((3, 2, 1), (ep["endpoints"]["tp"], ep["endpoints"]["fp"], ep["endpoints"]["fn"]))
+            self.assertAlmostEqual(0.6667, ep["endpoints"]["micro_f1"], places=4)
+
+    def test_parse_emse_baselines_real_replication_exact_counts(self) -> None:
+        if not (EMSE_REPLICATION_DIR / "tool_comparison" / "results" / "recovery_correctness" / "processed_results").is_dir():
+            self.skipTest(f"EMSE2025SAR-Replication not present at {EMSE_REPLICATION_DIR}")
+
+        by_tool = {row["tool"]: row for row in micro.parse_emse_baselines(EMSE_REPLICATION_DIR)}
+        self.assertEqual(
+            {"attack-graph-generator", "code2DFD", "MicroDepGraph", "microMiner", "Prophet", "RAD", "RAD-source"},
+            set(by_tool.keys()),
+        )
+
+        # code2DFD exact parity with processed_results & complete_results.xlsx
+        c2d = by_tool["code2DFD"]
+        self.assertEqual(17, c2d["apps_completed"])
+        self.assertEqual((178, 5, 4), (c2d["components"]["tp"], c2d["components"]["fp"], c2d["components"]["fn"]))
+        self.assertEqual(0.9753, c2d["components"]["micro_f1"])
+        self.assertEqual((320, 18, 65), (c2d["connections"]["tp"], c2d["connections"]["fp"], c2d["connections"]["fn"]))
+        self.assertEqual(0.8852, c2d["connections"]["micro_f1"])
+        self.assertEqual((86, 13, 74), (c2d["endpoints"]["tp"], c2d["endpoints"]["fp"], c2d["endpoints"]["fn"]))
+        self.assertEqual(0.6641, c2d["endpoints"]["micro_f1"])
+
+        # attack-graph-generator exact parity with official complete_results.xlsx & EMSE 2025 Table 5
+        # (includes Tap-And-Eat bare 'FP' header + microservices-sample 'consul- consul' edge)
+        agg = by_tool["attack-graph-generator"]
+        self.assertEqual(12, agg["apps_completed"])
+        self.assertEqual((123, 41, 21), (agg["components"]["tp"], agg["components"]["fp"], agg["components"]["fn"]))
+        self.assertEqual(0.7987, agg["components"]["micro_f1"])
+        self.assertEqual((279, 432, 45), (agg["connections"]["tp"], agg["connections"]["fp"], agg["connections"]["fn"]))
+        self.assertEqual(0.5391, agg["connections"]["micro_f1"])
+
+        # Remaining tools in processed_results
+        mdg = by_tool["MicroDepGraph"]
+        self.assertEqual((84, 0, 26), (mdg["components"]["tp"], mdg["components"]["fp"], mdg["components"]["fn"]))
+        self.assertEqual((124, 2, 121), (mdg["connections"]["tp"], mdg["connections"]["fp"], mdg["connections"]["fn"]))
+
+        mmi = by_tool["microMiner"]
+        self.assertEqual((32, 1, 25), (mmi["components"]["tp"], mmi["components"]["fp"], mmi["components"]["fn"]))
+
+        pro = by_tool["Prophet"]
+        self.assertEqual((27, 21, 155), (pro["components"]["tp"], pro["components"]["fp"], pro["components"]["fn"]))
+        self.assertEqual((4, 1, 381), (pro["connections"]["tp"], pro["connections"]["fp"], pro["connections"]["fn"]))
+
+        rad = by_tool["RAD"]
+        self.assertEqual((90, 6, 42), (rad["endpoints"]["tp"], rad["endpoints"]["fp"], rad["endpoints"]["fn"]))
+        self.assertEqual(0.7895, rad["endpoints"]["micro_f1"])
+
+        ras = by_tool["RAD-source"]
+        self.assertEqual((7, 2, 378), (ras["connections"]["tp"], ras["connections"]["fp"], ras["connections"]["fn"]))
+        self.assertEqual((86, 9, 74), (ras["endpoints"]["tp"], ras["endpoints"]["fp"], ras["endpoints"]["fn"]))
+
+    def test_parse_groundtruth_txt_and_dual_raw_vs_collapsed_collision_preservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gt_file = Path(tmp) / "demo-app.txt"
+            gt_file.write_text(
+                "\n".join([
+                    "Components:",
+                    "api_gateway",
+                    "user",
+                    "user_service",
+                    "",
+                    "Connections:",
+                    "api_gateway -> user",
+                    "api_gateway -> user_service",
+                    "",
+                    "Endpoints:",
+                    'user_service: "/users", "api/users/{userId}"',
+                    'api_gateway: "/"',
+                ]),
+                encoding="utf-8",
+            )
+            comps, conns, endpoints = micro.parse_groundtruth_txt(gt_file)
+            self.assertEqual({"api_gateway", "user", "user_service"}, comps)
+            self.assertEqual({("api_gateway", "user"), ("api_gateway", "user_service")}, conns)
+            self.assertEqual(
+                {("user_service", "/users"), ("user_service", "api/users/{userId}"), ("api_gateway", "/")},
+                endpoints,
+            )
+
+            # Case 1: Evo misses external actor 'user' and edge 'api_gateway -> user'
+            scored_partial = micro.score_app_predictions(
+                gt_comps_raw=comps,
+                gt_conns_raw=conns,
+                gt_endpoints_raw=endpoints,
+                pred_names=["api-gateway", "user-service"],
+                pred_edges=[("api-gateway", "user-service")],
+                pred_endpoints=[("user-service", "/users"), ("user-service", "/api/users/{id}"), ("api-gateway", "/")],
+                app_dir="demo-app",
+            )
+            den = scored_partial["gt_denominators"]
+            self.assertEqual({"components": 3, "connections": 2, "endpoints": 3}, den["raw"])
+            self.assertEqual({"components": 2, "connections": 1, "endpoints": 3}, den["collapsed"])
+            self.assertEqual({"user": ["user", "user_service"]}, den["collapsed_collisions"]["components"])
+            self.assertIn("apigateway -> user", den["collapsed_collisions"]["connections"])
+
+            # Collapsed hides the missed 'user' component and edge (denominator 2 & 1 -> F1 1.0)
+            self.assertEqual(1.0, scored_partial["collapsed_metrics"]["components"]["f1"])
+            self.assertEqual(1.0, scored_partial["collapsed_metrics"]["connections"]["f1"])
+            # Raw-GT preserves exact denominator 3 & 2 -> honest FN=1 on both COMP and CONN
+            raw_c = scored_partial["raw_gt_metrics"]["components"]
+            raw_e = scored_partial["raw_gt_metrics"]["connections"]
+            self.assertEqual((2, 0, 1), (raw_c["tp"], raw_c["fp"], raw_c["fn"]))
+            self.assertEqual(3, raw_c["tp"] + raw_c["fn"])
+            self.assertEqual((1, 0, 1), (raw_e["tp"], raw_e["fp"], raw_e["fn"]))
+            self.assertEqual(2, raw_e["tp"] + raw_e["fn"])
+
+            # Endpoint path variable canonicalization: {id} matches {userId} in raw_gt / canon / collapsed, not strict
+            self.assertEqual((2, 1, 1), (
+                scored_partial["strict_metrics"]["endpoints"]["tp"],
+                scored_partial["strict_metrics"]["endpoints"]["fp"],
+                scored_partial["strict_metrics"]["endpoints"]["fn"],
+            ))
+            self.assertEqual((3, 0, 0), (
+                scored_partial["raw_gt_metrics"]["endpoints"]["tp"],
+                scored_partial["raw_gt_metrics"]["endpoints"]["fp"],
+                scored_partial["raw_gt_metrics"]["endpoints"]["fn"],
+            ))
+
+            # Case 2: Evo recovers BOTH 'user' and 'user-service' -> 100% on Raw-GT
+            scored_full = micro.score_app_predictions(
+                gt_comps_raw=comps,
+                gt_conns_raw=conns,
+                gt_endpoints_raw=endpoints,
+                pred_names=["api-gateway", "user", "user-service"],
+                pred_edges=[("api-gateway", "user"), ("api-gateway", "user-service")],
+                pred_endpoints=[("user-service", "/users"), ("user-service", "/api/users/{userId}"), ("api-gateway", "/")],
+                app_dir="demo-app",
+            )
+            self.assertEqual((3, 0, 0), (
+                scored_full["raw_gt_metrics"]["components"]["tp"],
+                scored_full["raw_gt_metrics"]["components"]["fp"],
+                scored_full["raw_gt_metrics"]["components"]["fn"],
+            ))
+            self.assertEqual((2, 0, 0), (
+                scored_full["raw_gt_metrics"]["connections"]["tp"],
+                scored_full["raw_gt_metrics"]["connections"]["fp"],
+                scored_full["raw_gt_metrics"]["connections"]["fn"],
+            ))
+
+    def test_groundtruth_corpus_real_totals_raw_182_385_160_vs_collapsed_179_383(self) -> None:
+        gt_dir = EMSE_REPLICATION_DIR / "tool_comparison" / "groundtruth_textual"
+        if not gt_dir.is_dir():
+            self.skipTest(f"groundtruth_textual not present at {gt_dir}")
+
+        corpus = micro.summarize_groundtruth_corpus(gt_dir, manifest_path=SUITE_DIR / "corpus_manifest.json")
+        self.assertEqual(17, corpus["apps"])
+        self.assertEqual({"components": 182, "connections": 385, "endpoints": 160}, corpus["raw"])
+        self.assertEqual({"components": 182, "connections": 385, "endpoints": 160}, corpus["strict"])
+        self.assertEqual({"components": 179, "connections": 383, "endpoints": 160}, corpus["canonical"])
+        self.assertEqual({"components": 179, "connections": 383, "endpoints": 160}, corpus["collapsed"])
+        self.assertEqual({"components": 3, "connections": 2, "endpoints": 0}, corpus["dropped_by_collapse"])
+        self.assertEqual(
+            [
+                "apssouza22/java-microservice",
+                "mdeket/spring-cloud-movie-recommendation",
+                "shabbirdwd53/springboot-microservice",
+            ],
+            corpus["apps_with_collisions"],
+        )
+
+    def test_endpoint_extraction_and_scoring_on_sample_evo_api_payloads(self) -> None:
+        build_dir_to_name = {
+            "services/cart-service": "cart-service",
+            "services/product-service": "product-service",
+            "services/content-service": "content-service",
+        }
+        sorted_dirs = sorted(build_dir_to_name.keys(), key=len, reverse=True)
+
+        def resolve_path(rel_path: str) -> str:
+            norm = rel_path.replace("\\", "/").lstrip("./")
+            for bdir in sorted_dirs:
+                if norm == bdir or norm.startswith(bdir + "/"):
+                    return build_dir_to_name[bdir]
+            return norm.split("/", 1)[0] if "/" in norm else norm
+
+        module_id_to_path = {
+            "module:sha256:cart": "services/cart-service",
+            "module:sha256:prod": "services/product-service",
+        }
+        evidence_store = {
+            "sha256:jaxrs-ev": {
+                "family": "jaxrs.endpoint-declaration",
+                "metadata": {
+                    "module": "services/content-service",
+                    "sourceSet": "MAIN",
+                    "route": {"path": "/", "methods": ["GET"]},
+                },
+            },
+            "sha256:test-ev": {
+                "family": "spring.endpoint-declaration",
+                "metadata": {
+                    "module": "services/cart-service",
+                    "sourceSet": "TEST",
+                    "route": {"path": "/test-only", "methods": ["GET"]},
+                },
+            },
+        }
+
+        sample_records = [
+            # Spring ENDPOINT with canonicalName + module digest
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:1",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "GET /",
+                    "module": "module:sha256:cart",
+                    "origin": "PROJECT",
+                    "sourceSet": "MAIN",
+                    "evidence": ["sha256:spring-1"],
+                },
+                {"identity": "analysis:1", "kind": "java", "modulePath": "services/cart-service"},
+            ),
+            # Spring ENDPOINT with multi-method prefix resolved via ctx modulePath
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:2",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "GET,POST /count/",
+                    "module": "",
+                    "origin": "PROJECT",
+                    "sourceSet": "MAIN",
+                    "evidence": ["sha256:spring-2"],
+                },
+                {"identity": "analysis:1", "kind": "java", "modulePath": "services/cart-service"},
+            ),
+            # Polyglot ROUTE_CANDIDATE "<file>#<METHOD> <path>"
+            (
+                {
+                    "identity": "route:sha256:3",
+                    "kind": "ROUTE_CANDIDATE",
+                    "canonicalName": "services/cart-service/src/main/java/CartController.java#POST /add/{seoName}",
+                    "spelling": "POST /add/{seoName} [java]",
+                    "origin": "PROJECT",
+                    "evidence": ["sha256:poly-3"],
+                },
+                {"identity": "snapshot:1", "kind": "repository"},
+            ),
+            # JAX-RS ENDPOINT where canonicalName is digest-only -> resolved via evidence_fetcher
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:4",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "endpoint-declaration:sha256:4",
+                    "origin": "PROJECT",
+                    "evidence": ["sha256:jaxrs-ev"],
+                },
+                {"identity": "analysis:2", "kind": "java"},
+            ),
+            # Spring ENDPOINT on product-service
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:5",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "GET /{productSlug}",
+                    "module": "module:sha256:prod",
+                    "origin": "PROJECT",
+                    "sourceSet": "MAIN",
+                    "evidence": ["sha256:spring-5"],
+                },
+                {"identity": "analysis:3", "kind": "java", "modulePath": "services/product-service"},
+            ),
+            # Filtered out: TEST sourceSet on entity
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:6",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "GET /mock",
+                    "module": "module:sha256:cart",
+                    "origin": "PROJECT",
+                    "sourceSet": "TEST",
+                },
+                {"identity": "analysis:1", "kind": "java"},
+            ),
+            # Filtered out: TEST sourceSet via evidence metadata
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:7",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "endpoint-declaration:sha256:7",
+                    "origin": "PROJECT",
+                    "evidence": ["sha256:test-ev"],
+                },
+                {"identity": "analysis:1", "kind": "java"},
+            ),
+            # Filtered out: DEPENDENCY origin
+            (
+                {
+                    "identity": "endpoint-declaration:sha256:8",
+                    "kind": "ENDPOINT",
+                    "canonicalName": "GET /actuator/health",
+                    "module": "module:sha256:cart",
+                    "origin": "DEPENDENCY",
+                    "sourceSet": "MAIN",
+                },
+                {"identity": "analysis:1", "kind": "java"},
+            ),
+            # Filtered out: test file path in ROUTE_CANDIDATE
+            (
+                {
+                    "identity": "route:sha256:9",
+                    "kind": "ROUTE_CANDIDATE",
+                    "canonicalName": "services/cart-service/src/test/java/CartControllerTest.java#GET /fake",
+                    "origin": "PROJECT",
+                },
+                {"identity": "snapshot:1", "kind": "repository"},
+            ),
+            # Filtered out: non-path GraphQL ROUTE_CANDIDATE
+            (
+                {
+                    "identity": "route:sha256:10",
+                    "kind": "ROUTE_CANDIDATE",
+                    "canonicalName": "services/cart-service/schema.graphql#getCart",
+                    "origin": "PROJECT",
+                },
+                {"identity": "snapshot:1", "kind": "repository"},
+            ),
+        ]
+
+        extracted = micro.extract_endpoints_from_items(
+            endpoint_records=sample_records,
+            resolve_path_fn=resolve_path,
+            module_id_to_path=module_id_to_path,
+            evidence_fetcher=lambda ref: evidence_store.get(ref, {}),
+        )
+        extracted_pairs = [(item["service"], item["path"]) for item in extracted]
+        self.assertEqual(
+            [
+                ("cart-service", "/"),
+                ("cart-service", "/add/{seoName}"),
+                ("cart-service", "/count"),
+                ("content-service", "/"),
+                ("product-service", "/{productSlug}"),
+            ],
+            extracted_pairs,
+        )
+
+        # Score against apache-spring-boot-microservice-example style GT endpoints (6 total)
+        gt_eps = {
+            ("cart_service", "/"),
+            ("cart_service", "/count"),
+            ("cart_service", "/add/{seoName}"),
+            ("content_service", "/"),
+            ("product_service", "/"),
+            ("product_service", "/{seoName}"),
+        }
+        scored = micro.score_app_predictions(
+            gt_comps_raw={"cart_service", "content_service", "product_service"},
+            gt_conns_raw=set(),
+            gt_endpoints_raw=gt_eps,
+            pred_names=["cart-service", "content-service", "product-service"],
+            pred_edges=[],
+            pred_endpoints=extracted_pairs,
+            app_dir="apache-spring-boot-microservice-example",
+        )
+        # Strict: /{productSlug} != /{seoName} -> TP=4, FP=1, FN=2
+        self.assertEqual((4, 1, 2), (
+            scored["strict_metrics"]["endpoints"]["tp"],
+            scored["strict_metrics"]["endpoints"]["fp"],
+            scored["strict_metrics"]["endpoints"]["fn"],
+        ))
+        # Raw-GT & Collapsed canonicalize {productSlug} == {seoName} -> TP=5, FP=0, FN=1 (missing product_service '/')
+        self.assertEqual((5, 0, 1), (
+            scored["raw_gt_metrics"]["endpoints"]["tp"],
+            scored["raw_gt_metrics"]["endpoints"]["fp"],
+            scored["raw_gt_metrics"]["endpoints"]["fn"],
+        ))
+        self.assertEqual((5, 0, 1), (
+            scored["collapsed_metrics"]["endpoints"]["tp"],
+            scored["collapsed_metrics"]["endpoints"]["fp"],
+            scored["collapsed_metrics"]["endpoints"]["fn"],
+        ))
+
+        # Verify _ep_ sets round-trip through serialize_sets / deserialize_sets
+        ser = micro.serialize_sets(scored["_sets"])
+        deser = micro.deserialize_sets(ser)
+        self.assertEqual(scored["_sets"]["gt_ep_strict"], deser["gt_ep_strict"])
+        self.assertEqual(scored["_sets"]["pr_ep_col"], deser["pr_ep_col"])
+
+    def test_render_markdown_report_emits_raw_and_collapsed_gt_and_endpoints(self) -> None:
+        row = {
+            "app_id": "apssouza22/java-microservice",
+            "status": "PARTIAL",
+            "gt_components": 15,
+            "gt_connections": 34,
+            "gt_endpoints": 17,
+            "gt_denominators": {
+                "raw": {"components": 15, "connections": 34, "endpoints": 17},
+                "strict": {"components": 15, "connections": 34, "endpoints": 17},
+                "canonical": {"components": 14, "connections": 34, "endpoints": 17},
+                "collapsed": {"components": 14, "connections": 34, "endpoints": 17},
+                "collapsed_collisions": {"components": {"user": ["user", "user_service"]}, "connections": {}, "endpoints": {}},
+            },
+            "raw_gt_metrics": {
+                "components": micro.compute_prf_counts(14, 0, 1),
+                "connections": micro.compute_prf_counts(30, 2, 4),
+                "endpoints": micro.compute_prf_counts(15, 1, 2),
+            },
+            "strict_metrics": {
+                "components": micro.compute_prf_counts(14, 0, 1),
+                "connections": micro.compute_prf_counts(30, 2, 4),
+                "endpoints": micro.compute_prf_counts(15, 1, 2),
+            },
+            "canon_metrics": {
+                "components": micro.compute_prf_counts(14, 0, 0),
+                "connections": micro.compute_prf_counts(30, 2, 4),
+                "endpoints": micro.compute_prf_counts(15, 1, 2),
+            },
+            "collapsed_metrics": {
+                "components": micro.compute_prf_counts(14, 0, 0),
+                "connections": micro.compute_prf_counts(30, 2, 4),
+                "endpoints": micro.compute_prf_counts(15, 1, 2),
+            },
+        }
+        gt_den = micro.aggregate_gt_denominators([row])
+        summary = {
+            "timestamp_utc": "2026-11-28T00:00:00Z",
+            "apps_count": 1,
+            "gt_denominators": gt_den,
+            "profiles": {
+                "strict": {
+                    "gt_denominators": gt_den,
+                    "raw_gt_denominator": {
+                        k: micro.aggregate_rows([row], "raw_gt_metrics", k)
+                        for k in ("components", "connections", "endpoints")
+                    },
+                    "collapsed_canonical": {
+                        k: micro.aggregate_rows([row], "collapsed_metrics", k)
+                        for k in ("components", "connections", "endpoints")
+                    },
+                }
+            },
+            "emse2025sar_baselines": [
+                {
+                    "tool": "code2DFD",
+                    "apps_completed": 17,
+                    "components": {"tp": 178, "fp": 5, "fn": 4, "micro_f1": 0.9753},
+                    "connections": {"tp": 320, "fp": 18, "fn": 65, "micro_f1": 0.8852},
+                    "endpoints": {"tp": 86, "fp": 13, "fn": 74, "micro_f1": 0.6641},
+                }
+            ],
+            "runs": {"strict": [row]},
+        }
+        md = micro.render_markdown_report(summary)
+        self.assertIn("Raw `15 / 34 / 17`", md)
+        self.assertIn("Collapsed `14 / 34 / 17`", md)
+        self.assertIn("apssouza22/java-microservice", md)
+        self.assertIn("Raw GT (collision-safe)", md)
+        self.assertIn("`86/13/74` (0.6641)", md)
+
+    def test_causalrepair_doi_fixed_in_reports(self) -> None:
+        report = (REPO_ROOT / "docs" / "evo-comparative-evaluation-report.md").read_text(encoding="utf-8")
+        masterplan = (REPO_ROOT / "docs" / "evo-improvement-and-publication-masterplan.md").read_text(encoding="utf-8")
+        self.assertIn("10.1145/3832225", report)
+        self.assertNotIn("10.1145/3832252", report)
+        self.assertIn("10.1145/3832225", masterplan)
+        self.assertNotIn("10.1145/3832252", masterplan)
 
 
 if __name__ == "__main__":

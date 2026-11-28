@@ -1017,5 +1017,5 @@ Mọi tệp trong Mục 8.1 dưới đây đã được xác minh trực tiếp 
 12. **M. R. Chinthareddy**, "Reliable Graph-RAG for Codebases: AST-Derived Graphs vs LLM-Extracted Knowledge Graphs (*DKB*)," `arXiv:2601.08773`, Jan. 2026.
 13. **K. Oueslati, M. Lamothe, and F. Khomh**, "RefAgent: A Multi-agent LLM-based Framework for Automatic Software Refactoring," *Proc. IEEE/ACM 48th ICSE*, 2026. `doi:10.1145/3744916.3773153` (`arXiv:2511.03153`).
 14. **Y.-S. Xu et al.**, "MANTRA: Enhancing Automated Method-Level Refactoring with Contextual RAG and Multi-Agent LLM Collaboration," `arXiv:2503.14340`, Mar. 2025.
-15. **L. Wu et al.**, "CausalRepair: Bridging the Causality Gap in LLM-Based Automated Program Repair via Dual-Slicing," *Proc. ACM Softw. Eng. (ISSTA)*, vol. 3, Art. ISSTA134, 2026. `doi:10.1145/3832252`.
+15. **L. Wu et al.**, "CausalRepair: Bridging the Causality Gap in LLM-Based Automated Program Repair via Dual-Slicing," *Proc. ACM Softw. Eng. (ISSTA)*, vol. 3, Art. ISSTA134, 2026. `doi:10.1145/3832225`.
 16. **Moderne & OpenRewrite Contributors**, "OpenRewrite Lossless Semantic Trees (v8.x)," `https://docs.openrewrite.org/`.

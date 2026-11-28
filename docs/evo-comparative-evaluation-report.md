@@ -156,7 +156,7 @@ Evo được tái đo trực tiếp bằng `evo-fresh.jar` trên `5` repository 
 | EMSE '25 (17/17)<sup>a</sup> | **Evo** (`strict`, Linux) | 0.9204 | 0.9123 | 0.4733 | 0.4998 | — | 48.8 s |
 | EMSE '25 (17/17)<sup>a</sup> | code2DFD (17/17) [13, 14] | **0.9753** | **0.9762** | 0.8852 | 0.8930 | 0.6641 | 7.3 s |
 | EMSE '25 (17/17)<sup>a</sup> | MicroDepGraph (10/17) [11, 14] | 0.8660 | 0.8641 | 0.6685 | 0.6512 | — | 1.5 s |
-| EMSE '25 (17/17)<sup>a</sup> | attack-graph-gen (12/17) [14] | 0.8013 | 0.8165 | 0.5455 | 0.5526 | — | — |
+| EMSE '25 (17/17)<sup>a</sup> | attack-graph-gen (12/17) [14] | 0.7987 | 0.8105 | 0.5391 | 0.5413 | — | — |
 | EMSE '25 (17/17)<sup>a</sup> | RAD (13/17) [14] | — | — | — | — | **0.7895** | **<1.0 s** |
 | EMSE '25 (17/17)<sup>a</sup> | RAD-source (17/17) [14] | — | — | 0.0357 | 0.0551 | 0.6693 | **<1.0 s** |
 | EMSE '25 (17/17)<sup>a</sup> | Prophet (17/17) [12, 14] | 0.2348 | 0.2182 | 0.0205 | 0.0418 | 0.0000 | **<1.0 s** |
@@ -167,7 +167,7 @@ Evo được tái đo trực tiếp bằng `evo-fresh.jar` trên `5` repository 
 | TeaStore (JAX-RS)<sup>d</sup> | **Evo** (`strict`, Live) | — | — | — | — | 48 EP | **19.86 s** |
 | TeaStore (JAX-RS)<sup>d</sup> | **Evo** (`dfd-export`, Live) | — | — | — | — | 48 EP | 21.52 s |
 
-*<sup>a</sup> `uF1` = `Micro-Average F1`, `mF1` = `Macro-Average F1`. Số đối thủ đã hiệu đính đúng khối `FP:` trong `EMSE2025SAR` (`code2DFD` `5`/`18` FP, `attack-graph-gen` `40`/`420` FP); `Evo` đo `17/17` trên Linux Docker (`17/17` `SHA-256`, Warm `5.8–6.3 s`).*  
+*<sup>a</sup> `uF1` = `Micro-Average F1`, `mF1` = `Macro-Average F1`. Số đối thủ đã hiệu đính đúng khối `FP:`/`FP` trong `EMSE2025SAR` (`code2DFD` `5`/`18` FP; `attack-graph-gen` `41`/`432` FP sau khi đọc đủ khối `FP` không dấu `:` tại `Tap-And-Eat` và cạnh `consul- consul` tại `microservices-sample`, khớp tuyệt đối `complete_results.xlsx` & EMSE 2025 Table 5); `Evo` đo `17/17` trên Linux Docker (`17/17` `SHA-256`, Warm `5.8–6.3 s`).*  
 *<sup>b</sup> Cảnh báo phương pháp: `Evo[dfd-export]` được tinh chỉnh trực tiếp trên `17/17` `microSecEnD` không có tập holdout ẩn, đồng thời kiểm toán phát hiện chuỗi `redis-cart` bị hardcode trong bộ chiếu; không khẳng định vượt chuẩn khi chưa kiểm chứng mù.*  
 *<sup>c</sup> `Online Boutique` (`12` K8s services, `16` edges [15]): `Ripple eBPF` thắng tuyệt đối (`1.0000`) nhờ runtime K8s; ở chế độ tĩnh, `Evo[strict]` (`0.9091`) thắng `Evo[dfd-export]` (`0.8108`) và công cụ Java-only (`0.0000`).*  
 *<sup>d</sup> `TeaStore` (`7` dịch vụ [16]): `Evo` trích xuất `48` endpoint (`28` JAX-RS + `20` Servlet) và `29`/`45` cạnh, nhưng chưa khử trùng lặp thành phần giữa Maven/Compose/K8s nên không ghi F1 thổi phồng.*
@@ -358,7 +358,7 @@ Bảng 3.4 đối chiếu lập chỉ mục `Shopizer` (`1,210` `.java`, `115,14
 
 [30] I. Bouzenia, P. Devanbu, and M. Pradel, "RepairAgent: An Autonomous, LLM-Based Agent for Program Repair," *Proc. IEEE/ACM 47th ICSE*, 2025, pp. 2188–2200. doi: 10.1109/ICSE55347.2025.00157 (arXiv:2403.17134).
 
-[31] L. Wu, Y. Chen, Z. Yang, P. Xue, and D. Hao, "CausalRepair: Bridging the Causality Gap in Large Language Model-Based Automated Program Repair via Dual-Slicing," *Proc. ACM Softw. Eng. (ISSTA)*, vol. 3, Art. ISSTA134, 2026. doi: 10.1145/3832252 (arXiv:2608.10613).
+[31] L. Wu, Y. Chen, Z. Yang, P. Xue, and D. Hao, "CausalRepair: Bridging the Causality Gap in Large Language Model-Based Automated Program Repair via Dual-Slicing," *Proc. ACM Softw. Eng. (ISSTA)*, vol. 3, Art. ISSTA134, 2026. doi: 10.1145/3832225 (arXiv:2608.10613).
 
 [32] Y. Yang, A. Wu, J. Luo, R. Xuan, Z. Hu, Y. Liu, and Z. Qin, "RepoProbe: Benchmarking Architecture-Aware Repository Comprehension with Checklists," *Proc. 41st IEEE/ACM ASE*, 2026. doi: 10.1145/3832783.3837452 (arXiv:2608.04783).
 
