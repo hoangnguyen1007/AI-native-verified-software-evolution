@@ -3,10 +3,12 @@ package com.evolution.analysis.treesitter;
 import com.evolution.analysis.polyglot.SourceCoordinates;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
+import com.evolution.analysis.evidence.EvidenceContext;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import org.treesitter.*;
 
@@ -113,6 +115,11 @@ public final class TreeSitterSourceFrontend {
     @FunctionalInterface
     public interface Sink {
         void accept(Fact fact) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface TreeHook {
+        void accept(TSNode root, byte[] utf8, SourceCoordinates positions) throws IOException;
     }
 
     private static final Map<String, java.lang.reflect.Constructor<?>> GRAMMAR_CTORS = new java.util.concurrent.ConcurrentHashMap<>();
@@ -249,14 +256,48 @@ public final class TreeSitterSourceFrontend {
         return parse(language, bytes, sink, cancelled, fastArchitecture);
     }
 
+    /**
+     * Runs CodexGraph two-phase cross-file scope-graph resolution across captured polyglot files
+     * and passive manifests ({@code --build=off}, I1) reusing this frontend's pooled Tree-sitter parsers.
+     */
+    public PolyglotScopeGraphResolver.ScopeGraph analyzeWorkspace(
+            Map<String, byte[]> filesByPath, BooleanSupplier cancelled) throws IOException {
+        return new PolyglotScopeGraphResolver(this).resolve(filesByPath, cancelled);
+    }
+
+    /**
+     * Runs CodexGraph two-phase cross-file scope-graph resolution with an explicit {@link EvidenceContext}.
+     */
+    public PolyglotScopeGraphResolver.ScopeGraph analyzeWorkspace(
+            Map<String, byte[]> filesByPath, EvidenceContext context, BooleanSupplier cancelled) throws IOException {
+        return new PolyglotScopeGraphResolver(this).resolve(filesByPath, context, cancelled);
+    }
+
+    /**
+     * Runs single-pass intra-file syntax acquisition (forwarded to {@code factSink}) together with
+     * CodexGraph two-phase cross-file scope-graph resolution over the same parsed ASTs.
+     */
+    public PolyglotScopeGraphResolver.ScopeGraph analyzeWorkspace(
+            Map<String, byte[]> filesByPath,
+            BiConsumer<String, Fact> factSink,
+            EvidenceContext context,
+            BooleanSupplier cancelled) throws IOException {
+        return new PolyglotScopeGraphResolver(this).resolve(filesByPath, factSink, context, cancelled);
+    }
+
     public Summary parse(String language, byte[] bytes, Sink sink, BooleanSupplier cancelled) throws IOException {
         return parse(language, bytes, sink, cancelled, false);
     }
 
     public Summary parse(String language, byte[] bytes, Sink sink, BooleanSupplier cancelled, boolean fastArchitecture)
             throws IOException {
+        return parseWithTreeHook(language, bytes, sink, null, cancelled, fastArchitecture);
+    }
+
+    Summary parseWithTreeHook(String language, byte[] bytes, Sink sink, TreeHook treeHook,
+            BooleanSupplier cancelled, boolean fastArchitecture) throws IOException {
         if (language.equals("protobuf"))
-            return ProtobufSourceFrontend.parse(bytes, sink, cancelled);
+            return ProtobufSourceFrontend.parse(bytes, sink != null ? sink : fact -> {}, cancelled);
         if (System.getProperty("tree-sitter-lib") != null)
             throw new IOException("SYNTAX_EXTERNAL_LIBRARY_OVERRIDE_REJECTED");
         var grammar = GRAMMARS.get(language);
@@ -278,6 +319,12 @@ public final class TreeSitterSourceFrontend {
                 if(offset>=utf8.length)return 0;int count=Math.min(buffer.length,utf8.length-offset);System.arraycopy(utf8,offset,buffer,0,count);return count;
             },TSInputEncoding.TSInputEncodingUTF8,state->cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())) {
                 check(cancelled);var root=tree.getRootNode();boolean recovered=root.hasError();
+                if (treeHook != null) {
+                    treeHook.accept(root, utf8, positions);
+                }
+                if (sink == null) {
+                    if (recovered) errors = 1;
+                } else {
                 var scope = collectFileScope(language, root, utf8, positions, cancelled);
                 var pending = new ArrayDeque<Frame>();
                 pending.push(new Frame(root, ""));
@@ -391,6 +438,7 @@ public final class TreeSitterSourceFrontend {
                 facts += GrpcSourceSyntax.acquire(language, root, utf8, positions, sink, cancelled);
                 if (recovered && errors == 0)
                     errors = 1;
+                }
             }
             healthy = true;
         } catch (ReflectiveOperationException failure) {
