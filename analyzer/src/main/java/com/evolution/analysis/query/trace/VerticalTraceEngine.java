@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.graph.GraphEvidence;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
+import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer;
 
 import java.util.*;
 
@@ -252,7 +253,7 @@ public final class VerticalTraceEngine {
     );
 
     private static final Set<String> API_ROUTE_KINDS = Set.of(
-            "ENDPOINT", "API_ROUTE", "HTTP_ENDPOINT", "ROUTE"
+            "ENDPOINT", "API_ROUTE", "HTTP_ENDPOINT", "ROUTE", "GRPC_HANDLER", "SOURCE_RPC_HANDLER_CANDIDATE"
     );
 
     private VerticalTraceEngine() {}
@@ -1710,6 +1711,169 @@ public final class VerticalTraceEngine {
         Object v = map.get(key);
         if (v instanceof Number n) return n.intValue();
         return fallback;
+    }
+
+    /**
+     * Composes cached intra-method error propagation summaries backwards from outbound RPC/HTTP edges
+     * ({@code CALLS_SERVICE}/{@code INVOKES_RPC}) to inbound endpoints ({@code ENDPOINT}/{@code GRPC_HANDLER})
+     * using order-independent XOR path-permutation deduplication and bounded branching.
+     */
+    public static FailCloseResilienceAnalyzer.ResilienceReport traceFailClosePaths(
+            KnowledgeGraph graph,
+            Map<String, List<FailCloseResilienceAnalyzer.MethodErrorSummary>> summariesByMethod) {
+        return FailCloseResilienceAnalyzer.analyze(
+                graph,
+                summariesByMethod,
+                FailCloseResilienceAnalyzer.AnalysisConfig.defaults());
+    }
+
+    /** Same as {@link #traceFailClosePaths(KnowledgeGraph, Map)} with explicit branching/depth bounds. */
+    public static FailCloseResilienceAnalyzer.ResilienceReport traceFailClosePaths(
+            KnowledgeGraph graph,
+            Map<String, List<FailCloseResilienceAnalyzer.MethodErrorSummary>> summariesByMethod,
+            FailCloseResilienceAnalyzer.AnalysisConfig config) {
+        return FailCloseResilienceAnalyzer.analyze(graph, summariesByMethod, config);
+    }
+
+    /**
+     * Traces a specific seed via {@link #trace(KnowledgeGraph, TraceRequest)} and filters the
+     * passive counterfactual {@link FailCloseResilienceAnalyzer.ResilienceReport} to call paths
+     * intersecting the traced nodes (preserving per-path verdicts and {@code MIXED_PATHS}).
+     */
+    public static FailCloseResilienceAnalyzer.ResilienceReport traceFailClosePathsForSeed(
+            KnowledgeGraph graph,
+            TraceRequest request,
+            Map<String, List<FailCloseResilienceAnalyzer.MethodErrorSummary>> summariesByMethod) {
+        VerticalTraceResult traced = trace(graph, request);
+        FailCloseResilienceAnalyzer.ResilienceReport full = traceFailClosePaths(graph, summariesByMethod);
+        if (traced.hops().isEmpty() || full.pathVerdicts().isEmpty()) {
+            return full;
+        }
+        var tracedIds = new HashSet<String>();
+        for (TraceHop hop : traced.hops()) {
+            tracedIds.add(hop.nodeId());
+        }
+        var filteredPaths = new TreeMap<FailCloseResilienceAnalyzer.PathKey, FailCloseResilienceAnalyzer.PathVerdict>();
+        for (var entry : full.pathVerdicts().entrySet()) {
+            var pv = entry.getValue();
+            boolean touches = tracedIds.contains(pv.inboundId())
+                    || tracedIds.contains(pv.outboundId())
+                    || pv.flamegraph().stream().anyMatch(f -> tracedIds.contains(f.nodeId()));
+            if (touches) {
+                filteredPaths.put(entry.getKey(), pv);
+            }
+        }
+        if (filteredPaths.isEmpty()) {
+            return full;
+        }
+        var filteredPairs = new TreeMap<String, FailCloseResilienceAnalyzer.PairSummary>();
+        for (var pv : filteredPaths.values()) {
+            String pairKey = pv.inboundId() + "->" + pv.outboundId();
+            var ps = full.pairSummaries().get(pairKey);
+            if (ps != null) {
+                filteredPairs.put(pairKey, ps);
+            }
+        }
+        return new FailCloseResilienceAnalyzer.ResilienceReport(
+                full.graphDigest(),
+                full.trustTier(),
+                filteredPaths,
+                filteredPairs,
+                full.gaps(),
+                full.xorDedupCollapsedCount(),
+                full.branchBoundedTruncated());
+    }
+
+    /**
+     * Builds a deterministic call-path flamegraph view ({@code file:line} chain + per-path resilience
+     * verdicts + pair summaries) suitable for REST and MCP {@code vertical_trace} consumers.
+     */
+    public static Map<String, Object> buildCallPathFlamegraph(
+            VerticalTraceResult traceResult,
+            FailCloseResilienceAnalyzer.ResilienceReport resilienceReport) {
+        Objects.requireNonNull(traceResult, "traceResult");
+        var frames = new ArrayList<Map<String, Object>>(traceResult.hops().size());
+        var chainParts = new ArrayList<String>(traceResult.hops().size());
+        for (TraceHop hop : traceResult.hops()) {
+            String sp = hop.sourcePath().orElse("");
+            int line = hop.startLine().orElse(0);
+            int endLine = hop.endLine().orElse(line);
+            var frame = new FailCloseResilienceAnalyzer.CallFrame(
+                    hop.nodeId(), hop.label(), sp, line, endLine, hop.kind());
+            var fv = new TreeMap<String, Object>(frame.toView());
+            fv.put("layer", hop.layer().name());
+            fv.put("trustTier", hop.trustTier().name());
+            hop.edgeKind().ifPresent(ek -> fv.put("edgeKind", ek));
+            hop.gapReason().ifPresent(gr -> fv.put("gapReason", gr));
+            frames.add(Collections.unmodifiableMap(fv));
+            chainParts.add(frame.fileLine());
+        }
+
+        int failClose = 0;
+        int failOpen = 0;
+        int unknown = 0;
+        int mixedPairs = 0;
+        var pathViews = new ArrayList<Map<String, Object>>();
+        var pairViews = new ArrayList<Map<String, Object>>();
+        var gapViews = new ArrayList<Map<String, Object>>();
+        int xorCollapsed = 0;
+
+        if (resilienceReport != null) {
+            xorCollapsed = resilienceReport.xorDedupCollapsedCount();
+            for (var pv : resilienceReport.pathVerdicts().values()) {
+                pathViews.add(pv.toView());
+                switch (pv.verdict()) {
+                    case FAIL_CLOSE -> failClose++;
+                    case FAIL_OPEN -> failOpen++;
+                    case UNKNOWN -> unknown++;
+                    case MIXED_PATHS -> {
+                        failClose++;
+                        failOpen++;
+                    }
+                }
+            }
+            for (var ps : resilienceReport.pairSummaries().values()) {
+                pairViews.add(ps.toView());
+                if (ps.aggregateVerdict() == FailCloseResilienceAnalyzer.ResilienceVerdict.MIXED_PATHS) {
+                    mixedPairs++;
+                }
+            }
+            for (var gap : resilienceReport.gaps()) {
+                gapViews.add(FailCloseResilienceAnalyzer.gapToView(gap));
+            }
+        }
+
+        String aggregateVerdict;
+        if (failClose > 0 && failOpen > 0) {
+            aggregateVerdict = FailCloseResilienceAnalyzer.ResilienceVerdict.MIXED_PATHS.name();
+        } else if (unknown > 0) {
+            aggregateVerdict = FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
+        } else if (failClose > 0) {
+            aggregateVerdict = FailCloseResilienceAnalyzer.ResilienceVerdict.FAIL_CLOSE.name();
+        } else if (failOpen > 0) {
+            aggregateVerdict = FailCloseResilienceAnalyzer.ResilienceVerdict.FAIL_OPEN.name();
+        } else {
+            aggregateVerdict = FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
+        }
+
+        var summary = new TreeMap<String, Object>();
+        summary.put("failCloseCount", failClose);
+        summary.put("failOpenCount", failOpen);
+        summary.put("mixedPairCount", mixedPairs);
+        summary.put("totalPaths", pathViews.size());
+        summary.put("unknownCount", unknown);
+        summary.put("xorDedupCollapsedCount", xorCollapsed);
+
+        var out = new TreeMap<String, Object>();
+        out.put("chain", String.join(" -> ", chainParts));
+        out.put("frames", List.copyOf(frames));
+        out.put("gaps", List.copyOf(gapViews));
+        out.put("pairSummaries", List.copyOf(pairViews));
+        out.put("paths", List.copyOf(pathViews));
+        out.put("resilienceVerdict", aggregateVerdict);
+        out.put("summary", Collections.unmodifiableMap(summary));
+        out.put("trustTier", TrustTier.SOURCE_SYNTAX.name());
+        return Collections.unmodifiableMap(out);
     }
 
     private static String shortHashLabel(String id) {

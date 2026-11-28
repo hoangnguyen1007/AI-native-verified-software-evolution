@@ -1,6 +1,11 @@
 package com.evolution.analysis.javaparser.slice;
 
+import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.semantic.TrustTier;
+import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer;
+import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.ExceptionTransformation;
+import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.MethodErrorSummary;
+import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.PropagationDisposition;
 import com.evolution.analysis.query.trace.MethodSliceResult;
 import com.evolution.analysis.query.trace.MethodSliceResult.SliceDirection;
 import com.evolution.analysis.query.trace.MethodSliceResult.SliceStatement;
@@ -9,10 +14,12 @@ import com.github.javaparser.ParseResult;
 import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.Range;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.stmt.*;
+import com.github.javaparser.ast.type.UnionType;
 
 import java.util.*;
 
@@ -1258,5 +1265,990 @@ public final class JavaMethodSlicer {
             String normalized = raw.replaceAll("\\s+", " ").strip();
             return normalized.length() > 160 ? normalized.substring(0, 157) + "..." : normalized;
         }
+    }
+
+    // ─── WP1.2: Cached Intra-Method Error Propagation Summaries (Java) ───
+
+    private static final int MAX_ERROR_SUMMARY_CACHE = 1024;
+
+    private static final Map<String, List<MethodErrorSummary>> ERROR_SUMMARY_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(128, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, List<MethodErrorSummary>> eldest) {
+                    return size() > MAX_ERROR_SUMMARY_CACHE;
+                }
+            });
+
+    private static final Set<String> REST_TEMPLATE_METHODS = Set.of(
+            "getForObject", "getForEntity", "postForObject", "postForEntity",
+            "exchange", "execute", "put", "delete", "patchForObject", "headForHeaders"
+    );
+
+    private static final Set<String> WEB_CLIENT_TERMINAL_METHODS = Set.of(
+            "retrieve", "exchange", "exchangeToMono", "exchangeToFlux", "bodyToMono", "bodyToFlux", "toEntity"
+    );
+
+    private static final Set<String> HTTP_CLIENT_METHODS = Set.of(
+            "send", "sendAsync", "execute", "newCall", "openConnection"
+    );
+
+    private static final Set<String> LOGGING_OR_METRICS_RECEIVERS = Set.of(
+            "log", "logger", "out", "err", "system", "metrics", "meter", "meterregistry", "counter", "tracer", "span"
+    );
+
+    private static final Set<String> LOGGING_OR_METRICS_METHODS = Set.of(
+            "trace", "debug", "info", "warn", "error", "fatal", "log", "println", "print",
+            "printStackTrace", "increment", "count", "record", "recordException", "addEvent", "setAttribute"
+    );
+
+    private static final Set<String> HTTP_5XX_STATUS_CONSTANTS = Set.of(
+            "INTERNAL_SERVER_ERROR", "NOT_IMPLEMENTED", "BAD_GATEWAY", "SERVICE_UNAVAILABLE",
+            "GATEWAY_TIMEOUT", "HTTP_VERSION_NOT_SUPPORTED", "VARIANT_ALSO_NEGOTIATES",
+            "INSUFFICIENT_STORAGE", "LOOP_DETECTED", "BANDWIDTH_LIMIT_EXCEEDED",
+            "NOT_EXTENDED", "NETWORK_AUTHENTICATION_REQUIRED"
+    );
+
+    /** Clears the content-addressed Java error propagation summary cache. */
+    public static void clearErrorSummaryCache() {
+        ERROR_SUMMARY_CACHE.clear();
+    }
+
+    /** Returns current number of cached Java error summary entries. */
+    public static int errorSummaryCacheSize() {
+        return ERROR_SUMMARY_CACHE.size();
+    }
+
+    /**
+     * Computes cached intra-method error propagation summaries for all outbound RPC/HTTP calls
+     * ({@code Feign}/{@code RestTemplate}/{@code WebClient}/{@code gRPC Stub}/{@code HttpClient})
+     * in {@code javaSource}.
+     */
+    public static List<MethodErrorSummary> summarizeErrorPropagation(String path, String javaSource) {
+        return summarizeErrorPropagation(path, javaSource, Optional.empty(), false);
+    }
+
+    /**
+     * Computes cached intra-method error propagation summaries for one method (or all methods when
+     * {@code methodSignature} is empty) in {@code javaSource}. When {@code includeInternalCalls} is
+     * {@code true}, also summarizes error handling over intra-service bean/helper calls so backward
+     * inter-method composition can propagate exceptions through intermediate callers.
+     */
+    public static List<MethodErrorSummary> summarizeErrorPropagation(
+            String path,
+            String javaSource,
+            Optional<String> methodSignature,
+            boolean includeInternalCalls) {
+        String safePath = Objects.requireNonNull(path, "path").strip();
+        String safeSource = Objects.requireNonNull(javaSource, "javaSource");
+        Optional<String> safeSig = methodSignature == null
+                ? Optional.empty()
+                : methodSignature.map(String::strip).filter(s -> !s.isEmpty());
+        if (safeSource.isBlank()) {
+            return List.of();
+        }
+        String cacheKey = safePath + "|" + ContentDigest.sha256Utf8(safeSource).value()
+                + "|" + safeSig.orElse("*") + "|" + includeInternalCalls;
+        List<MethodErrorSummary> cached = ERROR_SUMMARY_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
+        ParserConfiguration config = new ParserConfiguration()
+                .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21)
+                .setAttributeComments(false);
+        ParseResult<CompilationUnit> parseResult = new JavaParser(config).parse(safeSource);
+        Optional<CompilationUnit> maybeCu = parseResult.getResult();
+        if (maybeCu.isEmpty()) {
+            return List.of();
+        }
+        CompilationUnit cu = maybeCu.get();
+        List<String> imports = cu.getImports().stream()
+                .map(ImportDeclaration::getNameAsString)
+                .toList();
+        boolean importsFeign = imports.stream().anyMatch(i -> i.contains("openfeign") || i.startsWith("feign."));
+        boolean importsGrpc = imports.stream().anyMatch(i -> i.startsWith("io.grpc."));
+
+        // Index all methods declared in this compilation unit for local fallback/handler inspection
+        var methodsByName = new HashMap<String, List<MethodDeclaration>>();
+        for (MethodDeclaration md : cu.findAll(MethodDeclaration.class)) {
+            methodsByName.computeIfAbsent(md.getNameAsString(), k -> new ArrayList<>()).add(md);
+        }
+
+        var summaries = new ArrayList<MethodErrorSummary>();
+        for (MethodDeclaration md : cu.findAll(MethodDeclaration.class)) {
+            if (safeSig.isPresent() && !matchesSignature(md, safeSig.get(), normalizeSig(safeSig.get()))) {
+                continue;
+            }
+            if (md.getBody().isEmpty()) {
+                continue;
+            }
+            summarizeJavaMethod(
+                    safePath, md, importsFeign, importsGrpc, methodsByName, includeInternalCalls, summaries);
+        }
+
+        summaries.sort(Comparator.comparingInt(MethodErrorSummary::line)
+                .thenComparing(MethodErrorSummary::methodId)
+                .thenComparing(MethodErrorSummary::callsiteId));
+        List<MethodErrorSummary> immutable = List.copyOf(summaries);
+        ERROR_SUMMARY_CACHE.put(cacheKey, immutable);
+        return immutable;
+    }
+
+    private record JavaOutboundCall(
+            MethodCallExpr expr,
+            String targetCall,
+            String protocol,
+            Set<String> baseExceptions
+    ) {}
+
+    private static void summarizeJavaMethod(
+            String path,
+            MethodDeclaration md,
+            boolean importsFeign,
+            boolean importsGrpc,
+            Map<String, List<MethodDeclaration>> methodsByName,
+            boolean includeInternalCalls,
+            List<MethodErrorSummary> out) {
+        BlockStmt body = md.getBody().orElseThrow();
+        String ownerClass = md.findAncestor(TypeDeclaration.class)
+                .map(rawOwner -> ((TypeDeclaration<?>) rawOwner).getNameAsString())
+                .orElse("");
+        String methodId = (ownerClass.isEmpty() ? path + "#" : path + "#" + ownerClass + ".")
+                + md.getSignature().asString();
+
+        // Build CFG/DFG/CDG over method body to support reaching-def & exit-path checks
+        Set<String> enclosingFields = collectEnclosingFields(md);
+        Set<String> paramNames = new LinkedHashSet<>();
+        var varTypes = new HashMap<String, String>();
+        var varAnnotations = new HashMap<String, Set<String>>();
+        collectVariableTypes(md, varTypes, varAnnotations);
+        for (Parameter p : md.getParameters()) {
+            paramNames.add(p.getNameAsString());
+        }
+        var graphBuilder = new IntraMethodGraphBuilder(enclosingFields, paramNames);
+        graphBuilder.buildBody(body, -1);
+        Map<Integer, Set<Integer>> dataDeps = graphBuilder.computeDataDependencies();
+
+        // Verify counterfactual D1.3 (at least one normal Ok return path exists when error branch not taken)
+        boolean counterfactualOk = hasCounterfactualNormalOkPath(md, body);
+
+        // Check method-level @CircuitBreaker / @Retry / @Bulkhead / @TimeLimiter fallbackMethod annotations
+        Optional<ResilienceFallbackInfo> resilienceFallback = detectResilienceAnnotationFallback(md, methodsByName);
+
+        // Detect outbound RPC/HTTP calls (plus optional internal calls)
+        var detectedCalls = new ArrayList<JavaOutboundCall>();
+        var visitedWebClientRoots = new HashSet<Integer>();
+        for (MethodCallExpr call : body.findAll(MethodCallExpr.class)) {
+            Optional<JavaOutboundCall> classified = classifyJavaCall(
+                    call, varTypes, varAnnotations, importsFeign, importsGrpc, includeInternalCalls, visitedWebClientRoots);
+            classified.ifPresent(detectedCalls::add);
+        }
+
+        for (JavaOutboundCall call : detectedCalls) {
+            int line = call.expr().getBegin().map(p -> p.line).orElse(1);
+            int endLine = call.expr().getEnd().map(p -> p.line).orElse(line);
+            String callsiteId = path + ":" + line + "#" + call.targetCall();
+
+            MethodErrorSummary summary = analyzeJavaCallPropagation(
+                    methodId,
+                    callsiteId,
+                    path,
+                    line,
+                    endLine,
+                    call,
+                    md,
+                    body,
+                    graphBuilder,
+                    dataDeps,
+                    counterfactualOk,
+                    resilienceFallback,
+                    methodsByName);
+            out.add(summary);
+        }
+    }
+
+    private record ResilienceFallbackInfo(
+            String annotationName,
+            String fallbackMethodName,
+            boolean fallbackPropagatesError,
+            boolean fallbackOpaque,
+            Optional<ExceptionTransformation> transformation
+    ) {}
+
+    private static Optional<ResilienceFallbackInfo> detectResilienceAnnotationFallback(
+            MethodDeclaration md,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+        for (AnnotationExpr ann : md.getAnnotations()) {
+            String annName = ann.getName().getIdentifier();
+            if (!Set.of("CircuitBreaker", "Retry", "Bulkhead", "TimeLimiter", "HystrixCommand").contains(annName)) {
+                continue;
+            }
+            Optional<String> fbNameOpt = extractAnnotationStringAttr(ann, "fallbackMethod");
+            if (fbNameOpt.isEmpty()) continue;
+            String fbName = fbNameOpt.get();
+            List<MethodDeclaration> fbDecls = methodsByName.getOrDefault(fbName, List.of());
+            if (fbDecls.isEmpty()) {
+                // Declared Resilience4j fallback (e.g. inherited or external stub) -> fail-open fallback
+                return Optional.of(new ResilienceFallbackInfo(annName, fbName, false, false, Optional.empty()));
+            }
+            MethodDeclaration fbMethod = fbDecls.getFirst();
+            if (fbMethod.getBody().isEmpty()) {
+                return Optional.of(new ResilienceFallbackInfo(annName, fbName, false, true, Optional.empty()));
+            }
+            BlockStmt fbBody = fbMethod.getBody().get();
+            if (blockThrowsOrReturns5xx(fbBody)) {
+                String targetEx = extractFirstThrownOr5xx(fbBody);
+                return Optional.of(new ResilienceFallbackInfo(
+                        annName, fbName, true, false,
+                        Optional.of(new ExceptionTransformation("Throwable", targetEx, annName.toUpperCase(Locale.ROOT) + "_FALLBACK_ERROR"))));
+            }
+            return Optional.of(new ResilienceFallbackInfo(annName, fbName, false, false, Optional.empty()));
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<String> extractAnnotationStringAttr(AnnotationExpr ann, String attrName) {
+        if (ann instanceof NormalAnnotationExpr normal) {
+            for (MemberValuePair pair : normal.getPairs()) {
+                if (attrName.equals(pair.getNameAsString()) && pair.getValue() instanceof StringLiteralExpr lit) {
+                    String val = lit.getValue().strip();
+                    if (!val.isEmpty()) return Optional.of(val);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static MethodErrorSummary analyzeJavaCallPropagation(
+            String methodId,
+            String callsiteId,
+            String path,
+            int line,
+            int endLine,
+            JavaOutboundCall call,
+            MethodDeclaration md,
+            BlockStmt body,
+            IntraMethodGraphBuilder graphBuilder,
+            Map<Integer, Set<Integer>> dataDeps,
+            boolean counterfactualOk,
+            Optional<ResilienceFallbackInfo> resilienceFallback,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+
+        var activeExceptions = new TreeSet<String>(call.baseExceptions());
+        var transformations = new ArrayList<ExceptionTransformation>();
+        boolean opaque = false;
+        String opaqueReason = null;
+        String fallbackMechanism = null;
+
+        // 1. Check CompletableFuture / Reactor async error handlers chained on this call or its assigned variable
+        AsyncHandlerOutcome asyncOutcome = inspectAsyncHandlers(call.expr(), body, methodsByName);
+        if (asyncOutcome.matched()) {
+            if (asyncOutcome.opaque()) {
+                return new MethodErrorSummary(
+                        "java", methodId, callsiteId, path, line, endLine,
+                        call.targetCall(), call.protocol(), call.baseExceptions(),
+                        activeExceptions, transformations,
+                        PropagationDisposition.UNKNOWN_OPAQUE, counterfactualOk,
+                        false, false, true,
+                        Optional.of(FailCloseResilienceAnalyzer.GAP_REASON_UNKNOWN_ASYNC),
+                        Optional.empty(), TrustTier.SOURCE_SYNTAX);
+            }
+            if (asyncOutcome.suppressed()) {
+                return new MethodErrorSummary(
+                        "java", methodId, callsiteId, path, line, endLine,
+                        call.targetCall(), call.protocol(), call.baseExceptions(),
+                        Set.of(), transformations,
+                        PropagationDisposition.SUPPRESSED_FAIL_OPEN, counterfactualOk,
+                        false, false, false,
+                        Optional.empty(),
+                        Optional.of(asyncOutcome.mechanism()),
+                        TrustTier.SOURCE_SYNTAX);
+            }
+            if (asyncOutcome.transformation().isPresent()) {
+                ExceptionTransformation tr = asyncOutcome.transformation().get();
+                transformations.add(tr);
+                activeExceptions.clear();
+                activeExceptions.add(tr.targetException());
+            }
+        }
+
+        // 2. Walk enclosing TryStmt blocks (innermost -> outermost) when call is inside try-block or try-resources
+        Node cur = call.expr();
+        while (cur != null && cur != md) {
+            Optional<Node> parentOpt = cur.getParentNode();
+            if (parentOpt.isEmpty()) break;
+            Node parent = parentOpt.get();
+            if (parent instanceof TryStmt tryStmt && isInsideTryProtectedRegion(cur, tryStmt)) {
+                var remainingAfterTry = new TreeSet<String>(activeExceptions);
+                var newlyAdded = new TreeSet<String>();
+                for (CatchClause cc : tryStmt.getCatchClauses()) {
+                    List<String> caughtTypes = extractCaughtExceptionTypes(cc);
+                    var matched = new TreeSet<String>();
+                    for (String ex : List.copyOf(remainingAfterTry)) {
+                        for (String ct : caughtTypes) {
+                            if (FailCloseResilienceAnalyzer.exceptionMatches(ct, ex)) {
+                                matched.add(ex);
+                                break;
+                            }
+                        }
+                    }
+                    if (matched.isEmpty()) continue;
+                    remainingAfterTry.removeAll(matched);
+
+                    CatchOutcome outcome = inspectCatchClause(cc, methodsByName);
+                    if (outcome.opaque()) {
+                        opaque = true;
+                        opaqueReason = "OPAQUE_CATCH_HANDLER:" + outcome.detail();
+                        newlyAdded.addAll(matched);
+                    } else if (outcome.rethrowsSame()) {
+                        newlyAdded.addAll(matched);
+                    } else if (outcome.wrapsToException().isPresent()) {
+                        String targetEx = outcome.wrapsToException().get();
+                        for (String srcEx : matched) {
+                            transformations.add(new ExceptionTransformation(srcEx, targetEx, "CATCH_WRAP_RETHROW"));
+                        }
+                        newlyAdded.add(targetEx);
+                    } else if (outcome.returnsHttp5xx()) {
+                        for (String srcEx : matched) {
+                            transformations.add(new ExceptionTransformation(srcEx, "HTTP_5XX", "CATCH_HTTP_5XX_RETURN"));
+                        }
+                        newlyAdded.add("HTTP_5XX");
+                    } else {
+                        // Suppressed with default / fallback value
+                        fallbackMechanism = "TRY_CATCH_DEFAULT";
+                    }
+                }
+                activeExceptions.clear();
+                activeExceptions.addAll(remainingAfterTry);
+                activeExceptions.addAll(newlyAdded);
+            }
+            cur = parent;
+        }
+
+        // 3. Apply method-level @CircuitBreaker / @Retry fallback if exceptions still escape try/catch
+        if (!activeExceptions.isEmpty() && !opaque && resilienceFallback.isPresent()) {
+            ResilienceFallbackInfo fb = resilienceFallback.get();
+            if (fb.fallbackOpaque()) {
+                opaque = true;
+                opaqueReason = "OPAQUE_ANNOTATION_FALLBACK:" + fb.fallbackMethodName();
+            } else if (fb.fallbackPropagatesError()) {
+                fb.transformation().ifPresent(tr -> {
+                    transformations.add(tr);
+                    activeExceptions.clear();
+                    activeExceptions.add(tr.targetException());
+                });
+            } else {
+                activeExceptions.clear();
+                String prefix = switch (fb.annotationName()) {
+                    case "CircuitBreaker" -> "CIRCUIT_BREAKER_FALLBACK";
+                    case "Retry" -> "RETRY_FALLBACK";
+                    default -> "ANNOTATION_FALLBACK_" + fb.annotationName().toUpperCase(Locale.ROOT);
+                };
+                fallbackMechanism = prefix + ":" + fb.fallbackMethodName();
+            }
+        }
+
+        // 4. Determine final intra-method disposition
+        if (opaque) {
+            return new MethodErrorSummary(
+                    "java", methodId, callsiteId, path, line, endLine,
+                    call.targetCall(), call.protocol(), call.baseExceptions(),
+                    activeExceptions, transformations,
+                    PropagationDisposition.UNKNOWN_OPAQUE, counterfactualOk,
+                    false, false, true,
+                    Optional.ofNullable(opaqueReason),
+                    Optional.empty(), TrustTier.SOURCE_SYNTAX);
+        }
+        if (activeExceptions.isEmpty()) {
+            return new MethodErrorSummary(
+                    "java", methodId, callsiteId, path, line, endLine,
+                    call.targetCall(), call.protocol(), call.baseExceptions(),
+                    Set.of(), transformations,
+                    PropagationDisposition.SUPPRESSED_FAIL_OPEN, counterfactualOk,
+                    false, false, false,
+                    Optional.empty(),
+                    Optional.ofNullable(fallbackMechanism == null ? "TRY_CATCH_DEFAULT" : fallbackMechanism),
+                    TrustTier.SOURCE_SYNTAX);
+        }
+
+        // Also check DFG/CFG if response variable from this call is checked for 5xx error status and re-returned as 5xx
+        boolean responseReturns5xx = isReturnHttp5xxInEnclosingReturn(call.expr());
+        if (responseReturns5xx && !activeExceptions.contains("HTTP_5XX")) {
+            activeExceptions.add("HTTP_5XX");
+        }
+
+        return new MethodErrorSummary(
+                "java", methodId, callsiteId, path, line, endLine,
+                call.targetCall(), call.protocol(), call.baseExceptions(),
+                activeExceptions, transformations,
+                PropagationDisposition.PROPAGATES_ERROR, counterfactualOk,
+                false, false, false,
+                Optional.empty(), Optional.empty(), TrustTier.SOURCE_SYNTAX);
+    }
+
+    private record AsyncHandlerOutcome(
+            boolean matched,
+            boolean suppressed,
+            boolean opaque,
+            String mechanism,
+            Optional<ExceptionTransformation> transformation
+    ) {
+        static AsyncHandlerOutcome none() {
+            return new AsyncHandlerOutcome(false, false, false, "", Optional.empty());
+        }
+    }
+
+    private static AsyncHandlerOutcome inspectAsyncHandlers(
+            MethodCallExpr call,
+            BlockStmt methodBody,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+        // Walk up fluent chain enclosing `call` (e.g. `client.fetchAsync().exceptionally(ex -> fallback)`)
+        var chainedCalls = new ArrayList<MethodCallExpr>();
+        Node cur = call.getParentNode().orElse(null);
+        while (cur instanceof MethodCallExpr parentCall) {
+            chainedCalls.add(parentCall);
+            cur = parentCall.getParentNode().orElse(null);
+        }
+
+        // Also check if `call` is assigned to a local variable (`CompletableFuture<X> f = ...; f.exceptionally(...)`)
+        String assignedVar = findAssignedLocalVarName(call);
+        if (assignedVar != null) {
+            for (MethodCallExpr mc : methodBody.findAll(MethodCallExpr.class)) {
+                if (mc.getScope().isPresent() && mc.getScope().get() instanceof NameExpr ne
+                        && ne.getNameAsString().equals(assignedVar)) {
+                    chainedCalls.add(mc);
+                }
+            }
+        }
+
+        for (MethodCallExpr chained : chainedCalls) {
+            String m = chained.getNameAsString();
+            if (Set.of("exceptionally", "exceptionallyAsync", "exceptionallyCompose", "handle", "handleAsync").contains(m)) {
+                if (chained.getArguments().isEmpty()) {
+                    return new AsyncHandlerOutcome(true, false, true, "COMPLETABLE_FUTURE_" + m.toUpperCase(Locale.ROOT), Optional.empty());
+                }
+                Expression arg = chained.getArgument(0);
+                return classifyAsyncHandlerArg(arg, "COMPLETABLE_FUTURE_" + m.toUpperCase(Locale.ROOT), methodsByName);
+            }
+            if ("onErrorReturn".equals(m) || "onErrorComplete".equals(m)) {
+                return new AsyncHandlerOutcome(true, true, false, "WEBCLIENT_ON_ERROR_RETURN", Optional.empty());
+            }
+            if ("onErrorResume".equals(m)) {
+                if (chained.getArguments().isEmpty()) {
+                    return new AsyncHandlerOutcome(true, false, true, "WEBCLIENT_ON_ERROR_RESUME", Optional.empty());
+                }
+                return classifyAsyncHandlerArg(chained.getArgument(0), "WEBCLIENT_ON_ERROR_RESUME", methodsByName);
+            }
+            if ("onErrorMap".equals(m)) {
+                return new AsyncHandlerOutcome(true, false, false, "WEBCLIENT_ON_ERROR_MAP",
+                        Optional.of(new ExceptionTransformation("WebClientException", "MappedException", "WEBCLIENT_ON_ERROR_MAP")));
+            }
+        }
+        return AsyncHandlerOutcome.none();
+    }
+
+    private static AsyncHandlerOutcome classifyAsyncHandlerArg(
+            Expression arg,
+            String mechanism,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+        if (arg instanceof LambdaExpr lambda) {
+            Statement lBody = lambda.getBody();
+            if (lBody instanceof BlockStmt blk) {
+                if (blockThrowsOrReturns5xx(blk)) {
+                    String target = extractFirstThrownOr5xx(blk);
+                    return new AsyncHandlerOutcome(true, false, false, mechanism,
+                            Optional.of(new ExceptionTransformation("CompletionException", target, mechanism + "_ERROR")));
+                }
+                if (containsOpaqueHandlerCall(blk, lambdaParamNames(lambda), methodsByName)) {
+                    return new AsyncHandlerOutcome(true, false, true, mechanism, Optional.empty());
+                }
+                return new AsyncHandlerOutcome(true, true, false, mechanism, Optional.empty());
+            }
+            if (lBody instanceof ExpressionStmt es) {
+                Expression expr = es.getExpression();
+                if (isHttp5xxExpression(expr)) {
+                    return new AsyncHandlerOutcome(true, false, false, mechanism,
+                            Optional.of(new ExceptionTransformation("CompletionException", "HTTP_5XX", mechanism + "_HTTP_5XX")));
+                }
+                if (isOpaqueSingleExpressionHandler(expr, lambdaParamNames(lambda), methodsByName)) {
+                    return new AsyncHandlerOutcome(true, false, true, mechanism, Optional.empty());
+                }
+                return new AsyncHandlerOutcome(true, true, false, mechanism, Optional.empty());
+            }
+            return new AsyncHandlerOutcome(true, false, true, mechanism, Optional.empty());
+        }
+        if (arg instanceof MethodReferenceExpr mref) {
+            String refMethod = mref.getIdentifier();
+            List<MethodDeclaration> localDecls = methodsByName.getOrDefault(refMethod, List.of());
+            if (!localDecls.isEmpty() && localDecls.getFirst().getBody().isPresent()) {
+                BlockStmt blk = localDecls.getFirst().getBody().get();
+                if (blockThrowsOrReturns5xx(blk)) {
+                    return new AsyncHandlerOutcome(true, false, false, mechanism,
+                            Optional.of(new ExceptionTransformation("CompletionException", extractFirstThrownOr5xx(blk), mechanism + "_ERROR")));
+                }
+                return new AsyncHandlerOutcome(true, true, false, mechanism, Optional.empty());
+            }
+            // External/library method reference -> opaque async handler gap (I3)
+            return new AsyncHandlerOutcome(true, false, true, mechanism, Optional.empty());
+        }
+        // Arbitrary Function/BiFunction variable or factory expression -> opaque async handler gap (I3)
+        return new AsyncHandlerOutcome(true, false, true, mechanism, Optional.empty());
+    }
+
+    private static Set<String> lambdaParamNames(LambdaExpr lambda) {
+        var names = new HashSet<String>();
+        for (Parameter p : lambda.getParameters()) {
+            names.add(p.getNameAsString());
+        }
+        return names;
+    }
+
+    private static boolean isOpaqueSingleExpressionHandler(
+            Expression expr,
+            Set<String> errorParams,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+        if (!(expr instanceof MethodCallExpr mc)) {
+            return false;
+        }
+        String mName = mc.getNameAsString();
+        if (methodsByName.containsKey(mName)) {
+            return false;
+        }
+        if (Set.of("empty", "emptyList", "emptyMap", "emptySet", "of", "ofNullable", "ok", "just", "defaultValue").contains(mName)) {
+            return false;
+        }
+        // Passing the exception parameter into an unresolved external method call -> opaque async handler
+        for (Expression a : mc.getArguments()) {
+            for (NameExpr ne : a.findAll(NameExpr.class)) {
+                if (errorParams.contains(ne.getNameAsString())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private record CatchOutcome(
+            boolean rethrowsSame,
+            Optional<String> wrapsToException,
+            boolean returnsHttp5xx,
+            boolean opaque,
+            String detail
+    ) {}
+
+    private static CatchOutcome inspectCatchClause(
+            CatchClause cc,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+        BlockStmt catchBody = cc.getBody();
+        String catchVar = cc.getParameter().getNameAsString();
+
+        // 1. Check ThrowStmt inside catch body
+        List<ThrowStmt> throwsInCatch = catchBody.findAll(ThrowStmt.class);
+        for (ThrowStmt ts : throwsInCatch) {
+            Expression thrown = ts.getExpression();
+            if (thrown instanceof NameExpr ne && ne.getNameAsString().equals(catchVar)) {
+                return new CatchOutcome(true, Optional.empty(), false, false, "rethrow");
+            }
+            if (thrown instanceof ObjectCreationExpr oce) {
+                String exType = oce.getType().getNameWithScope();
+                return new CatchOutcome(false, Optional.of(exType), false, false, "wrap:" + exType);
+            }
+            if (thrown instanceof MethodCallExpr mc) {
+                if (!methodsByName.containsKey(mc.getNameAsString())) {
+                    return new CatchOutcome(false, Optional.empty(), false, true, mc.toString());
+                }
+                return new CatchOutcome(false, Optional.of("RuntimeException"), false, false, "wrap-call");
+            }
+            return new CatchOutcome(false, Optional.of("RuntimeException"), false, false, "throw");
+        }
+
+        // 2. Check HTTP 5xx return or response write inside catch body
+        if (containsHttp5xx(catchBody)) {
+            return new CatchOutcome(false, Optional.empty(), true, false, "HTTP_5XX");
+        }
+
+        // 3. Check opaque external handler delegation passing catchVar (excluding loggers/metrics)
+        if (containsOpaqueHandlerCall(catchBody, Set.of(catchVar), methodsByName)) {
+            return new CatchOutcome(false, Optional.empty(), false, true, "opaque-catch-delegation");
+        }
+
+        // 4. Suppressed with default/fallback
+        return new CatchOutcome(false, Optional.empty(), false, false, "suppressed");
+    }
+
+    private static boolean containsOpaqueHandlerCall(
+            BlockStmt block,
+            Set<String> errorVarNames,
+            Map<String, List<MethodDeclaration>> methodsByName) {
+        for (MethodCallExpr mc : block.findAll(MethodCallExpr.class)) {
+            String methodName = mc.getNameAsString();
+            if (LOGGING_OR_METRICS_METHODS.contains(methodName)) continue;
+            if (mc.getScope().isPresent()) {
+                String scopeLower = mc.getScope().get().toString().toLowerCase(Locale.ROOT);
+                if (LOGGING_OR_METRICS_RECEIVERS.stream().anyMatch(scopeLower::contains)) {
+                    continue;
+                }
+            }
+            if (methodsByName.containsKey(methodName)) {
+                continue; // Local method in same compilation unit
+            }
+            boolean passesErrorVar = false;
+            for (Expression arg : mc.getArguments()) {
+                for (NameExpr ne : arg.findAll(NameExpr.class)) {
+                    if (errorVarNames.contains(ne.getNameAsString())) {
+                        passesErrorVar = true;
+                        break;
+                    }
+                }
+                if (passesErrorVar) break;
+            }
+            if (passesErrorVar) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasCounterfactualNormalOkPath(MethodDeclaration md, BlockStmt body) {
+        // Check if normal execution (excluding catch blocks) has at least one non-throwing, non-5xx return/exit.
+        var normalReturns = new ArrayList<ReturnStmt>();
+        collectStatementsOutsideCatch(body, normalReturns, ReturnStmt.class);
+
+        if (md.getType().isVoidType()) {
+            // Void method: verify top-level body does not unconditionally throw or unconditionally send 5xx
+            boolean topUnconditionalThrow = false;
+            for (Statement s : body.getStatements()) {
+                if (s instanceof ThrowStmt) {
+                    topUnconditionalThrow = true;
+                    break;
+                }
+                if (s instanceof ExpressionStmt es && isHttp5xxExpression(es.getExpression())) {
+                    topUnconditionalThrow = true;
+                    break;
+                }
+            }
+            return !topUnconditionalThrow;
+        }
+
+        if (normalReturns.isEmpty()) {
+            return false;
+        }
+        for (ReturnStmt ret : normalReturns) {
+            if (ret.getExpression().isEmpty()) return true;
+            if (!isHttp5xxExpression(ret.getExpression().get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static <T extends Statement> void collectStatementsOutsideCatch(Node root, List<T> out, Class<T> targetClass) {
+        if (root instanceof CatchClause) {
+            return;
+        }
+        if (targetClass.isInstance(root)) {
+            out.add(targetClass.cast(root));
+        }
+        for (Node child : root.getChildNodes()) {
+            collectStatementsOutsideCatch(child, out, targetClass);
+        }
+    }
+
+    private static boolean blockThrowsOrReturns5xx(BlockStmt block) {
+        return !block.findAll(ThrowStmt.class).isEmpty() || containsHttp5xx(block);
+    }
+
+    private static String extractFirstThrownOr5xx(BlockStmt block) {
+        List<ThrowStmt> throwsList = block.findAll(ThrowStmt.class);
+        if (!throwsList.isEmpty()) {
+            Expression e = throwsList.getFirst().getExpression();
+            if (e instanceof ObjectCreationExpr oce) {
+                return oce.getType().getNameWithScope();
+            }
+            return "RuntimeException";
+        }
+        if (containsHttp5xx(block)) {
+            return "HTTP_5XX";
+        }
+        return "RuntimeException";
+    }
+
+    private static boolean containsHttp5xx(Node node) {
+        for (ReturnStmt ret : node.findAll(ReturnStmt.class)) {
+            if (ret.getExpression().isPresent() && isHttp5xxExpression(ret.getExpression().get())) {
+                return true;
+            }
+        }
+        for (MethodCallExpr mc : node.findAll(MethodCallExpr.class)) {
+            String name = mc.getNameAsString();
+            if (("sendError".equals(name) || "setStatus".equals(name)) && has5xxArgument(mc)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isReturnHttp5xxInEnclosingReturn(Expression expr) {
+        Node cur = expr;
+        while (cur != null) {
+            if (cur instanceof ReturnStmt ret && ret.getExpression().isPresent()) {
+                return isHttp5xxExpression(ret.getExpression().get());
+            }
+            if (cur instanceof Statement) break;
+            cur = cur.getParentNode().orElse(null);
+        }
+        return false;
+    }
+
+    private static boolean isHttp5xxExpression(Expression expr) {
+        if (expr == null) return false;
+        String text = expr.toString();
+        if (text.contains("internalServerError(")) {
+            return true;
+        }
+        for (String statusConst : HTTP_5XX_STATUS_CONSTANTS) {
+            if (text.contains(statusConst)) {
+                return true;
+            }
+        }
+        for (MethodCallExpr mc : expr.findAll(MethodCallExpr.class)) {
+            String name = mc.getNameAsString();
+            if ("internalServerError".equals(name)) {
+                return true;
+            }
+            if (("status".equals(name) || "statusCode".equals(name) || "sendError".equals(name) || "setStatus".equals(name))
+                    && has5xxArgument(mc)) {
+                return true;
+            }
+        }
+        for (ObjectCreationExpr oce : expr.findAll(ObjectCreationExpr.class)) {
+            String typeName = oce.getType().getNameAsString();
+            if (typeName.contains("ResponseEntity") || typeName.contains("ResponseStatusException")) {
+                for (Expression arg : oce.getArguments()) {
+                    if (is5xxStatusExpr(arg)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean has5xxArgument(MethodCallExpr mc) {
+        for (Expression arg : mc.getArguments()) {
+            if (is5xxStatusExpr(arg)) return true;
+        }
+        return false;
+    }
+
+    private static boolean is5xxStatusExpr(Expression arg) {
+        if (arg instanceof IntegerLiteralExpr ile) {
+            try {
+                int code = Integer.parseInt(ile.getValue());
+                return code >= 500 && code <= 599;
+            } catch (NumberFormatException ignored) {
+                return false;
+            }
+        }
+        String text = arg.toString();
+        for (String statusConst : HTTP_5XX_STATUS_CONSTANTS) {
+            if (text.contains(statusConst)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isInsideTryProtectedRegion(Node node, TryStmt tryStmt) {
+        if (isDescendantOf(node, tryStmt.getTryBlock())) {
+            return true;
+        }
+        for (Expression res : tryStmt.getResources()) {
+            if (isDescendantOf(node, res)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isDescendantOf(Node node, Node ancestor) {
+        Node cur = node;
+        while (cur != null) {
+            if (cur == ancestor) return true;
+            cur = cur.getParentNode().orElse(null);
+        }
+        return false;
+    }
+
+    private static List<String> extractCaughtExceptionTypes(CatchClause cc) {
+        var types = new ArrayList<String>();
+        var paramType = cc.getParameter().getType();
+        if (paramType instanceof UnionType ut) {
+            ut.getElements().forEach(t -> types.add(t.asString()));
+        } else {
+            types.add(paramType.asString());
+        }
+        return types;
+    }
+
+    private static String findAssignedLocalVarName(Expression expr) {
+        Node cur = expr;
+        while (cur != null) {
+            if (cur instanceof VariableDeclarator vd) {
+                return vd.getNameAsString();
+            }
+            if (cur instanceof AssignExpr ae && ae.getTarget() instanceof NameExpr ne) {
+                return ne.getNameAsString();
+            }
+            if (cur instanceof Statement) break;
+            cur = cur.getParentNode().orElse(null);
+        }
+        return null;
+    }
+
+    private static void collectVariableTypes(
+            MethodDeclaration md,
+            Map<String, String> varTypes,
+            Map<String, Set<String>> varAnnotations) {
+        md.findAncestor(TypeDeclaration.class).ifPresent(rawOwner -> {
+            TypeDeclaration<?> owner = (TypeDeclaration<?>) rawOwner;
+            for (BodyDeclaration<?> member : owner.getMembers()) {
+                if (member instanceof FieldDeclaration fd) {
+                    String typeStr = fd.getCommonType().asString();
+                    var anns = new LinkedHashSet<String>();
+                    fd.getAnnotations().forEach(a -> anns.add(a.getName().getIdentifier()));
+                    for (VariableDeclarator vd : fd.getVariables()) {
+                        varTypes.put(vd.getNameAsString(), typeStr);
+                        varAnnotations.put(vd.getNameAsString(), anns);
+                    }
+                }
+            }
+            if (owner instanceof RecordDeclaration rd) {
+                for (Parameter comp : rd.getParameters()) {
+                    varTypes.put(comp.getNameAsString(), comp.getTypeAsString());
+                }
+            }
+        });
+        for (Parameter p : md.getParameters()) {
+            varTypes.put(p.getNameAsString(), p.getTypeAsString());
+        }
+        md.getBody().ifPresent(body -> {
+            for (VariableDeclarator vd : body.findAll(VariableDeclarator.class)) {
+                varTypes.put(vd.getNameAsString(), vd.getTypeAsString());
+            }
+        });
+    }
+
+    private static Optional<JavaOutboundCall> classifyJavaCall(
+            MethodCallExpr call,
+            Map<String, String> varTypes,
+            Map<String, Set<String>> varAnnotations,
+            boolean importsFeign,
+            boolean importsGrpc,
+            boolean includeInternalCalls,
+            Set<Integer> visitedWebClientRoots) {
+        String methodName = call.getNameAsString();
+        if (call.getScope().isEmpty()) {
+            return Optional.empty();
+        }
+        Expression scope = call.getScope().get();
+
+        // 1. WebClient fluent chain (detect once at retrieve/exchange/bodyToMono/bodyToFlux/toEntity)
+        if (WEB_CLIENT_TERMINAL_METHODS.contains(methodName)) {
+            String rootScope = rootReceiverIdentifier(scope);
+            String rootType = rootScope != null ? varTypes.getOrDefault(rootScope, "") : "";
+            String scopeStr = scope.toString();
+            if (rootType.contains("WebClient") || scopeStr.contains("webClient") || scopeStr.contains("WebClient.")) {
+                int rootId = System.identityHashCode(findRootExpression(call));
+                if (visitedWebClientRoots.add(rootId)) {
+                    String target = (rootScope != null ? rootScope : "webClient") + "." + methodName;
+                    return Optional.of(new JavaOutboundCall(
+                            call, target, "WEB_CLIENT",
+                            Set.of("WebClientResponseException", "WebClientRequestException", "WebClientException")));
+                }
+                return Optional.empty();
+            }
+        }
+
+        String receiver = directReceiverName(scope);
+        if (receiver == null || receiver.isEmpty()) {
+            return Optional.empty();
+        }
+        String recvLower = receiver.toLowerCase(Locale.ROOT);
+        if (LOGGING_OR_METRICS_RECEIVERS.contains(recvLower) || LOGGING_OR_METRICS_METHODS.contains(methodName)) {
+            return Optional.empty();
+        }
+        String recvType = varTypes.getOrDefault(receiver, "");
+        String recvTypeLower = recvType.toLowerCase(Locale.ROOT);
+        Set<String> recvAnns = varAnnotations.getOrDefault(receiver, Set.of());
+        String target = receiver + "." + methodName;
+
+        // 2. RestTemplate / RestClient
+        if (recvType.contains("RestTemplate") || recvType.contains("RestClient")
+                || recvLower.contains("resttemplate") || recvLower.contains("restclient")
+                || (REST_TEMPLATE_METHODS.contains(methodName) && (recvLower.contains("rest") || recvLower.contains("http")))) {
+            return Optional.of(new JavaOutboundCall(
+                    call, target, "REST_TEMPLATE",
+                    Set.of("RestClientException", "HttpStatusCodeException", "ResourceAccessException")));
+        }
+
+        // 3. gRPC Stub
+        if (recvType.endsWith("BlockingStub") || recvType.endsWith("FutureStub") || recvType.endsWith("Stub")
+                || recvLower.endsWith("stub") || recvLower.contains("grpc")
+                || (importsGrpc && (recvLower.contains("client") || recvTypeLower.contains("stub")))) {
+            return Optional.of(new JavaOutboundCall(
+                    call, target, "GRPC_STUB",
+                    Set.of("StatusRuntimeException")));
+        }
+
+        // 4. Feign Client
+        if (recvAnns.contains("FeignClient") || recvTypeLower.contains("feign")
+                || (importsFeign && (recvType.endsWith("Client") || recvLower.endsWith("client")))
+                || (recvType.endsWith("Client") && !recvType.contains("HttpClient") && !recvType.contains("WebClient"))
+                || (recvLower.endsWith("client") && !recvLower.contains("httpclient") && !recvLower.contains("webclient"))) {
+            return Optional.of(new JavaOutboundCall(
+                    call, target, "FEIGN",
+                    Set.of("FeignException", "RetryableException")));
+        }
+
+        // 5. Generic HTTP Client (java.net.http.HttpClient, OkHttpClient, CloseableHttpClient)
+        if (recvType.contains("HttpClient") || recvType.contains("OkHttpClient")
+                || recvLower.contains("httpclient")
+                || (HTTP_CLIENT_METHODS.contains(methodName) && recvLower.contains("http"))) {
+            return Optional.of(new JavaOutboundCall(
+                    call, target, "HTTP_CLIENT",
+                    Set.of("IOException", "HttpConnectTimeoutException")));
+        }
+
+        // 6. Optional intra-service method calls for intermediate backward composition
+        if (includeInternalCalls && !Character.isUpperCase(receiver.charAt(0))
+                && !Set.of("exceptionally", "exceptionallyAsync", "handle", "handleAsync", "thenApply", "thenCompose",
+                "join", "get", "block", "map", "flatMap", "onErrorReturn", "onErrorResume", "onErrorComplete")
+                .contains(methodName)) {
+            return Optional.of(new JavaOutboundCall(
+                    call, target, "METHOD_CALL",
+                    Set.of("RuntimeException", "Exception")));
+        }
+
+        return Optional.empty();
+    }
+
+    private static String directReceiverName(Expression scope) {
+        if (scope instanceof EnclosedExpr enc) return directReceiverName(enc.getInner());
+        if (scope instanceof NameExpr ne) return ne.getNameAsString();
+        if (scope instanceof FieldAccessExpr fa && fa.getScope() instanceof ThisExpr) {
+            return fa.getNameAsString();
+        }
+        return null;
+    }
+
+    private static String rootReceiverIdentifier(Expression scope) {
+        Expression cur = scope;
+        while (cur instanceof MethodCallExpr mc && mc.getScope().isPresent()) {
+            cur = mc.getScope().get();
+        }
+        return directReceiverName(cur);
+    }
+
+    private static Expression findRootExpression(MethodCallExpr call) {
+        Expression cur = call;
+        while (cur instanceof MethodCallExpr mc && mc.getScope().isPresent()) {
+            cur = mc.getScope().get();
+        }
+        return cur;
     }
 }

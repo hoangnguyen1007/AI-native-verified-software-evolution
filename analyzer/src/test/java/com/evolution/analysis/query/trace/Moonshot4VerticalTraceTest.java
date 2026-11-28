@@ -171,6 +171,24 @@ class Moonshot4VerticalTraceTest {
         assertTrue(json.contains("\"direction\":\"BACKWARD\""));
     }
 
+    @Test
+    void verticalTraceFailCloseCompositionAndFlamegraphPreserveGraphDigest() {
+        var fixture = buildFullStackFixture();
+        KnowledgeGraph graph = fixture.graph;
+        ContentDigest before = graph.identity();
+
+        VerticalTraceResult trace = VerticalTraceEngine.trace(
+                graph, TraceRequest.defaults(fixture.javaContext, "OrderController"));
+        var report = VerticalTraceEngine.traceFailClosePathsForSeed(
+                graph, TraceRequest.defaults(fixture.javaContext, "OrderController"), Map.of());
+        Map<String, Object> flamegraph = VerticalTraceEngine.buildCallPathFlamegraph(trace, report);
+
+        assertEquals(before, graph.identity());
+        assertEquals("SOURCE_SYNTAX", flamegraph.get("trustTier"));
+        assertTrue(flamegraph.get("chain").toString().contains("OrderController.java:10"));
+        assertNotNull(flamegraph.get("resilienceVerdict"));
+    }
+
     private static TraceHop hopByLayer(VerticalTraceResult result, VerticalLayer layer) {
         return result.hops().stream()
                 .filter(h -> h.layer() == layer)

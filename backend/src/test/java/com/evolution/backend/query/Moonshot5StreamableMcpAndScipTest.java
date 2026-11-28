@@ -136,6 +136,17 @@ class Moonshot5StreamableMcpAndScipTest {
             assertEquals(false, graphGetRes.get("isError"), () -> "graph_get failed: " + graphGetRes);
             assertTrue(graphGetRes.get("content").toString().contains(fx.graphId()));
 
+            var callVerticalTrace = postMcp(http, root, sessionId, null, Map.of(
+                    "jsonrpc", "2.0", "id", 41, "method", "tools/call",
+                    "params", Map.of("name", "vertical_trace",
+                            "arguments", Map.of("graph", fx.graphId(), "seed", "OrderService"))));
+            assertEquals(200, callVerticalTrace.statusCode());
+            var vtRes = GraphJson.object(parseJson(callVerticalTrace.body()).get("result"));
+            assertEquals(false, vtRes.get("isError"), () -> "vertical_trace failed: " + vtRes);
+            String vtBody = GraphJson.string(GraphJson.object(GraphJson.array(vtRes.get("content")).getFirst()).get("text"));
+            assertTrue(vtBody.contains("\"callPathFlamegraph\""), () -> "vertical_trace must expose callPathFlamegraph: " + vtBody);
+            assertTrue(vtBody.contains("\"resilienceVerdict\""), () -> "vertical_trace must expose resilienceVerdict: " + vtBody);
+
             var callRejected = postMcp(http, root, sessionId, null, Map.of(
                     "jsonrpc", "2.0", "id", 5, "method", "tools/call",
                     "params", Map.of("name", "graph_query",

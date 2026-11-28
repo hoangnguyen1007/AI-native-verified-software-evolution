@@ -1,8 +1,13 @@
 package com.evolution.backend.query.mcp;
 
 import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.contract.serialization.CanonicalJson;
 import com.evolution.analysis.graph.GraphJson;
+import com.evolution.analysis.javaparser.slice.JavaMethodSlicer;
+import com.evolution.analysis.policy.PolicyEvaluator;
+import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer;
+import com.evolution.analysis.treesitter.GoErrorPropagationSummarizer;
 import com.evolution.backend.auth.AuthenticatedUser;
 import com.evolution.backend.auth.RequestContext;
 import com.evolution.backend.query.ArchitectureQueryApi;
@@ -228,6 +233,8 @@ public final class McpToolDispatcher {
         policyProps.put("graph", graph);
         policyProps.put("report", report);
         policyProps.put("operation", Map.of("type", "string", "enum", List.of("summary", "rules", "findings", "assessment")));
+        policyProps.put("includeFlamegraph", Map.of("type", "boolean",
+                "description", "Include call-path flamegraph (file:line chain + resilience verdict) on findings (default true)."));
         policyProps.put("cursor", Map.of("type", "string"));
         policyProps.put("size", Map.of("type", "integer", "minimum", 1, "maximum", 50));
 
@@ -325,6 +332,8 @@ public final class McpToolDispatcher {
         verticalTraceProps.put("maxHops", Map.of("type", "integer", "minimum", 1, "maximum", 200));
         verticalTraceProps.put("includeAdvisory", Map.of("type", "boolean",
                 "description", "Include quarantined ADVISORY_UNVERIFIED SQL and Terraform hops (default true)."));
+        verticalTraceProps.put("includeResilience", Map.of("type", "boolean",
+                "description", "Attach call-path flamegraph (file:line chain + passive Fail-Close/Fail-Open RPC resilience verdict, default true)."));
 
         var traceSliceProps = new LinkedHashMap<String, Object>();
         traceSliceProps.put("graph", graph);
@@ -348,7 +357,7 @@ public final class McpToolDispatcher {
                         archScoreProps, reqGraph),
                 tool("architecture_brief", "One-call compressed executive overview: Score v2, confidence tier, Leiden emergent communities, misplaced types, tangles, hotspots, and quarantined advisory link counts.",
                         briefProps, reqGraph),
-                tool("policy_findings", "Read published architecture policy rules, MUST/MAY/UNKNOWN findings, and assessment scores.",
+                tool("policy_findings", "Read published architecture policy rules, MUST/MAY/UNKNOWN findings with call-path flamegraphs (file:line chain + resilience verdict), and assessment scores.",
                         policyProps, hasDefaultGraph ? List.of("report") : List.of("graph", "report")),
                 tool("job_coverage", "Read completion state, obligation breakdown (passive vs isolated execution), and top capability-gap reasons for an analysis job.",
                         Map.of("job", job), List.of("job")),
@@ -374,7 +383,7 @@ public final class McpToolDispatcher {
                         repairOptionsProps, List.of("graph", "report", "identity", "bundle", "context", "diagnosisInput")),
                 tool("connections", "Inspect cross-service HTTP, gRPC, and async event bridge relationships in the selected snapshot or context.",
                         connectionsProps, reqGraphCtx),
-                tool("vertical_trace", "Trace full-stack execution and data flow across 8 architectural layers (Frontend, API Route, Spring Controller, Spring DI, Service, JPA Entity, plus quarantined ADVISORY_UNVERIFIED SQL Table and Terraform Resource overlays).",
+                tool("vertical_trace", "Trace full-stack execution and data flow across 8 architectural layers with call-path flamegraph (file:line chain + passive Fail-Close/Fail-Open RPC resilience verdict) and quarantined ADVISORY_UNVERIFIED SQL/Terraform overlays.",
                         verticalTraceProps, hasDefaultGraph ? List.of("seed") : List.of("graph", "seed")),
                 tool("trace_slice", "Compute a lazy, pre-redacted intra-method CFG/DFG/CDG program slice for a captured Java file at a 1-based line number (SOURCE_SYNTAX, zero secret leakage).",
                         traceSliceProps, hasDefaultGraph ? List.of("path", "line") : List.of("graph", "path", "line")));
@@ -695,10 +704,12 @@ public final class McpToolDispatcher {
                     path = "/api/v1/graphs/" + graph.value() + "/architecture-score";
                 }
                 case "policy_findings" -> {
-                    var row = QueryJson.object(arguments, "graph", "report", "operation", "cursor", "size");
+                    var row = QueryJson.object(arguments, "graph", "report", "operation", "includeFlamegraph", "cursor", "size");
                     var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
                     var report = new ContentDigest(QueryJson.text(row, "report"));
                     String op = QueryJson.optionalText(row, "operation").orElse("findings");
+                    boolean includeFlamegraph = !row.containsKey("includeFlamegraph")
+                            || !Boolean.FALSE.equals(row.get("includeFlamegraph"));
                     if (!Set.of("summary", "rules", "findings", "assessment").contains(op)) {
                         throw new IllegalArgumentException();
                     }
@@ -716,6 +727,11 @@ public final class McpToolDispatcher {
                         method = "POST";
                         path = "/api/v1/graphs/" + graph.value() + "/reports/" + report.value() + "/" + op;
                     }
+                    var resp = backend.dispatch(method, path, payload);
+                    if (resp.status() == 200 && op.equals("findings") && includeFlamegraph) {
+                        return toolResult(enrichPolicyFindingsPayload(resp.body(), Optional.empty()), false);
+                    }
+                    return toolResult(resp.body(), resp.status() != 200);
                 }
                 case "job_coverage" -> {
                     var row = QueryJson.object(arguments, "job");
@@ -843,8 +859,10 @@ public final class McpToolDispatcher {
                 }
                 case "vertical_trace" -> {
                     var row = QueryJson.object(arguments, "graph", "context", "seed", "seedKind", "world",
-                            "maxDepth", "maxHops", "includeAdvisory");
+                            "maxDepth", "maxHops", "includeAdvisory", "includeResilience");
                     var graph = requireGraph(row, backend, defaultGraphRef, defaultContextRef);
+                    boolean includeResilience = !row.containsKey("includeResilience")
+                            || !Boolean.FALSE.equals(row.get("includeResilience"));
                     var bodyMap = new LinkedHashMap<String, Object>();
                     var ctxOpt = optionalNonBlankText(row, "context");
                     if (ctxOpt.isPresent()) {
@@ -868,6 +886,11 @@ public final class McpToolDispatcher {
                     payload = bodyMap;
                     method = "POST";
                     path = "/api/v1/graphs/" + graph.value() + "/queries/vertical-trace";
+                    var resp = backend.dispatch(method, path, payload);
+                    if (resp.status() == 200 && includeResilience) {
+                        return toolResult(enrichVerticalTraceResponse(graph.value(), resp.body(), backend), false);
+                    }
+                    return toolResult(resp.body(), resp.status() != 200);
                 }
                 case "trace_slice" -> {
                     var row = QueryJson.object(arguments, "graph", "path", "methodSignature", "line",
@@ -1230,6 +1253,295 @@ public final class McpToolDispatcher {
 
     private static Map<String, Object> toolResult(String text, boolean error) {
         return Map.of("content", List.of(Map.of("type", "text", "text", text)), "isError", error);
+    }
+
+    // -------------------------------------------------------------------------
+    // WP1.2: Call-Path Flamegraph & Fail-Close Resilience MCP Enrichment
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enriches a raw {@code vertical_trace} JSON response with a deterministic {@code callPathFlamegraph}
+     * ({@code file:line} chain + passive {@code SOURCE_SYNTAX} Fail-Close/Fail-Open resilience verdict).
+     */
+    public static String enrichVerticalTracePayload(
+            String rawJson,
+            Optional<FailCloseResilienceAnalyzer.ResilienceReport> resilienceReport) {
+        try {
+            var root = new LinkedHashMap<>(GraphJson.object(GraphJson.read(rawJson, RESP_JSON)));
+            if (root.get("data") instanceof Map<?, ?> dataObj) {
+                var data = new LinkedHashMap<>(GraphJson.object(dataObj));
+                data.put("callPathFlamegraph", buildFlamegraphFromTraceData(data, resilienceReport, List.of()));
+                root.put("data", data);
+            } else {
+                root.put("callPathFlamegraph", buildFlamegraphFromTraceData(root, resilienceReport, List.of()));
+            }
+            return CanonicalJson.write(root);
+        } catch (RuntimeException malformed) {
+            return rawJson;
+        }
+    }
+
+    /**
+     * Enriches a raw {@code policy_findings} JSON response with per-finding {@code callPathFlamegraph}
+     * ({@code file:line} chain + resilience verdict) and optional {@code failCloseTierFindings}.
+     */
+    public static String enrichPolicyFindingsPayload(
+            String rawJson,
+            Optional<PolicyEvaluator.FailClosePolicyEvaluationResult> failCloseResult) {
+        try {
+            var root = new LinkedHashMap<>(GraphJson.object(GraphJson.read(rawJson, RESP_JSON)));
+            Map<String, Object> target = root;
+            if (root.get("data") instanceof Map<?, ?> dataObj) {
+                target = new LinkedHashMap<>(GraphJson.object(dataObj));
+                root.put("data", target);
+            }
+            if (target.get("items") instanceof List<?> rawItems) {
+                var enrichedItems = new ArrayList<Object>(rawItems.size());
+                for (Object itemObj : rawItems) {
+                    if (!(itemObj instanceof Map<?, ?> im)) {
+                        enrichedItems.add(itemObj);
+                        continue;
+                    }
+                    var item = new LinkedHashMap<>(GraphJson.object(im));
+                    item.put("callPathFlamegraph", buildFlamegraphFromFindingItem(item));
+                    enrichedItems.add(item);
+                }
+                target.put("items", enrichedItems);
+            }
+            if (failCloseResult != null && failCloseResult.isPresent()) {
+                var fc = failCloseResult.get();
+                target.put("failCloseTierFindings", fc.findings().stream()
+                        .map(PolicyEvaluator.FailClosePolicyFinding::toView)
+                        .toList());
+                target.put("failCloseTierSummary", fc.toView());
+            }
+            return CanonicalJson.write(root);
+        } catch (RuntimeException malformed) {
+            return rawJson;
+        }
+    }
+
+    private static String enrichVerticalTraceResponse(
+            String graphDigest,
+            String rawJson,
+            ApiBackend backend) {
+        try {
+            var root = new LinkedHashMap<>(GraphJson.object(GraphJson.read(rawJson, RESP_JSON)));
+            Map<String, Object> target = root;
+            if (root.get("data") instanceof Map<?, ?> dataObj) {
+                target = new LinkedHashMap<>(GraphJson.object(dataObj));
+                root.put("data", target);
+            }
+            List<FailCloseResilienceAnalyzer.MethodErrorSummary> liveSummaries =
+                    collectLiveMethodSummariesForTrace(graphDigest, target, backend);
+            target.put("callPathFlamegraph",
+                    buildFlamegraphFromTraceData(target, Optional.empty(), liveSummaries));
+            return CanonicalJson.write(root);
+        } catch (RuntimeException malformed) {
+            return rawJson;
+        }
+    }
+
+    private static List<FailCloseResilienceAnalyzer.MethodErrorSummary> collectLiveMethodSummariesForTrace(
+            String graphDigest,
+            Map<String, Object> traceData,
+            ApiBackend backend) {
+        if (backend == null || !(traceData.get("hops") instanceof List<?> hops) || hops.isEmpty()) {
+            return List.of();
+        }
+        boolean hasServiceBridge = false;
+        var sourcePaths = new LinkedHashSet<String>();
+        for (Object hObj : hops) {
+            if (!(hObj instanceof Map<?, ?> hm)) continue;
+            var hop = GraphJson.object(hm);
+            if (hop.get("edgeKind") instanceof String ek && SERVICE_BRIDGE_KINDS.contains(ek)) {
+                hasServiceBridge = true;
+            }
+            if (hop.get("sourcePath") instanceof String sp && !sp.isBlank()) {
+                String lower = sp.toLowerCase(Locale.ROOT);
+                if (lower.endsWith(".java") || lower.endsWith(".go")) {
+                    sourcePaths.add(sp);
+                }
+            }
+        }
+        if (!hasServiceBridge || sourcePaths.isEmpty()) {
+            return List.of();
+        }
+        var collected = new ArrayList<FailCloseResilienceAnalyzer.MethodErrorSummary>();
+        int limit = 0;
+        for (String sp : sourcePaths) {
+            if (limit++ >= 8) break;
+            try {
+                var resp = backend.dispatch("POST", "/api/v1/graphs/" + graphDigest + "/captured-source",
+                        Map.of("path", sp, "startLine", 1, "endLine", 250));
+                if (resp.status() != 200) continue;
+                Object parsed = parseData(resp.body());
+                if (!(parsed instanceof Map<?, ?> pm)) continue;
+                Object contentObj = pm.get("content");
+                if (!(contentObj instanceof String content) || content.isBlank()) continue;
+                if (sp.toLowerCase(Locale.ROOT).endsWith(".java")) {
+                    collected.addAll(JavaMethodSlicer.summarizeErrorPropagation(sp, content));
+                } else if (sp.toLowerCase(Locale.ROOT).endsWith(".go")) {
+                    collected.addAll(GoErrorPropagationSummarizer.summarizeErrorPropagation(sp, content));
+                }
+            } catch (Exception ignored) {
+                // Best-effort enrichment only; never fail vertical_trace
+            }
+        }
+        return collected;
+    }
+
+    private static Map<String, Object> buildFlamegraphFromTraceData(
+            Map<String, Object> traceData,
+            Optional<FailCloseResilienceAnalyzer.ResilienceReport> reportOpt,
+            List<FailCloseResilienceAnalyzer.MethodErrorSummary> liveSummaries) {
+        var frames = new ArrayList<Map<String, Object>>();
+        var chainParts = new ArrayList<String>();
+        boolean hasOutboundBridge = false;
+
+        if (traceData.get("hops") instanceof List<?> hops) {
+            for (Object hObj : hops) {
+                if (!(hObj instanceof Map<?, ?> hm)) continue;
+                var hop = GraphJson.object(hm);
+                String nodeId = hop.get("nodeId") instanceof String s ? s : "";
+                String label = hop.get("label") instanceof String s ? s : nodeId;
+                String kind = hop.get("kind") instanceof String s ? s : "";
+                String layer = hop.get("layer") instanceof String s ? s : "";
+                String sourcePath = hop.get("sourcePath") instanceof String s ? s : "";
+                int startLine = hop.get("startLine") instanceof Number n ? n.intValue() : 0;
+                int endLine = hop.get("endLine") instanceof Number n ? n.intValue() : startLine;
+                String edgeKind = hop.get("edgeKind") instanceof String s ? s : "";
+                if (SERVICE_BRIDGE_KINDS.contains(edgeKind)) {
+                    hasOutboundBridge = true;
+                }
+                var frame = new FailCloseResilienceAnalyzer.CallFrame(
+                        nodeId, label, sourcePath, startLine, endLine, kind);
+                var fv = new TreeMap<String, Object>(frame.toView());
+                if (!layer.isEmpty()) fv.put("layer", layer);
+                if (!edgeKind.isEmpty()) fv.put("edgeKind", edgeKind);
+                if (hop.get("trustTier") instanceof String tt) fv.put("trustTier", tt);
+                if (hop.get("gapReason") instanceof String gr) fv.put("gapReason", gr);
+                frames.add(Collections.unmodifiableMap(fv));
+                chainParts.add(frame.fileLine());
+            }
+        }
+
+        String verdict = FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
+        var paths = new ArrayList<Map<String, Object>>();
+        var pairs = new ArrayList<Map<String, Object>>();
+        var gaps = new ArrayList<Map<String, Object>>();
+
+        if (reportOpt != null && reportOpt.isPresent()) {
+            var report = reportOpt.get();
+            int fc = 0, fo = 0, unk = 0;
+            for (var pv : report.pathVerdicts().values()) {
+                paths.add(pv.toView());
+                switch (pv.verdict()) {
+                    case FAIL_CLOSE -> fc++;
+                    case FAIL_OPEN -> fo++;
+                    case UNKNOWN -> unk++;
+                    case MIXED_PATHS -> { fc++; fo++; }
+                }
+            }
+            for (var ps : report.pairSummaries().values()) {
+                pairs.add(ps.toView());
+            }
+            for (var g : report.gaps()) {
+                gaps.add(FailCloseResilienceAnalyzer.gapToView(g));
+            }
+            verdict = aggregateVerdictLabel(fc, fo, unk);
+        } else if (!liveSummaries.isEmpty()) {
+            int fc = 0, fo = 0, unk = 0;
+            for (var s : liveSummaries) {
+                paths.add(s.toView());
+                switch (s.localVerdict()) {
+                    case FAIL_CLOSE -> fc++;
+                    case FAIL_OPEN -> fo++;
+                    case UNKNOWN -> unk++;
+                    case MIXED_PATHS -> { fc++; fo++; }
+                }
+            }
+            verdict = aggregateVerdictLabel(fc, fo, unk);
+        } else if (hasOutboundBridge) {
+            gaps.add(Map.of(
+                    "mechanismCategory", FailCloseResilienceAnalyzer.MECHANISM_CATEGORY,
+                    "reasonCode", FailCloseResilienceAnalyzer.GAP_REASON_HANDLER_OPAQUE));
+        }
+
+        var fg = new TreeMap<String, Object>();
+        fg.put("chain", String.join(" -> ", chainParts));
+        fg.put("frames", List.copyOf(frames));
+        fg.put("gaps", List.copyOf(gaps));
+        fg.put("pairSummaries", List.copyOf(pairs));
+        fg.put("paths", List.copyOf(paths));
+        fg.put("resilienceVerdict", verdict);
+        fg.put("trustTier", TrustTier.SOURCE_SYNTAX.name());
+        return Collections.unmodifiableMap(fg);
+    }
+
+    private static Map<String, Object> buildFlamegraphFromFindingItem(Map<String, Object> item) {
+        var frames = new ArrayList<Map<String, Object>>();
+        var chainParts = new ArrayList<String>();
+        String verdict = FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
+
+        Map<String, Object> result = item.get("result") instanceof Map<?, ?> rm ? GraphJson.object(rm) : item;
+        Map<String, Object> bundle = result.get("bundle") instanceof Map<?, ?> bm ? GraphJson.object(bm) : Map.of();
+
+        // Preserve any explicit resilienceVerdict already attached to the finding
+        if (result.get("resilienceVerdict") instanceof String rv && !rv.isBlank()) {
+            verdict = rv;
+        }
+
+        // Extract source spans (file:line) from bundle.sources
+        if (bundle.get("sources") instanceof List<?> sources) {
+            for (Object sObj : sources) {
+                if (!(sObj instanceof Map<?, ?> sm)) continue;
+                var src = GraphJson.object(sm);
+                Map<String, Object> span = src.get("span") instanceof Map<?, ?> spm ? GraphJson.object(spm) : src;
+                String file = span.get("path") instanceof String p && !p.isBlank()
+                        ? p
+                        : (span.get("document") instanceof String d ? d : "");
+                int startLine = span.get("startLine") instanceof Number n ? n.intValue() : 0;
+                int endLine = span.get("endLine") instanceof Number n ? n.intValue() : startLine;
+                var frame = new FailCloseResilienceAnalyzer.CallFrame(
+                        file, file, file, startLine, endLine, "SOURCE_EVIDENCE");
+                frames.add(frame.toView());
+                chainParts.add(frame.fileLine());
+            }
+        }
+
+        // Fallback/supplement with bundle.path vertices when no source spans exist
+        if (frames.isEmpty() && bundle.get("path") instanceof List<?> vertices) {
+            for (Object v : vertices) {
+                String id = v instanceof String s ? s : String.valueOf(v);
+                var frame = new FailCloseResilienceAnalyzer.CallFrame(id, id, "", 0, 0, "POLICY_VERTEX");
+                frames.add(frame.toView());
+                chainParts.add(frame.fileLine());
+            }
+        }
+
+        var fg = new TreeMap<String, Object>();
+        fg.put("chain", String.join(" -> ", chainParts));
+        fg.put("frames", List.copyOf(frames));
+        fg.put("resilienceVerdict", verdict);
+        fg.put("trustTier", TrustTier.SOURCE_SYNTAX.name());
+        return Collections.unmodifiableMap(fg);
+    }
+
+    private static String aggregateVerdictLabel(int failClose, int failOpen, int unknown) {
+        if (failClose > 0 && failOpen > 0) {
+            return FailCloseResilienceAnalyzer.ResilienceVerdict.MIXED_PATHS.name();
+        }
+        if (unknown > 0) {
+            return FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
+        }
+        if (failClose > 0) {
+            return FailCloseResilienceAnalyzer.ResilienceVerdict.FAIL_CLOSE.name();
+        }
+        if (failOpen > 0) {
+            return FailCloseResilienceAnalyzer.ResilienceVerdict.FAIL_OPEN.name();
+        }
+        return FailCloseResilienceAnalyzer.ResilienceVerdict.UNKNOWN.name();
     }
 
     public static Map<String, Object> errorMap(Object id, int code, String message) {

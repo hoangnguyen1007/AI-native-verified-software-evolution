@@ -174,4 +174,78 @@ class PolicyEvaluatorTest {
         assertEquals(Classification.UNKNOWN,result.rules().getFirst().classification());assertEquals(1,result.findings().size());
         assertTrue(result.findings().getFirst().bundle().region().witness().isEmpty());assertTrue(result.gaps().stream().anyMatch(g->g.reasonCode().equals("CANCELLED")));
     }
+
+    @Test void failCloseTierPolicyFlagsHigherToLowerFailCloseAndNeverInventsMissingTiers(){
+        String yaml="""
+                schema: architecture-policy:v1
+                id: resilience.tier-guard
+                version: "1"
+                fail-close-tier-policy:
+                  tiers:
+                    - {name: T0, rank: 0}
+                    - {name: T1, rank: 1}
+                    - {name: T2, rank: 2}
+                    - {name: T3, rank: 3}
+                    - {name: EXTERNAL, rank: 4}
+                  rules:
+                    - id: tier.no-fail-close-lower
+                      severity: ERROR
+                      fromTiers: [T0, T1, T2]
+                      forbidLowerTierFailClose: true
+                      forbidExternalFailClose: true
+                """;
+        var repo=RepositoryIdentity.fromCanonicalCoordinate("https://example.test/tier-policy");
+        var snap=SnapshotIdentity.from(repo,ContentDigest.sha256Utf8("tier-snap"));
+        var evCtx=com.evolution.analysis.evidence.EvidenceContext.forSnapshot(snap);
+        var digest=ContentDigest.sha256Utf8("tier-graph");
+
+        var callGraph=new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.CallGraph(
+                Map.of(
+                        "ep:gw",new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.CallNode("ep:gw","GET /api/checkout","ENDPOINT","ingress-gw","src/Gateway.java",12,24,true),
+                        "ob:recs",new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.CallNode("ob:recs","RecsClient.list","SERVICE","recs-svc","src/RecsClient.java",8,10,false),
+                        "ob:partner",new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.CallNode("ob:partner","PartnerApi.score","SERVICE","partner-api","src/PartnerApi.java",5,9,false)),
+                List.of(
+                        new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.CallEdge("ep:gw","ob:recs","CALLS_SERVICE"),
+                        new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.CallEdge("ep:gw","ob:partner","CALLS_SERVICE")));
+        var summaries=Map.<String,List<com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.MethodErrorSummary>>of(
+                "ep:gw",List.of(
+                        new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.MethodErrorSummary(
+                                "java","ep:gw","ep:gw:15#RecsClient.list","src/Gateway.java",15,15,"RecsClient.list","FEIGN",
+                                Set.of("FeignException"),Set.of(),List.of(),
+                                com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.PropagationDisposition.SUPPRESSED_FAIL_OPEN,
+                                true,false,false,false,Optional.empty(),Optional.of("TRY_CATCH_DEFAULT"),
+                                com.evolution.analysis.contract.semantic.TrustTier.SOURCE_SYNTAX),
+                        new com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.MethodErrorSummary(
+                                "java","ep:gw","ep:gw:20#PartnerApi.score","src/Gateway.java",20,20,"PartnerApi.score","FEIGN",
+                                Set.of("FeignException"),Set.of("FeignException"),List.of(),
+                                com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.PropagationDisposition.PROPAGATES_ERROR,
+                                true,false,false,false,Optional.empty(),Optional.empty(),
+                                com.evolution.analysis.contract.semantic.TrustTier.SOURCE_SYNTAX)));
+        var report=com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.analyzeCallGraph(
+                digest,evCtx,callGraph,summaries,com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.AnalysisConfig.defaults());
+
+        var evaluator=new PolicyEvaluator();
+        // 1. With declared tiers: flags T0 -> EXTERNAL FAIL_CLOSE with flamegraph; T0 -> T3 FAIL_OPEN stays clean
+        var declared=evaluator.evaluateFailCloseTierPolicy(
+                yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8),report,
+                Map.of("ingress-gw","T0","recs-svc","T3","partner-api","EXTERNAL"),evCtx);
+        assertEquals(AssessmentStatus.COMPLETE,declared.status());
+        assertEquals(Classification.MUST,declared.classification());
+        assertEquals(1,declared.findings().size());
+        var finding=declared.findings().getFirst();
+        assertEquals("tier.no-fail-close-lower",finding.ruleId());
+        assertEquals("partner-api",finding.outboundService());
+        assertEquals(Optional.of("T0"),finding.inboundTier());
+        assertEquals(Optional.of("EXTERNAL"),finding.outboundTier());
+        assertTrue(finding.flamegraphChain().contains("src/Gateway.java:12"));
+
+        // 2. Without declared repo tier metadata (I4): NEVER invents tiers; emits UNKNOWN + FAIL_CLOSE_TIER_METADATA_MISSING gap!
+        var undeclared=evaluator.evaluateFailCloseTierPolicy(
+                yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8),report,Map.of(),evCtx);
+        assertEquals(AssessmentStatus.PARTIAL,undeclared.status());
+        assertEquals(Classification.UNKNOWN,undeclared.classification());
+        assertTrue(undeclared.gaps().stream()
+                .anyMatch(g->g.reasonCode().equals(com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.GAP_REASON_TIER_METADATA_MISSING)));
+        assertTrue(undeclared.findings().stream().allMatch(f->f.classification()==Classification.UNKNOWN));
+    }
 }
