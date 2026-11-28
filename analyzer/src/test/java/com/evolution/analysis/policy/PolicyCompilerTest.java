@@ -126,4 +126,69 @@ class PolicyCompilerTest {
             assertNotNull(stream);var properties=new Properties();properties.load(stream);assertEquals("2.6",properties.getProperty("version"));
         }
     }
+
+    @Test void compilesBoundedDeclarativeRslMetadataPolicyAndBuiltInPackDeterministically() {
+        String rslYaml = """
+                schema: architecture-policy:v1
+                id: example.metadata-rsl
+                version: "1"
+                metadata-consistency-pack:
+                  enabled: true
+                  excludeRules: [feign-controller-contract-parity]
+                metadataRules:
+                  - id: rsl.xml-init-exists
+                    version: "1"
+                    severity: ERROR
+                    forEach: { var: b, in: XML_BEANS }
+                    where:
+                      - { field: b.initMethod, op: PRESENT }
+                    assert:
+                      exists:
+                        var: m
+                        in: METHODS
+                        where:
+                          - { field: m.ownerClass, op: EQUALS, rhsField: b.className }
+                          - { field: m.name, op: EQUALS, rhsField: b.initMethod }
+                          - { field: m.paramCount, op: EQUALS, value: "0" }
+                      message: "init-method must exist as 0-arg method"
+                  - id: rsl.bean-class-resolvable
+                    version: "1"
+                    severity: ERROR
+                    forEach: { var: b, in: XML_BEANS }
+                    assert:
+                      op: CLASS_RESOLVABLE
+                      targetField: b.className
+                      message: "bean class must resolve on exact classpath"
+                """;
+        var compiler = new PolicyCompiler();
+        var compiled = compiler.compileMetadataPolicy(
+                rslYaml.getBytes(StandardCharsets.UTF_8), CONTEXT, PolicyCompiler.Limits.defaults());
+        assertEquals(AssessmentStatus.COMPLETE, compiled.status(), compiled.problems().toString());
+        var policy = compiled.policy().orElseThrow();
+        assertEquals(1, policy.packs().size());
+        assertEquals(PolicyCompiler.METADATA_CONSISTENCY_PACK_ID, policy.packs().getFirst().packId());
+        assertEquals(Set.of(MetadataConsistencyRulePack.RULE_FEIGN_CONTROLLER_PARITY), policy.packs().getFirst().excludeRules());
+        assertEquals(2, policy.rules().size());
+        // Deterministic replay identity
+        var again = compiler.compileMetadataPolicy(
+                rslYaml.getBytes(StandardCharsets.UTF_8), CONTEXT, PolicyCompiler.Limits.defaults());
+        assertEquals(compiled, again);
+        assertEquals(compiled.identity(), again.identity());
+
+        // Built-in pack shortcut compiles cleanly
+        var builtIn = compiler.compileBuiltInMetadataPack(PolicyCompiler.METADATA_CONSISTENCY_PACK_ID, CONTEXT);
+        assertEquals(AssessmentStatus.COMPLETE, builtIn.status());
+        assertEquals(PolicyCompiler.METADATA_CONSISTENCY_PACK_ID, builtIn.policy().orElseThrow().packs().getFirst().packId());
+
+        // Rejects unbound variables, unknown packs, and YAML anchors atomically
+        String unboundVar = rslYaml.replace("rhsField: b.className", "rhsField: rogue.className");
+        var badVar = compiler.compileMetadataPolicy(
+                unboundVar.getBytes(StandardCharsets.UTF_8), CONTEXT, PolicyCompiler.Limits.defaults());
+        assertEquals(AssessmentStatus.WITHHELD, badVar.status());
+        assertTrue(badVar.policy().isEmpty());
+        assertFalse(badVar.gaps().isEmpty());
+
+        var badPack = compiler.compileBuiltInMetadataPack("unknown-pack", CONTEXT);
+        assertEquals(AssessmentStatus.WITHHELD, badPack.status());
+    }
 }

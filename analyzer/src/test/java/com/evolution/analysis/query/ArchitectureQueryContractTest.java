@@ -145,4 +145,53 @@ class ArchitectureQueryContractTest {
             assertEquals(payload,graph.evidence(payload.identity()).orElseThrow());
         }
     }
+
+    @Test void memoizedQueryCacheProducesBitIdenticalResultsRespectsCancellationAndBoundsEvictions(){
+        var f = new Fixture().node("a").node("b").node("c").edge("a", "b").edge("b", "c").edge("c", "a");
+        var graph = f.graph();
+        var req = f.request();
+
+        var cached = new ArchitectureQueryService(graph);
+        var uncached = ArchitectureQueryService.withoutMemoization(graph);
+
+        var e1 = cached.entities(req, "", Page.first());
+        var e2 = cached.entities(req, "", Page.first());
+        var eUncached = uncached.entities(req, "", Page.first());
+        assertEquals(eUncached, e1);
+        assertEquals(e1, e2);
+        assertEquals(eUncached.identity(), e2.identity());
+
+        var c1 = cached.findCycles(req);
+        var c2 = cached.findCycles(req);
+        var cUncached = uncached.findCycles(req);
+        assertEquals(cUncached, c1);
+        assertEquals(c1, c2);
+        assertEquals(cUncached.identity(), c2.identity());
+
+        var s1 = cached.summary(req);
+        var s2 = cached.summary(req);
+        assertEquals(uncached.summary(req), s1);
+        assertEquals(s1, s2);
+
+        var stats = cached.cacheStats();
+        assertTrue(stats.hits() >= 3, () -> "Expected >= 3 cache hits, got: " + stats);
+        assertEquals(3, stats.entries());
+
+        // Operational cancellation guard must NEVER return a stale COMPLETED cached result!
+        var cancelFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var guarded = new ArchitectureQueryService(graph, () -> cancelFlag.get() ? StopReason.CANCELLED : StopReason.NONE, Optional.empty());
+        var ok = guarded.summary(req);
+        assertEquals(Operation.COMPLETED, ok.operation());
+        cancelFlag.set(true);
+        var cancelled = guarded.summary(req);
+        assertEquals(Operation.CANCELLED, cancelled.operation());
+
+        // Bounded capacity evicts LRU entries cleanly
+        var smallCache = new ArchitectureQueryService(graph, graph.identity(), () -> StopReason.NONE, Optional.empty(), true, 2);
+        smallCache.entities(req, "", Page.first());
+        smallCache.summary(req);
+        smallCache.findCycles(req);
+        assertEquals(2, smallCache.cacheStats().entries());
+        assertTrue(smallCache.cacheStats().evictions() >= 1);
+    }
 }

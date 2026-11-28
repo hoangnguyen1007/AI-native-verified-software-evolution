@@ -735,4 +735,63 @@ public final class PolicyEvaluator {
         }
         return out;
     }
+
+    // ─── WP2.2: Bounded Declarative RSL Metadata Consistency Evaluation ───
+
+    /**
+     * Evaluates a compiled {@link PolicyCompiler.MetadataCompilationResult} (built-in {@code metadata-consistency-pack}
+     * rules and/or bounded declarative RSL rules) against {@code service} using exact classpath lookup.
+     */
+    public MetadataConsistencyRulePack.EvaluationReport evaluateMetadataPolicy(
+            PolicyCompiler.MetadataCompilationResult compilation,
+            ArchitectureQueryService service,
+            String context,
+            MetadataConsistencyRulePack.ClasspathTypeLookup classpathLookup,
+            MetadataConsistencyRulePack.EvaluationOptions options
+    ) {
+        Objects.requireNonNull(compilation, "compilation");
+        Objects.requireNonNull(service, "service");
+        if (compilation.policy().isEmpty()) {
+            return new MetadataConsistencyRulePack.EvaluationReport(
+                    compilation.identity(),
+                    service.graphIdentity(),
+                    context == null ? "" : context,
+                    AssessmentStatus.WITHHELD,
+                    Classification.UNKNOWN,
+                    List.of(),
+                    List.of(),
+                    compilation.gaps());
+        }
+        return new MetadataConsistencyRulePack().evaluate(
+                compilation.policy().orElseThrow(), service, context, classpathLookup, options);
+    }
+
+    /** Compiles and evaluates a declarative {@code architecture-policy:v1} metadata consistency YAML document. */
+    public MetadataConsistencyRulePack.EvaluationReport evaluateMetadataPolicy(
+            byte[] yamlBytes,
+            ArchitectureQueryService service,
+            String context,
+            MetadataConsistencyRulePack.ClasspathTypeLookup classpathLookup,
+            MetadataConsistencyRulePack.EvaluationOptions options
+    ) {
+        Objects.requireNonNull(yamlBytes, "yamlBytes");
+        Objects.requireNonNull(service, "service");
+        var evCtx = EvidenceContext.forSnapshot(service.graph().snapshot());
+        var compiled = new PolicyCompiler().compileMetadataPolicy(yamlBytes, evCtx, PolicyCompiler.Limits.defaults());
+        return evaluateMetadataPolicy(compiled, service, context, classpathLookup, options);
+    }
+
+    /** Activates and evaluates the built-in 6-rule {@code metadata-consistency-pack} directly. */
+    public MetadataConsistencyRulePack.EvaluationReport evaluateMetadataConsistencyPack(
+            ArchitectureQueryService service,
+            String context,
+            MetadataConsistencyRulePack.ClasspathTypeLookup classpathLookup,
+            MetadataConsistencyRulePack.EvaluationOptions options
+    ) {
+        Objects.requireNonNull(service, "service");
+        var evCtx = EvidenceContext.forSnapshot(service.graph().snapshot());
+        var compiled = new PolicyCompiler().compileBuiltInMetadataPack(
+                MetadataConsistencyRulePack.PACK_ID, evCtx);
+        return evaluateMetadataPolicy(compiled, service, context, classpathLookup, options);
+    }
 }

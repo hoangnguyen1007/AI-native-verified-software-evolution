@@ -15,12 +15,72 @@ import static com.evolution.analysis.query.ArchitectureQuery.*;
  * per request.
  */
 public final class ArchitectureQueryService {
+    public static final int DEFAULT_MEMO_CACHE_CAPACITY = 2048;
+
     private final KnowledgeGraph graph;
     private final ContentDigest graphIdentity;
     private final Supplier<StopReason> guard;
     private final Optional<Metrics> metrics;
+    private final boolean memoizationEnabled;
+    private final int memoCacheCapacity;
     private final java.util.concurrent.ConcurrentHashMap<ContentDigest, Map<String, Object>> parsedEvidenceCache = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.concurrent.ConcurrentHashMap<String, String> QUALIFIED_NAME_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // WP2.2 MeCheck Fig. 6 inspired bounded deterministic per-session memoization & lazy metadata index
+    private final Object memoLock = new Object();
+    private final LinkedHashMap<MemoKey, Object> queryMemoCache;
+    private final java.util.concurrent.atomic.AtomicLong memoHits = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong memoMisses = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong memoEvictions = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong graphScanCount = new java.util.concurrent.atomic.AtomicLong();
+    private volatile SessionMetadataIndex sessionMetadataIndex;
+
+    private record MemoKey(String queryOp, String canonicalArgsDigest) {}
+
+    /** Diagnostic telemetry for the bounded per-session memoization cache (excluded from query identities). */
+    public record CacheStats(long hits, long misses, long evictions, int entries, long graphScans, int indexedClasses) {}
+
+    /** Immutable lazy-indexed annotation descriptor for a class or member. */
+    public record AnnotationMetadata(String name, String rawSpelling, Optional<String> ownerId,
+            Optional<String> sourceFile, int line) {
+        public AnnotationMetadata {
+            name = name == null ? "" : name;
+            rawSpelling = rawSpelling == null ? "" : rawSpelling;
+            ownerId = ownerId == null ? Optional.empty() : ownerId;
+            sourceFile = sourceFile == null ? Optional.empty() : sourceFile;
+        }
+    }
+
+    /** Immutable lazy-indexed field, method, or constructor descriptor. */
+    public record MemberMetadata(String nodeId, String name, String kind, boolean staticMember,
+            boolean abstractMember, int paramCount, List<String> paramTypes, Optional<String> returnType,
+            Optional<String> fieldType, List<AnnotationMetadata> annotations) {
+        public MemberMetadata {
+            nodeId = Objects.requireNonNull(nodeId);
+            name = name == null ? "" : name;
+            kind = kind == null ? "" : kind;
+            paramTypes = List.copyOf(paramTypes == null ? List.of() : paramTypes);
+            returnType = returnType == null ? Optional.empty() : returnType;
+            fieldType = fieldType == null ? Optional.empty() : fieldType;
+            annotations = List.copyOf(annotations == null ? List.of() : annotations);
+        }
+    }
+
+    /** Immutable lazy-indexed class metadata (populated on demand per class, MeCheck Fig. 6). */
+    public record ClassMetadata(String nodeId, String fqcn, String kind, boolean abstractType,
+            Set<String> superTypes, List<MemberMetadata> constructors, List<MemberMetadata> methods,
+            List<MemberMetadata> fields, List<AnnotationMetadata> annotations) {
+        public ClassMetadata {
+            nodeId = Objects.requireNonNull(nodeId);
+            fqcn = Objects.requireNonNull(fqcn);
+            kind = kind == null ? "CLASS" : kind;
+            superTypes = Collections.unmodifiableSet(new TreeSet<>(superTypes == null ? Set.of() : superTypes));
+            constructors = List.copyOf(constructors == null ? List.of() : constructors);
+            methods = List.copyOf(methods == null ? List.of() : methods);
+            fields = List.copyOf(fields == null ? List.of() : fields);
+            annotations = List.copyOf(annotations == null ? List.of() : annotations);
+        }
+    }
 
     /**
      * Operational guards are outside query identity; never treat interrupted output
@@ -36,10 +96,64 @@ public final class ArchitectureQueryService {
 
     public ArchitectureQueryService(KnowledgeGraph graph, ContentDigest graphIdentity, Supplier<StopReason> guard,
             Optional<Metrics> metrics) {
+        this(graph, graphIdentity, guard, metrics, true, DEFAULT_MEMO_CACHE_CAPACITY);
+    }
+
+    public ArchitectureQueryService(KnowledgeGraph graph, ContentDigest graphIdentity, Supplier<StopReason> guard,
+            Optional<Metrics> metrics, boolean memoizationEnabled, int memoCacheCapacity) {
         this.graph = Objects.requireNonNull(graph);
         this.guard = Objects.requireNonNull(guard);
         this.metrics = Objects.requireNonNull(metrics);
         this.graphIdentity = Objects.requireNonNull(graphIdentity);
+        this.memoizationEnabled = memoizationEnabled;
+        if (memoCacheCapacity < 1 || memoCacheCapacity > 65_536) {
+            throw new IllegalArgumentException("Memoization cache capacity must be in 1..65536");
+        }
+        this.memoCacheCapacity = memoCacheCapacity;
+        this.queryMemoCache = new LinkedHashMap<>(Math.min(256, memoCacheCapacity), 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<MemoKey, Object> eldest) {
+                if (size() > ArchitectureQueryService.this.memoCacheCapacity) {
+                    memoEvictions.incrementAndGet();
+                    return true;
+                }
+                return false;
+            }
+        };
+    }
+
+    /** Creates an uncached query service for parity testing and zero-cache verification. */
+    public static ArchitectureQueryService withoutMemoization(KnowledgeGraph graph) {
+        return new ArchitectureQueryService(graph, graph.identity(), operationalGuard(() -> false, 0, 8_000_000),
+                Optional.empty(), false, DEFAULT_MEMO_CACHE_CAPACITY);
+    }
+
+    public static ArchitectureQueryService withoutMemoization(KnowledgeGraph graph, Supplier<StopReason> guard,
+            Optional<Metrics> metrics) {
+        return new ArchitectureQueryService(graph, graph.identity(), guard, metrics, false,
+                DEFAULT_MEMO_CACHE_CAPACITY);
+    }
+
+    public boolean isMemoizationEnabled() {
+        return memoizationEnabled;
+    }
+
+    public CacheStats cacheStats() {
+        int entries;
+        synchronized (memoLock) {
+            entries = queryMemoCache.size();
+        }
+        SessionMetadataIndex idx = sessionMetadataIndex;
+        int indexedClasses = idx == null ? 0 : idx.indexedClassCount();
+        return new CacheStats(memoHits.get(), memoMisses.get(), memoEvictions.get(), entries,
+                graphScanCount.get(), indexedClasses);
+    }
+
+    public void clearMemoizationCache() {
+        synchronized (memoLock) {
+            queryMemoCache.clear();
+        }
+        sessionMetadataIndex = null;
     }
 
     /**
@@ -418,17 +532,170 @@ public final class ArchitectureQueryService {
             throw new IllegalArgumentException("Foreign context");
     }
 
+    /**
+     * Generic bounded deterministic per-session memoization keyed by {@code (queryOp, canonicalArgs)}.
+     * Respects operational guards ({@code CANCELLED}/{@code TIME}/{@code MEMORY}) and never mutates cached values.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T memoizedQuery(String queryOp, Object canonicalArgs, Supplier<T> supplier) {
+        Objects.requireNonNull(queryOp, "queryOp");
+        Objects.requireNonNull(canonicalArgs, "canonicalArgs");
+        Objects.requireNonNull(supplier, "supplier");
+        if (!memoizationEnabled || guard.get() != StopReason.NONE) {
+            memoMisses.incrementAndGet();
+            return supplier.get();
+        }
+        String argsDigest = ContentDigest.sha256Utf8(CanonicalJson.write(canonicalArgs)).value();
+        var key = new MemoKey(queryOp, argsDigest);
+        Object hit;
+        synchronized (memoLock) {
+            hit = queryMemoCache.get(key);
+        }
+        if (hit != null) {
+            memoHits.incrementAndGet();
+            return (T) hit;
+        }
+        memoMisses.incrementAndGet();
+        T computed = supplier.get();
+        if (computed != null && guard.get() == StopReason.NONE) {
+            synchronized (memoLock) {
+                Object raced = queryMemoCache.get(key);
+                if (raced != null) {
+                    return (T) raced;
+                }
+                queryMemoCache.put(key, computed);
+            }
+        }
+        return computed;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> Result<T> memoizedResult(String queryOp, Request request, Object canonicalArgs,
+            Supplier<Result<T>> supplier) {
+        validate(request);
+        if (!memoizationEnabled || guard.get() != StopReason.NONE) {
+            memoMisses.incrementAndGet();
+            return supplier.get();
+        }
+        String argsDigest = ContentDigest.sha256Utf8(
+                CanonicalJson.write(List.of(request.identity().value(), canonicalArgs))).value();
+        var key = new MemoKey(queryOp, argsDigest);
+        Object hit;
+        synchronized (memoLock) {
+            hit = queryMemoCache.get(key);
+        }
+        if (hit != null) {
+            memoHits.incrementAndGet();
+            return (Result<T>) hit;
+        }
+        memoMisses.incrementAndGet();
+        Result<T> computed = supplier.get();
+        // Operational guards are outside query identity; never cache interrupted or resource-limited results.
+        if (computed != null && computed.operation() == Operation.COMPLETED && guard.get() == StopReason.NONE) {
+            synchronized (memoLock) {
+                Object raced = queryMemoCache.get(key);
+                if (raced != null) {
+                    return (Result<T>) raced;
+                }
+                queryMemoCache.put(key, computed);
+            }
+        }
+        return computed;
+    }
+
+    private SessionMetadataIndex metadataIndex() {
+        if (!memoizationEnabled) {
+            graphScanCount.incrementAndGet();
+            return new SessionMetadataIndex(graph, this);
+        }
+        SessionMetadataIndex idx = sessionMetadataIndex;
+        if (idx != null) {
+            return idx;
+        }
+        synchronized (this) {
+            idx = sessionMetadataIndex;
+            if (idx == null) {
+                graphScanCount.incrementAndGet();
+                idx = new SessionMetadataIndex(graph, this);
+                sessionMetadataIndex = idx;
+            }
+            return idx;
+        }
+    }
+
+    /** Returns all nodes of {@code kind} in {@code context} (or across all contexts when {@code context} is empty). */
+    public List<KnowledgeGraph.Node> nodesByKind(String context, String kind) {
+        Objects.requireNonNull(kind, "kind");
+        return metadataIndex().nodesByKind(context, kind);
+    }
+
+    /** Returns all edges of {@code kind} in {@code context} (or across all contexts when {@code context} is empty). */
+    public List<KnowledgeGraph.Edge> edgesByKind(String context, String kind) {
+        Objects.requireNonNull(kind, "kind");
+        return metadataIndex().edgesByKind(context, kind);
+    }
+
+    /** Returns all outgoing edges from {@code sourceId} in {@code context} (or across all contexts when empty). */
+    public List<KnowledgeGraph.Edge> edgesBySource(String context, String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return metadataIndex().edgesBySource(context, sourceId);
+    }
+
+    /** Returns all graph evidence entries of {@code family} in deterministic graph order (single-scan indexed). */
+    public List<GraphEvidence> evidenceByFamily(String family) {
+        Objects.requireNonNull(family, "family");
+        return metadataIndex().evidenceByFamily(family);
+    }
+
+    /** Parses an immutable graph evidence JSON payload with per-session memoization. */
+    public Map<String, Object> parsedEvidence(GraphEvidence evidence) {
+        Objects.requireNonNull(evidence, "evidence");
+        if (memoizationEnabled) {
+            var cached = parsedEvidenceCache.get(evidence.identity());
+            if (cached != null) {
+                return cached;
+            }
+        }
+        try {
+            var parsed = Collections.unmodifiableMap(GraphJson.object(
+                    GraphJson.read(evidence.canonicalJson(), new GraphJson.Limits(8_000_000, 128, 200_000))));
+            if (memoizationEnabled && parsedEvidenceCache.size() < 65_536) {
+                parsedEvidenceCache.putIfAbsent(evidence.identity(), parsed);
+            }
+            return parsed;
+        } catch (IllegalArgumentException malformed) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * Lazily populates and memoizes member/annotation metadata for one class (MeCheck Fig. 6).
+     * {@code context} may be empty to search across all contexts deterministically.
+     */
+    public Optional<ClassMetadata> classMetadata(String context, String fqcnOrNodeId) {
+        Objects.requireNonNull(fqcnOrNodeId, "fqcnOrNodeId");
+        return metadataIndex().classMetadata(context, fqcnOrNodeId, memoizationEnabled);
+    }
+
+    /** Returns all indexed class FQNs present in {@code context} (or all contexts when empty), sorted deterministically. */
+    public List<String> indexedClassNames(String context) {
+        return metadataIndex().indexedClassNames(context);
+    }
+
     public Result<EntityView> entities(Request request, String search, Page page) {
         Objects.requireNonNull(search);
-        var p = new Prepared(request, false);
-        String needle = search.toLowerCase(Locale.ROOT);
-        var values = p.entities.values().stream().filter(e -> scopeIncludes(e, request.scope()))
-                .filter(e -> needle.isEmpty() || e.identity().equalsIgnoreCase(search)
-                        || e.spelling().map(s -> containsIgnoreCase(s, needle)).orElse(false)
-                        || e.canonicalName().map(s -> containsIgnoreCase(s, needle)).orElse(false)
-                        || e.qualifiedName().map(s -> containsIgnoreCase(s, needle)).orElse(false))
-                .toList();
-        return page(p, "entities", search, values, EntityView::identity, page);
+        Objects.requireNonNull(page);
+        return memoizedResult("entities", request, List.of(search, page), () -> {
+            var p = new Prepared(request, false);
+            String needle = search.toLowerCase(Locale.ROOT);
+            var values = p.entities.values().stream().filter(e -> scopeIncludes(e, request.scope()))
+                    .filter(e -> needle.isEmpty() || e.identity().equalsIgnoreCase(search)
+                            || e.spelling().map(s -> containsIgnoreCase(s, needle)).orElse(false)
+                            || e.canonicalName().map(s -> containsIgnoreCase(s, needle)).orElse(false)
+                            || e.qualifiedName().map(s -> containsIgnoreCase(s, needle)).orElse(false))
+                    .toList();
+            return page(p, "entities", search, values, EntityView::identity, page);
+        });
     }
 
     private static boolean containsIgnoreCase(String value, String lowerNeedle) {
@@ -441,12 +708,15 @@ public final class ArchitectureQueryService {
     }
 
     public Result<EntityView> entity(Request request, String identity) {
-        var p = new Prepared(request, false);
-        var value = p.entities.get(identity);
-        if (value == null)
-            p.budget.qualify("ENTITY_UNAVAILABLE");
-        return result(p, "entity", identity, value == null ? List.of() : List.of(value), Optional.empty(),
-                value == null ? Optional.empty() : Optional.of(1L));
+        Objects.requireNonNull(identity);
+        return memoizedResult("entity", request, identity, () -> {
+            var p = new Prepared(request, false);
+            var value = p.entities.get(identity);
+            if (value == null)
+                p.budget.qualify("ENTITY_UNAVAILABLE");
+            return result(p, "entity", identity, value == null ? List.of() : List.of(value), Optional.empty(),
+                    value == null ? Optional.empty() : Optional.of(1L));
+        });
     }
 
     /**
@@ -454,46 +724,57 @@ public final class ArchitectureQueryService {
      * or dependencies.
      */
     public Result<EntityView> children(Request request, String identity, Page page) {
-        var p = new Prepared(request, false);
-        if (!p.nodes.containsKey(identity) && p.budget.running())
-            throw new IllegalArgumentException("Parent outside context");
-        var children = new TreeMap<String, EntityView>();
-        int count = 0;
-        for (var edge : graph.edges(request.context())) {
-            if (!p.budget.scan())
-                break;
-            if (++count > request.limits().maxEdges()) {
-                p.budget.halt(StopReason.INPUT);
-                break;
+        Objects.requireNonNull(identity);
+        Objects.requireNonNull(page);
+        return memoizedResult("children", request, List.of(identity, page), () -> {
+            var p = new Prepared(request, false);
+            if (!p.nodes.containsKey(identity) && p.budget.running())
+                throw new IllegalArgumentException("Parent outside context");
+            var children = new TreeMap<String, EntityView>();
+            int count = 0;
+            for (var edge : graph.edges(request.context())) {
+                if (!p.budget.scan())
+                    break;
+                if (++count > request.limits().maxEdges()) {
+                    p.budget.halt(StopReason.INPUT);
+                    break;
+                }
+                if (!edge.source().equals(identity)
+                        || !Set.of("graph.contains", "graph.declares", "graph.owns-source").contains(edge.kind()))
+                    continue;
+                if (edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) {
+                    p.budget.qualify("UNRESOLVED_CONTAINMENT");
+                    continue;
+                }
+                for (var target : edge.target().identities()) {
+                    var child = p.entities.get(target);
+                    if (child != null && scopeIncludes(child, request.scope()) && p.budget.reserve(1))
+                        children.put(target, child);
+                }
             }
-            if (!edge.source().equals(identity)
-                    || !Set.of("graph.contains", "graph.declares", "graph.owns-source").contains(edge.kind()))
-                continue;
-            if (edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) {
-                p.budget.qualify("UNRESOLVED_CONTAINMENT");
-                continue;
-            }
-            for (var target : edge.target().identities()) {
-                var child = p.entities.get(target);
-                if (child != null && scopeIncludes(child, request.scope()) && p.budget.reserve(1))
-                    children.put(target, child);
-            }
-        }
-        return page(p, "children", identity, List.copyOf(children.values()), EntityView::identity, page);
+            return page(p, "children", identity, List.copyOf(children.values()), EntityView::identity, page);
+        });
     }
 
     public Result<EdgeView> edges(Request request, Page page) {
-        var p = new Prepared(request, true);
-        return page(p, "edges", "",
-                p.edges.stream().map(e -> e.view).sorted(Comparator.comparing(EdgeView::identity)).toList(),
-                EdgeView::identity, page);
+        Objects.requireNonNull(page);
+        return memoizedResult("edges", request, page, () -> {
+            var p = new Prepared(request, true);
+            return page(p, "edges", "",
+                    p.edges.stream().map(e -> e.view).sorted(Comparator.comparing(EdgeView::identity)).toList(),
+                    EdgeView::identity, page);
+        });
     }
 
     public Result<EdgeView> dependencies(Request request, String source, Page page) {
-        var p = new Prepared(request, true);
-        requireEndpoint(p, source);
-        return page(p, "dependencies", source, p.adjacency.getOrDefault(source, List.of()).stream().map(e -> e.view)
-                .sorted(Comparator.comparing(EdgeView::identity)).toList(), EdgeView::identity, page);
+        Objects.requireNonNull(source);
+        Objects.requireNonNull(page);
+        return memoizedResult("dependencies", request, List.of(source, page), () -> {
+            var p = new Prepared(request, true);
+            requireEndpoint(p, source);
+            return page(p, "dependencies", source, p.adjacency.getOrDefault(source, List.of()).stream().map(e -> e.view)
+                    .sorted(Comparator.comparing(EdgeView::identity)).toList(), EdgeView::identity, page);
+        });
     }
 
     /**
@@ -501,97 +782,107 @@ public final class ArchitectureQueryService {
      * definite projected edge.
      */
     public Result<RelationshipView> relationships(Request request, Page page) {
-        var p = new Prepared(request, false);
-        var values = new ArrayList<RelationshipView>();
-        int count = 0;
-        for (var e : graph.edges(request.context()))
-            if (request.relationshipKinds().contains(e.kind())) {
-                if (!p.budget.scan())
-                    break;
-                if (++count > request.limits().maxEdges()) {
-                    p.budget.halt(StopReason.INPUT);
-                    break;
+        Objects.requireNonNull(page);
+        return memoizedResult("relationships", request, page, () -> {
+            var p = new Prepared(request, false);
+            var values = new ArrayList<RelationshipView>();
+            int count = 0;
+            for (var e : graph.edges(request.context()))
+                if (request.relationshipKinds().contains(e.kind())) {
+                    if (!p.budget.scan())
+                        break;
+                    if (++count > request.limits().maxEdges()) {
+                        p.budget.halt(StopReason.INPUT);
+                        break;
+                    }
+                    if (!p.entities.containsKey(e.source()))
+                        continue;
+                    values.add(new RelationshipView(e.identity(), e.source(), e.kind(), e.target().state().name(),
+                            bounded(e.target().identities(), p.budget),
+                            e.target().unresolvedReference().map(ContentDigest::sha256Utf8),
+                            bounded(e.evidence(), p.budget), e.region()));
                 }
-                if (!p.entities.containsKey(e.source()))
-                    continue;
-                values.add(new RelationshipView(e.identity(), e.source(), e.kind(), e.target().state().name(),
-                        bounded(e.target().identities(), p.budget),
-                        e.target().unresolvedReference().map(ContentDigest::sha256Utf8),
-                        bounded(e.evidence(), p.budget), e.region()));
-            }
-        return page(p, "relationships", "", values, RelationshipView::identity, page);
+            return page(p, "relationships", "", values, RelationshipView::identity, page);
+        });
     }
 
     public Result<Neighborhood> expand(Request request, String source) {
-        var p = new Prepared(request, true);
-        requireEndpoint(p, source);
-        var selected = new ArrayList<EdgeView>();
-        var ids = new TreeSet<String>();
-        ids.add(source);
-        for (var e : p.adjacency.getOrDefault(source, List.of())) {
-            if (selected.size() == request.limits().maxResults()
-                    || !ids.contains(e.target) && ids.size() == request.limits().maxResults()) {
-                p.budget.frontier(e.target);
-                p.budget.halt(StopReason.OUTPUT);
-                break;
+        Objects.requireNonNull(source);
+        return memoizedResult("expand", request, source, () -> {
+            var p = new Prepared(request, true);
+            requireEndpoint(p, source);
+            var selected = new ArrayList<EdgeView>();
+            var ids = new TreeSet<String>();
+            ids.add(source);
+            for (var e : p.adjacency.getOrDefault(source, List.of())) {
+                if (selected.size() == request.limits().maxResults()
+                        || !ids.contains(e.target) && ids.size() == request.limits().maxResults()) {
+                    p.budget.frontier(e.target);
+                    p.budget.halt(StopReason.OUTPUT);
+                    break;
+                }
+                selected.add(e.view);
+                ids.add(e.target);
             }
-            selected.add(e.view);
-            ids.add(e.target);
-        }
-        return result(p, "expand", source,
-                List.of(new Neighborhood(ids.stream().map(p.entities::get).toList(), selected)), Optional.empty(),
-                Optional.empty());
+            return result(p, "expand", source,
+                    List.of(new Neighborhood(ids.stream().map(p.entities::get).toList(), selected)), Optional.empty(),
+                    Optional.empty());
+        });
     }
 
     public Result<Summary> summary(Request request) {
-        var p = new Prepared(request, true);
-        var n = new TreeMap<String, Long>();
-        var e = new TreeMap<String, Long>();
-        p.entities.values().forEach(v -> n.merge(v.kind(), 1L, Long::sum));
-        p.edges.forEach(v -> v.kinds.forEach(k -> e.merge(k, 1L, Long::sum)));
-        return result(p, "summary", "", List.of(new Summary(n, e, graph.contexts().size(), graph.identity(),
-                "Distinct context-qualified nodes; logical projected edges retain raw supports with explicit expansion limits. Counts are source dependencies, not runtime calls.")),
-                Optional.empty(), Optional.of(1L));
+        return memoizedResult("summary", request, "", () -> {
+            var p = new Prepared(request, true);
+            var n = new TreeMap<String, Long>();
+            var e = new TreeMap<String, Long>();
+            p.entities.values().forEach(v -> n.merge(v.kind(), 1L, Long::sum));
+            p.edges.forEach(v -> v.kinds.forEach(k -> e.merge(k, 1L, Long::sum)));
+            return result(p, "summary", "", List.of(new Summary(n, e, graph.contexts().size(), graph.identity(),
+                    "Distinct context-qualified nodes; logical projected edges retain raw supports with explicit expansion limits. Counts are source dependencies, not runtime calls.")),
+                    Optional.empty(), Optional.of(1L));
+        });
     }
 
     public Result<MetricProjection> metricProjection(Request request) {
-        var p = new Prepared(request, true);
-        var vertices = p.entities.values().stream().filter(v -> scopeIncludes(v, request.scope())).toList();
-        var active = new TreeSet<String>();
-        var unknown = new TreeSet<String>();
-        if (p.catalog != null && request.scope() == Scope.SPRING_COMPONENT)
-            for (var node : vertices) {
-                if (!p.budget.scan())
-                    break;
-                var region = p.catalog.activate(node.identity());
-                // Candidate metadata alone is not proof of activation; a definition fact must
-                // have been supplied.
-                if (!p.catalog.activation.containsKey(node.identity())) {
-                    unknown.add(node.identity());
-                    p.budget.qualify("ACTIVATION_EVIDENCE_UNAVAILABLE");
-                    continue;
+        return memoizedResult("metric-projection", request, "full-declared-scope", () -> {
+            var p = new Prepared(request, true);
+            var vertices = p.entities.values().stream().filter(v -> scopeIncludes(v, request.scope())).toList();
+            var active = new TreeSet<String>();
+            var unknown = new TreeSet<String>();
+            if (p.catalog != null && request.scope() == Scope.SPRING_COMPONENT)
+                for (var node : vertices) {
+                    if (!p.budget.scan())
+                        break;
+                    var region = p.catalog.activate(node.identity());
+                    // Candidate metadata alone is not proof of activation; a definition fact must
+                    // have been supplied.
+                    if (!p.catalog.activation.containsKey(node.identity())) {
+                        unknown.add(node.identity());
+                        p.budget.qualify("ACTIVATION_EVIDENCE_UNAVAILABLE");
+                        continue;
+                    }
+                    var check = region.check(p.budget, request.realization());
+                    var c = region.classify(p.budget);
+                    if (check.truth() == Truth.UNKNOWN || c == Classification.UNKNOWN) {
+                        unknown.add(node.identity());
+                        p.budget.qualify("UNKNOWN_FEASIBILITY");
+                    }
+                    boolean selected = switch (request.projection()) {
+                        case REALIZED -> p.catalog.realizationValid && check.truth() == Truth.SAT;
+                        case MUST -> c == Classification.MUST;
+                        case MAY -> c == Classification.MAY || request.includeMust() && c == Classification.MUST;
+                        case BOUNDED_UNION -> check.truth() == Truth.SAT;
+                        case UNKNOWN_OVERLAY -> false;
+                    };
+                    if (selected)
+                        active.add(node.identity());
                 }
-                var check = region.check(p.budget, request.realization());
-                var c = region.classify(p.budget);
-                if (check.truth() == Truth.UNKNOWN || c == Classification.UNKNOWN) {
-                    unknown.add(node.identity());
-                    p.budget.qualify("UNKNOWN_FEASIBILITY");
-                }
-                boolean selected = switch (request.projection()) {
-                    case REALIZED -> p.catalog.realizationValid && check.truth() == Truth.SAT;
-                    case MUST -> c == Classification.MUST;
-                    case MAY -> c == Classification.MAY || request.includeMust() && c == Classification.MUST;
-                    case BOUNDED_UNION -> check.truth() == Truth.SAT;
-                    case UNKNOWN_OVERLAY -> false;
-                };
-                if (selected)
-                    active.add(node.identity());
-            }
-        p.budget.reserve((long) vertices.size() + p.edges.size() + active.size() + unknown.size());
-        return result(
-                p, "metric-projection", "full-declared-scope", List.of(new MetricProjection(vertices,
-                        p.edges.stream().map(e -> e.view).toList(), List.copyOf(active), List.copyOf(unknown))),
-                Optional.empty(), Optional.empty());
+            p.budget.reserve((long) vertices.size() + p.edges.size() + active.size() + unknown.size());
+            return result(
+                    p, "metric-projection", "full-declared-scope", List.of(new MetricProjection(vertices,
+                            p.edges.stream().map(e -> e.view).toList(), List.copyOf(active), List.copyOf(unknown))),
+                    Optional.empty(), Optional.empty());
+        });
     }
 
     public Result<Path> findPaths(Request request, String source, String target) {
@@ -617,21 +908,27 @@ public final class ArchitectureQueryService {
     }
 
     private Result<Path> traverse(Request request, String source, Optional<String> target, boolean shortest) {
-        var p = new Prepared(request, true);
-        requireEndpoint(p, source);
-        target.ifPresent(t -> requireEndpoint(p, t));
-        var paths = BoundedGraphTraversal.paths(p, source, target, shortest);
-        return result(p, shortest ? "shortest-path" : target.isPresent() ? "paths" : "reachability",
-                List.of(source, target), paths, Optional.empty(), Optional.empty());
+        Objects.requireNonNull(source);
+        Objects.requireNonNull(target);
+        String op = shortest ? "shortest-path" : target.isPresent() ? "paths" : "reachability";
+        return memoizedResult(op, request, List.of(source, target), () -> {
+            var p = new Prepared(request, true);
+            requireEndpoint(p, source);
+            target.ifPresent(t -> requireEndpoint(p, t));
+            var paths = BoundedGraphTraversal.paths(p, source, target, shortest);
+            return result(p, op, List.of(source, target), paths, Optional.empty(), Optional.empty());
+        });
     }
 
     public Result<Path> findCycles(Request request) {
-        var p = new Prepared(request, true);
-        var cycles = BoundedGraphTraversal.cycles(p);
-        return result(p, "cycles", "", cycles, Optional.empty(),
-                p.budget.stop == StopReason.NONE && p.budget.unknown == 0 && p.budget.reasons.isEmpty()
-                        ? Optional.of((long) cycles.size())
-                        : Optional.empty());
+        return memoizedResult("cycles", request, "", () -> {
+            var p = new Prepared(request, true);
+            var cycles = BoundedGraphTraversal.cycles(p);
+            return result(p, "cycles", "", cycles, Optional.empty(),
+                    p.budget.stop == StopReason.NONE && p.budget.unknown == 0 && p.budget.reasons.isEmpty()
+                            ? Optional.of((long) cycles.size())
+                            : Optional.empty());
+        });
     }
 
     /**
@@ -644,21 +941,24 @@ public final class ArchitectureQueryService {
             throw new IllegalArgumentException("Induced edge budget exceeded");
         if (request.projection() != Projection.BOUNDED_UNION || request.direction() != Direction.OUTGOING)
             throw new IllegalArgumentException("Policy cycles require outgoing BOUNDED_UNION dependencies");
-        var p = new Prepared(request, true);
-        if (p.budget.reserve(eligibleEdges.size())) {
-            var missing = new HashSet<>(eligibleEdges);
-            p.edges.forEach(e -> missing.remove(e.view.identity()));
-            if (!missing.isEmpty())
-                p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");
-        }
-        p.edges.removeIf(e -> !eligibleEdges.contains(e.view.identity()));
-        p.adjacency.values().forEach(v -> v.removeIf(e -> !eligibleEdges.contains(e.view.identity())));
-        var cycles = BoundedGraphTraversal.cycles(p, true);
-        return result(p, "policy-cycles", List.of(ArchitectureCondition.RULE_VERSION, new TreeSet<>(eligibleEdges)),
-                cycles, Optional.empty(),
-                p.budget.stop == StopReason.NONE && p.budget.unknown == 0 && p.budget.reasons.isEmpty()
-                        ? Optional.of((long) cycles.size())
-                        : Optional.empty());
+        var sortedEligible = new TreeSet<>(eligibleEdges);
+        return memoizedResult("policy-cycles", request, List.of(ArchitectureCondition.RULE_VERSION, sortedEligible), () -> {
+            var p = new Prepared(request, true);
+            if (p.budget.reserve(sortedEligible.size())) {
+                var missing = new HashSet<>(sortedEligible);
+                p.edges.forEach(e -> missing.remove(e.view.identity()));
+                if (!missing.isEmpty())
+                    p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");
+            }
+            p.edges.removeIf(e -> !sortedEligible.contains(e.view.identity()));
+            p.adjacency.values().forEach(v -> v.removeIf(e -> !sortedEligible.contains(e.view.identity())));
+            var cycles = BoundedGraphTraversal.cycles(p, true);
+            return result(p, "policy-cycles", List.of(ArchitectureCondition.RULE_VERSION, sortedEligible),
+                    cycles, Optional.empty(),
+                    p.budget.stop == StopReason.NONE && p.budget.unknown == 0 && p.budget.reasons.isEmpty()
+                            ? Optional.of((long) cycles.size())
+                            : Optional.empty());
+        });
     }
 
     public Result<ArchitectureCondition.Evaluation> condition(Request request,
@@ -666,56 +966,62 @@ public final class ArchitectureQueryService {
         Objects.requireNonNull(predicate);
         if (request.projection() != Projection.BOUNDED_UNION || request.direction() != Direction.OUTGOING)
             throw new IllegalArgumentException("Condition composition requires outgoing BOUNDED_UNION dependencies");
-        var p = new Prepared(request, true);
-        var index = new HashMap<String, LogicalEdge>();
-        if (p.budget.reserve(2L * p.edges.size()))
-            p.edges.forEach(e -> index.put(e.view.identity(), e));
-        QueryRegion union = null;
-        var evidence = new TreeSet<ContentDigest>();
-        var regions = new TreeSet<String>();
-        for (var term : predicate.alternatives()) {
-            QueryRegion joint = QueryRegion.universal();
-            for (var id : term.edges()) {
-                if (!p.budget.step()) {
-                    joint = QueryRegion.unknown();
-                    break;
-                }
-                var edge = index.get(id);
-                if (edge == null) {
-                    p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");
-                    joint = joint.combine(QueryRegion.unknown(), true, p.budget);
-                } else {
-                    joint = joint.combine(edge.region, true, p.budget);
-                    if (p.budget.reserve((long) edge.evidence.size() + edge.regions.size())) {
-                        evidence.addAll(edge.evidence);
-                        regions.addAll(edge.regions);
+        return memoizedResult("condition", request, List.of(ArchitectureCondition.VERSION, predicate), () -> {
+            var p = new Prepared(request, true);
+            var index = new HashMap<String, LogicalEdge>();
+            if (p.budget.reserve(2L * p.edges.size()))
+                p.edges.forEach(e -> index.put(e.view.identity(), e));
+            QueryRegion union = null;
+            var evidence = new TreeSet<ContentDigest>();
+            var regions = new TreeSet<String>();
+            for (var term : predicate.alternatives()) {
+                QueryRegion joint = QueryRegion.universal();
+                for (var id : term.edges()) {
+                    if (!p.budget.step()) {
+                        joint = QueryRegion.unknown();
+                        break;
+                    }
+                    var edge = index.get(id);
+                    if (edge == null) {
+                        p.budget.qualify("PREDICATE_EDGE_UNAVAILABLE");
+                        joint = joint.combine(QueryRegion.unknown(), true, p.budget);
+                    } else {
+                        joint = joint.combine(edge.region, true, p.budget);
+                        if (p.budget.reserve((long) edge.evidence.size() + edge.regions.size())) {
+                            evidence.addAll(edge.evidence);
+                            regions.addAll(edge.regions);
+                        }
                     }
                 }
+                union = union == null ? joint : union.combine(joint, false, p.budget);
             }
-            union = union == null ? joint : union.combine(joint, false, p.budget);
-        }
-        if (!p.budget.running())
-            union = QueryRegion.unknown();
-        var classification = union.classify(p.budget);
-        var yes = union.check(p.budget, Optional.empty());
-        var no = union.negate().check(p.budget, Optional.empty());
-        if (!p.budget.running())
-            classification = Classification.UNKNOWN;
-        if (classification == Classification.UNKNOWN)
-            p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
-        var regionId = ContentDigest.sha256Utf8(
-                CanonicalJson.write(List.of(ArchitectureCondition.VERSION, request.identity(), union.identity())));
-        Function<Witness, Witness> bind = w -> new Witness(w.world(), w.assignment(), regionId, w.formulaReplayed(),
-                w.semanticReplayed());
-        var value = new ArchitectureCondition.Evaluation(regionId, classification, yes.witness().map(bind),
-                no.witness().map(bind), bounded(evidence, p.budget), bounded(regions, p.budget));
-        return result(p, "condition", List.of(ArchitectureCondition.VERSION, predicate), List.of(value),
-                Optional.empty(), Optional.of(1L));
+            if (!p.budget.running())
+                union = QueryRegion.unknown();
+            var classification = union.classify(p.budget);
+            var yes = union.check(p.budget, Optional.empty());
+            var no = union.negate().check(p.budget, Optional.empty());
+            if (!p.budget.running())
+                classification = Classification.UNKNOWN;
+            if (classification == Classification.UNKNOWN)
+                p.budget.qualify("PREDICATE_TRUTH_UNKNOWN");
+            var regionId = ContentDigest.sha256Utf8(
+                    CanonicalJson.write(List.of(ArchitectureCondition.VERSION, request.identity(), union.identity())));
+            Function<Witness, Witness> bind = w -> new Witness(w.world(), w.assignment(), regionId, w.formulaReplayed(),
+                    w.semanticReplayed());
+            var value = new ArchitectureCondition.Evaluation(regionId, classification, yes.witness().map(bind),
+                    no.witness().map(bind), bounded(evidence, p.budget), bounded(regions, p.budget));
+            return result(p, "condition", List.of(ArchitectureCondition.VERSION, predicate), List.of(value),
+                    Optional.empty(), Optional.of(1L));
+        });
     }
 
     public Result<ArchitectureCondition.Evaluation> ruleCondition(Request request,
             ArchitectureCondition.RulePredicate predicate) {
-        return ruleCondition(prepareRuleRegion(request, predicate), request, predicate);
+        Objects.requireNonNull(predicate);
+        if (request.projection() != Projection.BOUNDED_UNION || request.direction() != Direction.OUTGOING)
+            throw new IllegalArgumentException("Rule composition requires outgoing BOUNDED_UNION dependencies");
+        return memoizedResult("rule-condition", request, List.of(ArchitectureCondition.RULE_VERSION, predicate),
+                () -> ruleCondition(prepareRuleRegion(request, predicate), request, predicate));
     }
 
     private Result<ArchitectureCondition.Evaluation> ruleCondition(RuleRegion region, Request request,
@@ -855,49 +1161,52 @@ public final class ArchitectureQueryService {
      * Cartesian space.
      */
     public Result<RealizationView> realizations(Request request, Page page) {
-        var p = new Prepared(request, true);
-        var values = new TreeMap<String, RealizationView>();
-        if (p.catalog != null) {
-            for (var region : new TreeMap<>(p.catalog.regions).values()) {
-                if (!p.budget.step())
-                    break;
-                if (region.encoding == QueryRegion.Encoding.EXPLICIT)
-                    for (String world : new TreeSet<>(region.universe)) {
-                        if (values.containsKey(world))
-                            continue;
-                        if (!p.budget.scan() || !p.budget.reserve(1))
-                            break;
-                        var node = p.nodes.get(world);
-                        if (node != null)
-                            values.put(world,
-                                    new RealizationView(world, "RECORDED_WORLD",
-                                            new Realization(Optional.of(world), Map.of()),
-                                            profileBooleans(node, p.budget), node.evidence()));
-                    }
-                if (region.encoding == QueryRegion.Encoding.SYMBOLIC)
-                    for (var candidate : List.of(region.check(p.budget, Optional.empty()),
-                            region.negate().check(p.budget, Optional.empty())))
-                        candidate.witness().filter(w -> !w.assignment().isEmpty()).ifPresent(w -> {
-                            var variables = new TreeSet<String>();
-                            p.catalog.formulaNodes.values().forEach(f -> {
-                                if ("VARIABLE".equals(f.get("operator")))
-                                    variables.add(GraphJson.string(f.get("variable")));
+        Objects.requireNonNull(page);
+        return memoizedResult("realizations", request, page, () -> {
+            var p = new Prepared(request, true);
+            var values = new TreeMap<String, RealizationView>();
+            if (p.catalog != null) {
+                for (var region : new TreeMap<>(p.catalog.regions).values()) {
+                    if (!p.budget.step())
+                        break;
+                    if (region.encoding == QueryRegion.Encoding.EXPLICIT)
+                        for (String world : new TreeSet<>(region.universe)) {
+                            if (values.containsKey(world))
+                                continue;
+                            if (!p.budget.scan() || !p.budget.reserve(1))
+                                break;
+                            var node = p.nodes.get(world);
+                            if (node != null)
+                                values.put(world,
+                                        new RealizationView(world, "RECORDED_WORLD",
+                                                new Realization(Optional.of(world), Map.of()),
+                                                profileBooleans(node, p.budget), node.evidence()));
+                        }
+                    if (region.encoding == QueryRegion.Encoding.SYMBOLIC)
+                        for (var candidate : List.of(region.check(p.budget, Optional.empty()),
+                                region.negate().check(p.budget, Optional.empty())))
+                            candidate.witness().filter(w -> !w.assignment().isEmpty()).ifPresent(w -> {
+                                var variables = new TreeSet<String>();
+                                p.catalog.formulaNodes.values().forEach(f -> {
+                                    if ("VARIABLE".equals(f.get("operator")))
+                                        variables.add(GraphJson.string(f.get("variable")));
+                                });
+                                // Incomplete solver assignments are not offered as realized views.
+                                if (w.assignment().keySet().equals(variables) && p.budget.reserve(1)) {
+                                    String id = KnowledgeGraph.derivedIdentity("realization",
+                                            List.of(request.context(), w.assignment()));
+                                    values.put(id,
+                                            new RealizationView(id, "MODELED_EXAMPLE",
+                                                    new Realization(Optional.empty(), w.assignment()),
+                                                    symbolicProfileBooleans(w.assignment(), p.budget), List.of()));
+                                } else if (!w.assignment().keySet().equals(variables))
+                                    p.budget.qualify("INCOMPLETE_REALIZATION_EXAMPLE");
                             });
-                            // Incomplete solver assignments are not offered as realized views.
-                            if (w.assignment().keySet().equals(variables) && p.budget.reserve(1)) {
-                                String id = KnowledgeGraph.derivedIdentity("realization",
-                                        List.of(request.context(), w.assignment()));
-                                values.put(id,
-                                        new RealizationView(id, "MODELED_EXAMPLE",
-                                                new Realization(Optional.empty(), w.assignment()),
-                                                symbolicProfileBooleans(w.assignment(), p.budget), List.of()));
-                            } else if (!w.assignment().keySet().equals(variables))
-                                p.budget.qualify("INCOMPLETE_REALIZATION_EXAMPLE");
-                        });
+                }
             }
-        }
-        return page(p, "realizations", "recorded-and-modeled-examples", List.copyOf(values.values()),
-                RealizationView::identity, page);
+            return page(p, "realizations", "recorded-and-modeled-examples", List.copyOf(values.values()),
+                    RealizationView::identity, page);
+        });
     }
 
     /**
@@ -1012,33 +1321,40 @@ public final class ArchitectureQueryService {
     }
 
     public Result<EvidenceView> evidence(Request request, ContentDigest reference) {
-        var p = new Prepared(request, false);
-        boolean allowed = p.nodes.values().stream().anyMatch(n -> n.evidence().contains(reference))
-                || graph.edges().stream()
-                        .anyMatch(e -> e.context().equals(request.context()) && e.evidence().contains(reference))
-                || graph.contexts().stream()
-                        .anyMatch(c -> c.identity().equals(request.context()) && c.evidence().equals(reference));
-        var evidence = allowed ? graph.evidence(reference) : Optional.<GraphEvidence>empty();
-        if (evidence.isEmpty())
-            p.budget.qualify("EVIDENCE_UNAVAILABLE");
-        return result(p, "evidence", reference, evidence.stream().map(e -> describeEvidence(e, p.budget)).toList(),
-                Optional.empty(), Optional.empty());
+        Objects.requireNonNull(reference);
+        return memoizedResult("evidence", request, reference, () -> {
+            var p = new Prepared(request, false);
+            boolean allowed = p.nodes.values().stream().anyMatch(n -> n.evidence().contains(reference))
+                    || graph.edges().stream()
+                            .anyMatch(e -> e.context().equals(request.context()) && e.evidence().contains(reference))
+                    || graph.contexts().stream()
+                            .anyMatch(c -> c.identity().equals(request.context()) && c.evidence().equals(reference));
+            var evidence = allowed ? graph.evidence(reference) : Optional.<GraphEvidence>empty();
+            if (evidence.isEmpty())
+                p.budget.qualify("EVIDENCE_UNAVAILABLE");
+            return result(p, "evidence", reference, evidence.stream().map(e -> describeEvidence(e, p.budget)).toList(),
+                    Optional.empty(), Optional.empty());
+        });
     }
 
     public Result<EvidenceView> explain(Request request, String identity, Page page) {
-        var p = new Prepared(request, false);
-        var node = p.nodes.get(identity);
-        var refs = new TreeSet<ContentDigest>();
-        if (node != null && p.budget.reserve(node.evidence().size()))
-            refs.addAll(node.evidence());
-        for (var edge : graph.edges())
-            if (edge.context().equals(request.context()) && edge.identity().equals(identity)
-                    && p.budget.reserve(edge.evidence().size()))
-                refs.addAll(edge.evidence());
-        if (refs.isEmpty())
-            p.budget.qualify("EVIDENCE_UNAVAILABLE");
-        return evidencePage(p, "explain", identity, refs.stream().map(r -> graph.evidence(r).orElseThrow()).toList(),
-                page);
+        Objects.requireNonNull(identity);
+        Objects.requireNonNull(page);
+        return memoizedResult("explain", request, List.of(identity, page), () -> {
+            var p = new Prepared(request, false);
+            var node = p.nodes.get(identity);
+            var refs = new TreeSet<ContentDigest>();
+            if (node != null && p.budget.reserve(node.evidence().size()))
+                refs.addAll(node.evidence());
+            for (var edge : graph.edges())
+                if (edge.context().equals(request.context()) && edge.identity().equals(identity)
+                        && p.budget.reserve(edge.evidence().size()))
+                    refs.addAll(edge.evidence());
+            if (refs.isEmpty())
+                p.budget.qualify("EVIDENCE_UNAVAILABLE");
+            return evidencePage(p, "explain", identity, refs.stream().map(r -> graph.evidence(r).orElseThrow()).toList(),
+                    page);
+        });
     }
 
     public Result<EntityView> gaps(Request request, Page page) {
@@ -1057,15 +1373,20 @@ public final class ArchitectureQueryService {
     }
 
     public Result<EntityView> spring(Request request, Set<String> kinds, Page page) {
+        Objects.requireNonNull(kinds);
+        Objects.requireNonNull(page);
         if (!Set.of("BEAN_PRODUCER", "BEAN_DEFINITION_CANDIDATE", "INJECTION_POINT", "INJECTION_USE",
                 "REGISTRATION_EVENT", "REGISTRATION_TRANSITION", "ENDPOINT").containsAll(kinds) || kinds.isEmpty())
             throw new IllegalArgumentException("Explicit Spring inventory kinds required");
-        var p = new Prepared(request, false);
-        if (kinds.contains("ENDPOINT") && p.entities.values().stream().noneMatch(n -> n.kind().equals("ENDPOINT")))
-            p.budget.qualify("ENDPOINT_COVERAGE_UNAVAILABLE");
-        return page(p, "spring", new TreeSet<>(kinds),
-                p.entities.values().stream().filter(n -> kinds.contains(n.kind())).toList(), EntityView::identity,
-                page);
+        var sortedKinds = new TreeSet<>(kinds);
+        return memoizedResult("spring", request, List.of(sortedKinds, page), () -> {
+            var p = new Prepared(request, false);
+            if (sortedKinds.contains("ENDPOINT") && p.entities.values().stream().noneMatch(n -> n.kind().equals("ENDPOINT")))
+                p.budget.qualify("ENDPOINT_COVERAGE_UNAVAILABLE");
+            return page(p, "spring", sortedKinds,
+                    p.entities.values().stream().filter(n -> sortedKinds.contains(n.kind())).toList(), EntityView::identity,
+                    page);
+        });
     }
 
     public Result<EntityView> configurations(Request request, Page page) {
@@ -1076,19 +1397,25 @@ public final class ArchitectureQueryService {
     }
 
     private Result<EntityView> inventory(Request request, Set<String> kinds, Page page, String operation) {
-        var p = new Prepared(request, false);
-        return page(p, operation, new TreeSet<>(kinds),
-                p.entities.values().stream().filter(n -> kinds.contains(n.kind())).toList(), EntityView::identity,
-                page);
+        Objects.requireNonNull(page);
+        var sortedKinds = new TreeSet<>(kinds);
+        return memoizedResult(operation, request, List.of(sortedKinds, page), () -> {
+            var p = new Prepared(request, false);
+            return page(p, operation, sortedKinds,
+                    p.entities.values().stream().filter(n -> sortedKinds.contains(n.kind())).toList(), EntityView::identity,
+                    page);
+        });
     }
 
     public Result<EvidenceView> provenance(Request request) {
-        var p = new Prepared(request, false, true);
-        var context = graph.contexts().stream().filter(c -> c.identity().equals(request.context())).findFirst()
-                .orElseThrow();
-        return result(p, "provenance", "",
-                List.of(describeEvidence(graph.evidence(context.evidence()).orElseThrow(), p.budget)), Optional.empty(),
-                Optional.of(1L));
+        return memoizedResult("provenance", request, "", () -> {
+            var p = new Prepared(request, false, true);
+            var context = graph.contexts().stream().filter(c -> c.identity().equals(request.context())).findFirst()
+                    .orElseThrow();
+            return result(p, "provenance", "",
+                    List.of(describeEvidence(graph.evidence(context.evidence()).orElseThrow(), p.budget)), Optional.empty(),
+                    Optional.of(1L));
+        });
     }
 
     /**
@@ -1096,19 +1423,24 @@ public final class ArchitectureQueryService {
      * modeled-space/parameter descriptors.
      */
     public Result<EvidenceView> artifacts(Request request, Set<String> families, Page page) {
+        Objects.requireNonNull(families);
+        Objects.requireNonNull(page);
         if (families.isEmpty())
             throw new IllegalArgumentException("Explicit evidence families required");
-        var p = new Prepared(request, false);
-        var values = new ArrayList<GraphEvidence>();
-        for (var evidence : graph.evidence())
-            if (families.contains(evidence.family())) {
-                if (!p.budget.scan())
-                    break;
-                if (!p.budget.reserve(1))
-                    break;
-                values.add(evidence);
-            }
-        return evidencePage(p, "artifacts", new TreeSet<>(families), values, page);
+        var sortedFamilies = new TreeSet<>(families);
+        return memoizedResult("artifacts", request, List.of(sortedFamilies, page), () -> {
+            var p = new Prepared(request, false);
+            var values = new ArrayList<GraphEvidence>();
+            for (var evidence : graph.evidence())
+                if (sortedFamilies.contains(evidence.family())) {
+                    if (!p.budget.scan())
+                        break;
+                    if (!p.budget.reserve(1))
+                        break;
+                    values.add(evidence);
+                }
+            return evidencePage(p, "artifacts", sortedFamilies, values, page);
+        });
     }
 
     private Result<EvidenceView> evidencePage(Prepared p, String operation, Object argument,
@@ -2262,5 +2594,572 @@ public final class ArchitectureQueryService {
     private static boolean safeSpelling(Object value) {
         return value instanceof String text
                 && javax.lang.model.SourceVersion.isName(text, javax.lang.model.SourceVersion.RELEASE_21);
+    }
+
+    /**
+     * Single-scan immutable graph index with lazy per-class member & annotation population
+     * (inspired by MeCheck Fig. 6). Scanning the underlying KnowledgeGraph happens once per session;
+     * per-class fields, methods, constructors, and annotations are materialized on demand and memoized.
+     */
+    private static final class SessionMetadataIndex {
+        private final KnowledgeGraph graph;
+        private final ArchitectureQueryService owner;
+        private final Map<String, Map<String, List<KnowledgeGraph.Node>>> nodesByContextAndKind;
+        private final Map<String, List<KnowledgeGraph.Node>> nodesByKindAll;
+        private final Map<String, Map<String, KnowledgeGraph.Node>> nodeByContextAndId;
+        private final Map<String, KnowledgeGraph.Node> nodeByIdAll;
+        private final Map<String, Map<String, List<KnowledgeGraph.Edge>>> edgesByContextAndKind;
+        private final Map<String, List<KnowledgeGraph.Edge>> edgesByKindAll;
+        private final Map<String, Map<String, List<KnowledgeGraph.Edge>>> edgesByContextAndSource;
+        private final Map<String, List<KnowledgeGraph.Edge>> edgesBySourceAll;
+        private final Map<String, List<GraphEvidence>> evidenceByFamily;
+        private final Map<String, Map<String, String>> fqnToNodeIdByContext;
+        private final Map<String, String> fqnToNodeIdAll;
+        private final Map<String, Map<String, List<String>>> childMembersByOwner;
+        private final Map<String, Map<String, List<AnnotationMetadata>>> annotationsByOwner;
+        private final Map<String, Map<String, String>> typeShapeKindByNode;
+        private final Map<String, Boolean> typeAbstractByNode;
+        private final Map<String, Map<String, Object>> memberShapeByNode;
+        private final Map<String, String> returnTypeByMethod;
+        private final Map<String, String> fieldTypeByField;
+        private final Map<String, List<String>> paramTypesByMethod;
+        private final Map<String, Set<String>> superTypesByNode;
+        private final Map<String, String> docPathById;
+        private final java.util.concurrent.ConcurrentHashMap<String, Optional<ClassMetadata>> lazyClassCache =
+                new java.util.concurrent.ConcurrentHashMap<>();
+
+        SessionMetadataIndex(KnowledgeGraph graph, ArchitectureQueryService owner) {
+            this.graph = graph;
+            this.owner = owner;
+
+            var byCtxKind = new HashMap<String, Map<String, List<KnowledgeGraph.Node>>>();
+            var byKindAll = new HashMap<String, List<KnowledgeGraph.Node>>();
+            var byCtxId = new HashMap<String, Map<String, KnowledgeGraph.Node>>();
+            var byIdAll = new HashMap<String, KnowledgeGraph.Node>();
+            var fqnByCtx = new HashMap<String, Map<String, String>>();
+            var fqnAll = new TreeMap<String, String>();
+            var docs = new HashMap<String, String>();
+
+            // Single scan over nodes
+            for (var node : graph.nodes()) {
+                byCtxKind.computeIfAbsent(node.context(), k -> new HashMap<>())
+                        .computeIfAbsent(node.kind(), k -> new ArrayList<>()).add(node);
+                byKindAll.computeIfAbsent(node.kind(), k -> new ArrayList<>()).add(node);
+                byCtxId.computeIfAbsent(node.context(), k -> new HashMap<>()).put(node.identity(), node);
+                byIdAll.putIfAbsent(node.identity(), node);
+
+                if ("SOURCE_DOCUMENT".equals(node.kind())) {
+                    for (var ref : node.evidence()) {
+                        var ev = graph.evidence(ref).orElse(null);
+                        if (ev != null && ("source.document".equals(ev.family()) || "source.bytes".equals(ev.family()))) {
+                            var payload = owner.parsedEvidence(ev);
+                            Object pathObj = payload.get("path");
+                            if (pathObj == null && payload.get("document") instanceof Map<?, ?> docMap) {
+                                pathObj = docMap.get("path");
+                            }
+                            if (pathObj instanceof String p && !p.isBlank()) {
+                                docs.putIfAbsent(node.identity(), p);
+                                break;
+                            }
+                        }
+                    }
+                } else if ("TYPE".equals(node.kind())) {
+                    String fqcn = extractTypeFqcn(node);
+                    if (fqcn != null && !fqcn.isBlank()) {
+                        fqnByCtx.computeIfAbsent(node.context(), k -> new TreeMap<>()).putIfAbsent(fqcn, node.identity());
+                        fqnAll.putIfAbsent(fqcn, node.identity());
+                    }
+                }
+            }
+
+            // Single scan over edges
+            var eByCtxKind = new HashMap<String, Map<String, List<KnowledgeGraph.Edge>>>();
+            var eByKindAll = new HashMap<String, List<KnowledgeGraph.Edge>>();
+            var eByCtxSrc = new HashMap<String, Map<String, List<KnowledgeGraph.Edge>>>();
+            var eBySrcAll = new HashMap<String, List<KnowledgeGraph.Edge>>();
+            var children = new HashMap<String, Map<String, List<String>>>();
+            var supers = new HashMap<String, Set<String>>();
+
+            for (var edge : graph.edges()) {
+                eByCtxKind.computeIfAbsent(edge.context(), k -> new HashMap<>())
+                        .computeIfAbsent(edge.kind(), k -> new ArrayList<>()).add(edge);
+                eByKindAll.computeIfAbsent(edge.kind(), k -> new ArrayList<>()).add(edge);
+                eByCtxSrc.computeIfAbsent(edge.context(), k -> new HashMap<>())
+                        .computeIfAbsent(edge.source(), k -> new ArrayList<>()).add(edge);
+                eBySrcAll.computeIfAbsent(edge.source(), k -> new ArrayList<>()).add(edge);
+
+                if (edge.target().state() == KnowledgeGraph.TargetState.RESOLVED) {
+                    String target = edge.target().identities().getFirst();
+                    if ("graph.declares".equals(edge.kind()) || "graph.contains".equals(edge.kind())) {
+                        children.computeIfAbsent(edge.context(), k -> new HashMap<>())
+                                .computeIfAbsent(edge.source(), k -> new ArrayList<>()).add(target);
+                    } else if ("java.extends".equals(edge.kind()) || "java.implements".equals(edge.kind())) {
+                        var targetNode = byCtxId.getOrDefault(edge.context(), Map.of()).get(target);
+                        if (targetNode != null) {
+                            String targetFqcn = extractTypeFqcn(targetNode);
+                            if (targetFqcn != null && !targetFqcn.isBlank()) {
+                                supers.computeIfAbsent(edge.source(), k -> new TreeSet<>()).add(targetFqcn);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Single scan over evidence
+            var evByFam = new HashMap<String, List<GraphEvidence>>();
+            var typeKindMap = new HashMap<String, Map<String, String>>();
+            var typeAbsMap = new HashMap<String, Boolean>();
+            var memberShapes = new HashMap<String, Map<String, Object>>();
+            var retTypes = new HashMap<String, String>();
+            var fldTypes = new HashMap<String, String>();
+            var pTypes = new HashMap<String, List<String>>();
+            var annByOwner = new HashMap<String, Map<String, List<AnnotationMetadata>>>();
+
+            for (var ev : graph.evidence()) {
+                evByFam.computeIfAbsent(ev.family(), k -> new ArrayList<>()).add(ev);
+                switch (ev.family()) {
+                    case "java.type-shape" -> {
+                        var m = owner.parsedEvidence(ev);
+                        if (m.get("type") instanceof String typeId) {
+                            if (m.get("kind") instanceof String k) {
+                                typeKindMap.computeIfAbsent("", x -> new HashMap<>()).put(typeId, k);
+                            }
+                            if (m.get("abstractType") instanceof Boolean abs) {
+                                typeAbsMap.put(typeId, abs);
+                            }
+                        }
+                    }
+                    case "java.member-shape" -> {
+                        var m = owner.parsedEvidence(ev);
+                        if (m.get("member") instanceof String memberId) {
+                            memberShapes.put(memberId, m);
+                        }
+                    }
+                    case "java.type-use" -> {
+                        var m = owner.parsedEvidence(ev);
+                        if (m.get("owner") instanceof String ownerId && m.get("role") instanceof String role) {
+                            String resolvedType = extractTypeUseName(m.get("type"), byIdAll);
+                            if (resolvedType != null && !resolvedType.isBlank()) {
+                                if ("java.return-type".equals(role)) {
+                                    retTypes.putIfAbsent(ownerId, resolvedType);
+                                } else if ("java.field-type".equals(role)) {
+                                    fldTypes.putIfAbsent(ownerId, resolvedType);
+                                } else if ("java.parameter-type".equals(role)) {
+                                    pTypes.computeIfAbsent(ownerId, x -> new ArrayList<>()).add(resolvedType);
+                                }
+                            }
+                        }
+                    }
+                    case "java.annotation-use" -> {
+                        var m = owner.parsedEvidence(ev);
+                        if (m.get("owner") instanceof String ownerId) {
+                            String spelling = m.get("spelling") instanceof String s ? s : "";
+                            String annName = extractAnnotationName(m, spelling);
+                            String sourceFile = null;
+                            int line = 0;
+                            if (m.get("span") instanceof Map<?, ?> sp) {
+                                if (sp.get("document") instanceof String docId) {
+                                    sourceFile = docs.getOrDefault(docId, docId);
+                                }
+                                if (sp.get("startLine") instanceof Number n) {
+                                    line = n.intValue();
+                                }
+                            }
+                            var ann = new AnnotationMetadata(annName, spelling, Optional.of(ownerId),
+                                    Optional.ofNullable(sourceFile), line);
+                            annByOwner.computeIfAbsent("", x -> new HashMap<>())
+                                    .computeIfAbsent(ownerId, x -> new ArrayList<>()).add(ann);
+                        }
+                    }
+                    default -> {}
+                }
+            }
+
+            this.nodesByContextAndKind = freezeNestedListMap(byCtxKind);
+            this.nodesByKindAll = freezeListMap(byKindAll);
+            this.nodeByContextAndId = freezeNestedMap(byCtxId);
+            this.nodeByIdAll = Collections.unmodifiableMap(byIdAll);
+            this.edgesByContextAndKind = freezeNestedListMap(eByCtxKind);
+            this.edgesByKindAll = freezeListMap(eByKindAll);
+            this.edgesByContextAndSource = freezeNestedListMap(eByCtxSrc);
+            this.edgesBySourceAll = freezeListMap(eBySrcAll);
+            this.evidenceByFamily = freezeListMap(evByFam);
+            this.fqnToNodeIdByContext = freezeNestedMap(fqnByCtx);
+            this.fqnToNodeIdAll = Collections.unmodifiableMap(fqnAll);
+            this.childMembersByOwner = freezeNestedListMap(children);
+            this.annotationsByOwner = freezeNestedListMap(annByOwner);
+            this.typeShapeKindByNode = freezeNestedMap(typeKindMap);
+            this.typeAbstractByNode = Collections.unmodifiableMap(typeAbsMap);
+            this.memberShapeByNode = Collections.unmodifiableMap(memberShapes);
+            this.returnTypeByMethod = Collections.unmodifiableMap(retTypes);
+            this.fieldTypeByField = Collections.unmodifiableMap(fldTypes);
+            this.paramTypesByMethod = freezeListMap(pTypes);
+            this.superTypesByNode = Collections.unmodifiableMap(supers);
+            this.docPathById = Collections.unmodifiableMap(docs);
+        }
+
+        int indexedClassCount() {
+            return lazyClassCache.size();
+        }
+
+        List<KnowledgeGraph.Node> nodesByKind(String context, String kind) {
+            if (context == null || context.isEmpty()) {
+                return nodesByKindAll.getOrDefault(kind, List.of());
+            }
+            return nodesByContextAndKind.getOrDefault(context, Map.of()).getOrDefault(kind, List.of());
+        }
+
+        List<KnowledgeGraph.Edge> edgesByKind(String context, String kind) {
+            if (context == null || context.isEmpty()) {
+                return edgesByKindAll.getOrDefault(kind, List.of());
+            }
+            return edgesByContextAndKind.getOrDefault(context, Map.of()).getOrDefault(kind, List.of());
+        }
+
+        List<KnowledgeGraph.Edge> edgesBySource(String context, String sourceId) {
+            if (context == null || context.isEmpty()) {
+                return edgesBySourceAll.getOrDefault(sourceId, List.of());
+            }
+            return edgesByContextAndSource.getOrDefault(context, Map.of()).getOrDefault(sourceId, List.of());
+        }
+
+        List<GraphEvidence> evidenceByFamily(String family) {
+            return evidenceByFamily.getOrDefault(family, List.of());
+        }
+
+        List<String> indexedClassNames(String context) {
+            if (context == null || context.isEmpty()) {
+                return List.copyOf(fqnToNodeIdAll.keySet());
+            }
+            return List.copyOf(fqnToNodeIdByContext.getOrDefault(context, Map.of()).keySet());
+        }
+
+        Optional<ClassMetadata> classMetadata(String context, String fqcnOrNodeId, boolean cache) {
+            String ctxKey = context == null ? "" : context;
+            String cacheKey = ctxKey + "|" + fqcnOrNodeId;
+            if (cache) {
+                var existing = lazyClassCache.get(cacheKey);
+                if (existing != null) {
+                    return existing;
+                }
+            }
+            Optional<ClassMetadata> computed = materializeClass(ctxKey, fqcnOrNodeId);
+            if (cache) {
+                lazyClassCache.putIfAbsent(cacheKey, computed);
+            }
+            return computed;
+        }
+
+        private Optional<ClassMetadata> materializeClass(String context, String fqcnOrNodeId) {
+            String nodeId = null;
+            KnowledgeGraph.Node typeNode = null;
+            if (context.isEmpty()) {
+                typeNode = nodeByIdAll.get(fqcnOrNodeId);
+                if (typeNode == null) {
+                    nodeId = fqnToNodeIdAll.get(fqcnOrNodeId);
+                    if (nodeId != null) {
+                        typeNode = nodeByIdAll.get(nodeId);
+                    }
+                } else {
+                    nodeId = typeNode.identity();
+                }
+            } else {
+                var ctxNodes = nodeByContextAndId.getOrDefault(context, Map.of());
+                typeNode = ctxNodes.get(fqcnOrNodeId);
+                if (typeNode == null) {
+                    nodeId = fqnToNodeIdByContext.getOrDefault(context, Map.of()).get(fqcnOrNodeId);
+                    if (nodeId != null) {
+                        typeNode = ctxNodes.get(nodeId);
+                    }
+                } else {
+                    nodeId = typeNode.identity();
+                }
+            }
+            if (typeNode == null || !"TYPE".equals(typeNode.kind())) {
+                return Optional.empty();
+            }
+            String effectiveCtx = typeNode.context();
+            String fqcn = extractTypeFqcn(typeNode);
+            if (fqcn == null || fqcn.isBlank()) {
+                fqcn = fqcnOrNodeId;
+            }
+            String typeKind = typeShapeKindByNode.getOrDefault("", Map.of()).getOrDefault(nodeId, "CLASS");
+            boolean abstractType = typeAbstractByNode.getOrDefault(nodeId, "INTERFACE".equals(typeKind));
+            var superTypes = new TreeSet<String>(superTypesByNode.getOrDefault(nodeId, Set.of()));
+            var typeAnns = new ArrayList<AnnotationMetadata>(annotationsForNode(effectiveCtx, nodeId));
+            var constructors = new ArrayList<MemberMetadata>();
+            var methods = new ArrayList<MemberMetadata>();
+            var fields = new ArrayList<MemberMetadata>();
+
+            // Also read inline metadata directly from TYPE node's java.declaration evidence if supplied
+            for (var ref : typeNode.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null) continue;
+                var payload = owner.parsedEvidence(ev);
+                if (payload.get("superTypes") instanceof List<?> sts) {
+                    for (var s : sts) {
+                        if (s instanceof String st && !st.isBlank()) superTypes.add(st);
+                    }
+                }
+                if (payload.get("abstractType") instanceof Boolean abs) {
+                    abstractType = abs;
+                }
+                if (payload.get("typeKind") instanceof String tk && !tk.isBlank()) {
+                    typeKind = tk;
+                }
+            }
+
+            // Lazily materialize declared members for THIS class only
+            String simpleName = fqcn.contains(".") ? fqcn.substring(fqcn.lastIndexOf('.') + 1) : fqcn;
+            var childIds = childMembersByOwner.getOrDefault(effectiveCtx, Map.of()).getOrDefault(nodeId, List.of());
+            var ctxNodeMap = nodeByContextAndId.getOrDefault(effectiveCtx, Map.of());
+            for (String childId : childIds) {
+                var childNode = ctxNodeMap.get(childId);
+                if (childNode == null) continue;
+                if ("METHOD".equals(childNode.kind()) || "CONSTRUCTOR".equals(childNode.kind())) {
+                    var mm = materializeMember(effectiveCtx, childNode, simpleName);
+                    if ("CONSTRUCTOR".equals(mm.kind()) || "<init>".equals(mm.name()) || simpleName.equals(mm.name())) {
+                        constructors.add(mm);
+                    } else {
+                        methods.add(mm);
+                    }
+                } else if ("FIELD".equals(childNode.kind()) || "RECORD_COMPONENT".equals(childNode.kind())) {
+                    fields.add(materializeMember(effectiveCtx, childNode, simpleName));
+                }
+            }
+            constructors.sort(Comparator.comparingInt(MemberMetadata::paramCount).thenComparing(MemberMetadata::nodeId));
+            methods.sort(Comparator.comparing(MemberMetadata::name).thenComparingInt(MemberMetadata::paramCount).thenComparing(MemberMetadata::nodeId));
+            fields.sort(Comparator.comparing(MemberMetadata::name).thenComparing(MemberMetadata::nodeId));
+            typeAnns.sort(Comparator.comparing(AnnotationMetadata::name).thenComparing(AnnotationMetadata::rawSpelling));
+
+            return Optional.of(new ClassMetadata(nodeId, fqcn, typeKind, abstractType, superTypes,
+                    constructors, methods, fields, typeAnns));
+        }
+
+        private MemberMetadata materializeMember(String context, KnowledgeGraph.Node memberNode, String ownerSimpleName) {
+            String memberId = memberNode.identity();
+            String name = "";
+            boolean isStatic = false;
+            boolean isAbstract = false;
+            int paramCount = -1;
+            var paramTypes = new ArrayList<String>();
+            String returnType = returnTypeByMethod.get(memberId);
+            String fieldType = fieldTypeByField.get(memberId);
+
+            var shape = memberShapeByNode.get(memberId);
+            if (shape != null) {
+                if (shape.get("name") instanceof String n) name = n;
+                if (shape.get("staticMember") instanceof Boolean b) isStatic = b;
+                if (shape.get("abstractMember") instanceof Boolean b) isAbstract = b;
+            }
+            var indexedParams = paramTypesByMethod.get(memberId);
+            if (indexedParams != null) {
+                paramTypes.addAll(indexedParams);
+                paramCount = indexedParams.size();
+            }
+
+            for (var ref : memberNode.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null) continue;
+                var payload = owner.parsedEvidence(ev);
+                if ("java.declaration".equals(ev.family())) {
+                    if (payload.get("entity") instanceof Map<?, ?> entityMap) {
+                        Object cn = entityMap.get("canonicalName");
+                        if (cn instanceof String canonical) {
+                            if (name.isEmpty()) {
+                                name = extractMemberNameFromCanonical(canonical);
+                            }
+                            if (paramCount < 0) {
+                                int parsedArity = extractMethodArityFromCanonical(canonical);
+                                if (parsedArity >= 0) paramCount = parsedArity;
+                            }
+                        }
+                    }
+                    if (name.isEmpty() && payload.get("spelling") instanceof String sp && safeSpelling(sp)) {
+                        name = sp;
+                    }
+                    if (payload.get("paramCount") instanceof Number n && paramCount < 0) {
+                        paramCount = n.intValue();
+                    }
+                    if (payload.get("paramTypes") instanceof List<?> pts && paramTypes.isEmpty()) {
+                        for (var p : pts) {
+                            if (p instanceof String ps) paramTypes.add(ps);
+                        }
+                        if (paramCount < 0) paramCount = paramTypes.size();
+                    }
+                    if (returnType == null && payload.get("returnType") instanceof String rt && !rt.isBlank()) {
+                        returnType = rt;
+                    }
+                    if (fieldType == null && payload.get("fieldType") instanceof String ft && !ft.isBlank()) {
+                        fieldType = ft;
+                    }
+                    if (payload.get("staticMember") instanceof Boolean b) isStatic = b;
+                    if (payload.get("abstractMember") instanceof Boolean b) isAbstract = b;
+                }
+            }
+            if (paramCount < 0) {
+                paramCount = paramTypes.size();
+            }
+            String kind = memberNode.kind();
+            if ("<init>".equals(name) || ownerSimpleName.equals(name)) {
+                kind = "CONSTRUCTOR";
+            }
+            var anns = annotationsForNode(context, memberId);
+            return new MemberMetadata(memberId, name, kind, isStatic, isAbstract, paramCount,
+                    paramTypes, Optional.ofNullable(returnType), Optional.ofNullable(fieldType), anns);
+        }
+
+        private List<AnnotationMetadata> annotationsForNode(String context, String ownerId) {
+            var out = new ArrayList<AnnotationMetadata>(
+                    annotationsByOwner.getOrDefault("", Map.of()).getOrDefault(ownerId, List.of()));
+            // Also follow graph.has-annotation-use edges in case annotation evidence uses edge linkage
+            var outEdges = edgesByContextAndSource.getOrDefault(context, Map.of()).getOrDefault(ownerId, List.of());
+            var ctxNodeMap = nodeByContextAndId.getOrDefault(context, Map.of());
+            var seen = new HashSet<String>();
+            out.forEach(a -> seen.add(a.name() + "|" + a.rawSpelling()));
+            for (var edge : outEdges) {
+                if (!"graph.has-annotation-use".equals(edge.kind()) || edge.target().state() != KnowledgeGraph.TargetState.RESOLVED) {
+                    continue;
+                }
+                var annNode = ctxNodeMap.get(edge.target().identities().getFirst());
+                if (annNode == null) continue;
+                for (var ref : annNode.evidence()) {
+                    var ev = graph.evidence(ref).orElse(null);
+                    if (ev == null || !"java.annotation-use".equals(ev.family())) continue;
+                    var m = owner.parsedEvidence(ev);
+                    String spelling = m.get("spelling") instanceof String s ? s : "";
+                    String annName = extractAnnotationName(m, spelling);
+                    if (seen.add(annName + "|" + spelling)) {
+                        String sourceFile = null;
+                        int line = 0;
+                        if (m.get("span") instanceof Map<?, ?> sp) {
+                            if (sp.get("document") instanceof String docId) {
+                                sourceFile = docPathById.getOrDefault(docId, docId);
+                            }
+                            if (sp.get("startLine") instanceof Number n) {
+                                line = n.intValue();
+                            }
+                        }
+                        out.add(new AnnotationMetadata(annName, spelling, Optional.of(ownerId),
+                                Optional.ofNullable(sourceFile), line));
+                    }
+                }
+            }
+            out.sort(Comparator.comparing(AnnotationMetadata::name).thenComparing(AnnotationMetadata::rawSpelling));
+            return List.copyOf(out);
+        }
+
+        private String extractTypeFqcn(KnowledgeGraph.Node node) {
+            for (var ref : node.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null || !"java.declaration".equals(ev.family())) continue;
+                var payload = owner.parsedEvidence(ev);
+                if (payload.get("entity") instanceof Map<?, ?> entityMap
+                        && entityMap.get("canonicalName") instanceof String canonical && !canonical.isBlank()) {
+                    return qualifiedName(canonical);
+                }
+            }
+            return null;
+        }
+
+        private String extractTypeUseName(Object typeObj, Map<String, KnowledgeGraph.Node> allNodes) {
+            if (typeObj instanceof String s) {
+                return qualifiedName(s);
+            }
+            if (typeObj instanceof Map<?, ?> tm) {
+                if (tm.get("entity") instanceof String entityId) {
+                    var n = allNodes.get(entityId);
+                    if (n != null) {
+                        String fqcn = extractTypeFqcn(n);
+                        if (fqcn != null) return fqcn;
+                    }
+                }
+                if (tm.get("canonicalName") instanceof String cn) return qualifiedName(cn);
+                if (tm.get("name") instanceof String n) return n;
+                if (tm.get("spelling") instanceof String sp) return sp;
+                if (tm.get("raw") instanceof Map<?, ?> rawMap) {
+                    return extractTypeUseName(rawMap, allNodes);
+                }
+            }
+            return null;
+        }
+
+        private static String extractAnnotationName(Map<String, Object> m, String spelling) {
+            if (m.get("annotationType") instanceof String at && !at.isBlank()) return at;
+            if (m.get("type") instanceof String t && !t.isBlank()) return t;
+            if (spelling != null && !spelling.isBlank()) {
+                String s = spelling.strip();
+                if (s.startsWith("@")) s = s.substring(1);
+                int paren = s.indexOf('(');
+                if (paren >= 0) s = s.substring(0, paren);
+                return s.strip();
+            }
+            if (m.get("canonicalName") instanceof String cn) return cn;
+            return "";
+        }
+
+        private static String extractMemberNameFromCanonical(String canonical) {
+            if (canonical.startsWith("java:v1:")) {
+                try {
+                    var tuple = GraphJson.array(GraphJson.read(canonical.substring(8),
+                            new GraphJson.Limits(100_000, 64, 10_000)));
+                    if (tuple.size() >= 3 && tuple.get(2) instanceof String memberName) {
+                        return decodeName(memberName);
+                    }
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+            int paren = canonical.indexOf('(');
+            String base = paren >= 0 ? canonical.substring(0, paren) : canonical;
+            int dot = base.lastIndexOf('.');
+            return dot >= 0 ? base.substring(dot + 1) : base;
+        }
+
+        private static int extractMethodArityFromCanonical(String canonical) {
+            if (canonical.startsWith("java:v1:")) {
+                try {
+                    var tuple = GraphJson.array(GraphJson.read(canonical.substring(8),
+                            new GraphJson.Limits(100_000, 64, 10_000)));
+                    if (tuple.size() >= 4 && tuple.get(3) instanceof List<?> params) {
+                        return params.size();
+                    }
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+            int open = canonical.indexOf('(');
+            int close = canonical.lastIndexOf(')');
+            if (open >= 0 && close > open) {
+                String inside = canonical.substring(open + 1, close).strip();
+                if (inside.isEmpty()) return 0;
+                int count = 1;
+                int depth = 0;
+                for (int i = 0; i < inside.length(); i++) {
+                    char c = inside.charAt(i);
+                    if (c == '<') depth++;
+                    else if (c == '>') depth--;
+                    else if (c == ',' && depth == 0) count++;
+                }
+                return count;
+            }
+            return -1;
+        }
+
+        private static <K, V> Map<K, List<V>> freezeListMap(Map<K, List<V>> map) {
+            var out = new HashMap<K, List<V>>(map.size() * 2 + 1);
+            map.forEach((k, v) -> out.put(k, List.copyOf(v)));
+            return Collections.unmodifiableMap(out);
+        }
+
+        private static <K1, K2, V> Map<K1, Map<K2, List<V>>> freezeNestedListMap(Map<K1, Map<K2, List<V>>> map) {
+            var out = new HashMap<K1, Map<K2, List<V>>>(map.size() * 2 + 1);
+            map.forEach((k, inner) -> out.put(k, freezeListMap(inner)));
+            return Collections.unmodifiableMap(out);
+        }
+
+        private static <K1, K2, V> Map<K1, Map<K2, V>> freezeNestedMap(Map<K1, Map<K2, V>> map) {
+            var out = new HashMap<K1, Map<K2, V>>(map.size() * 2 + 1);
+            map.forEach((k, inner) -> out.put(k, Collections.unmodifiableMap(inner)));
+            return Collections.unmodifiableMap(out);
+        }
     }
 }

@@ -248,4 +248,64 @@ class PolicyEvaluatorTest {
                 .anyMatch(g->g.reasonCode().equals(com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.GAP_REASON_TIER_METADATA_MISSING)));
         assertTrue(undeclared.findings().stream().allMatch(f->f.classification()==Classification.UNKNOWN));
     }
+
+    @Test void evaluatesDeclarativeMetadataConsistencyPolicyAndWithholdsInvalidCompilation() {
+        var f = fixture();
+        var xmlEv = GraphEvidence.capture(MetadataConsistencyRulePack.FAMILY_XML_BEAN, Map.of(
+                "beanId", "legacyBean",
+                "className", "com.example.web.Controller",
+                "scope", "prototype",
+                "sourceFile", "src/main/resources/context.xml",
+                "line", 7));
+        f.evidence.add(xmlEv);
+        f.nodes.add(new KnowledgeGraph.Node(ContentDigest.sha256Utf8("xml-bean-node").value(), f.context, "SPRING_BEAN", List.of(xmlEv.identity())));
+
+        String yaml = """
+                schema: architecture-policy:v1
+                id: example.metadata-eval
+                version: "1"
+                packs:
+                  - metadata-consistency-pack
+                metadataRules:
+                  - id: custom.forbid-prototype-xml-scope
+                    version: "1"
+                    severity: WARNING
+                    forEach: { var: b, in: XML_BEANS }
+                    assert:
+                      field: b.scope
+                      op: NOT_EQUALS
+                      value: prototype
+                      message: "XML bean should not use prototype scope"
+                """;
+        var evaluator = new PolicyEvaluator();
+        var service = new ArchitectureQueryService(f.graph());
+        var report = evaluator.evaluateMetadataPolicy(
+                yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                service, f.context,
+                MetadataConsistencyRulePack.ClasspathTypeLookup.emptyComplete(),
+                MetadataConsistencyRulePack.EvaluationOptions.defaults());
+
+        assertEquals(AssessmentStatus.COMPLETE, report.status());
+        assertEquals(7, report.rules().size());
+        assertEquals(1, report.findingsForRule("custom.forbid-prototype-xml-scope").size());
+        assertEquals(Classification.MUST, report.findingsForRule("custom.forbid-prototype-xml-scope").getFirst().classification());
+
+        // Built-in pack shortcut runs all 6 rules cleanly
+        var packOnly = evaluator.evaluateMetadataConsistencyPack(
+                service, f.context,
+                MetadataConsistencyRulePack.ClasspathTypeLookup.emptyComplete(),
+                MetadataConsistencyRulePack.EvaluationOptions.defaults());
+        assertEquals(6, packOnly.rules().size());
+        assertEquals(Classification.NEVER, packOnly.classification());
+
+        // Invalid metadata YAML stays WITHHELD + UNKNOWN with compilation gaps
+        var invalid = evaluator.evaluateMetadataPolicy(
+                "schema: future:v99\nid: bad\nversion: \"1\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                service, f.context,
+                MetadataConsistencyRulePack.ClasspathTypeLookup.emptyComplete(),
+                MetadataConsistencyRulePack.EvaluationOptions.defaults());
+        assertEquals(AssessmentStatus.WITHHELD, invalid.status());
+        assertEquals(Classification.UNKNOWN, invalid.classification());
+        assertFalse(invalid.gaps().isEmpty());
+    }
 }
