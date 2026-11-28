@@ -123,6 +123,8 @@ public final class AffectedTestSelector {
         var typeNodesBySimpleName = new HashMap<String, Set<String>>();
         var packageByPath = new HashMap<String, String>();
         var reverseAdj = new HashMap<String, Set<String>>();
+        var nonHierarchyReverseAdj = new HashMap<String, Set<String>>();
+        var superTypesOf = new HashMap<String, Set<String>>();
         var parentByChild = new HashMap<String, String>();
         var unresolvedObservations = new ArrayList<KnowledgeGraph.Node>();
         var singletonBeanNodes = new HashSet<String>();
@@ -193,8 +195,28 @@ public final class AffectedTestSelector {
                     indexAopAdviceEdgeBridge(graph, edge, aopAspectToTargetFqns);
                     continue;
                 }
+                // WP4.1: Spring conditional/auto-config edges propagate impact from provider/auto-config to conditional target
+                if (isSpringConditionalEdge(edge.kind())) {
+                    for (String targetId : edge.target().identities()) {
+                        reverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
+                        nonHierarchyReverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
+                        reverseAdj.computeIfAbsent(edge.source(), k -> new LinkedHashSet<>()).add(targetId);
+                        nonHierarchyReverseAdj.computeIfAbsent(edge.source(), k -> new LinkedHashSet<>()).add(targetId);
+                    }
+                    continue;
+                }
+                // WP4.1: ASM/Java inheritance edges: editing Super affects Sub (Super -> Sub in reverseAdj),
+                // while editing Sub affects polymorphic consumers of Super WITHOUT jumping to unrelated sibling Sub2!
+                if (isHierarchyEdge(edge.kind())) {
+                    for (String superId : edge.target().identities()) {
+                        reverseAdj.computeIfAbsent(superId, k -> new LinkedHashSet<>()).add(edge.source());
+                        superTypesOf.computeIfAbsent(edge.source(), k -> new LinkedHashSet<>()).add(superId);
+                    }
+                    continue;
+                }
                 for (String targetId : edge.target().identities()) {
                     reverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
+                    nonHierarchyReverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
                     if (isBeanDependencyEdge(edge.kind())) {
                         beanConsumersByBean.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
                     }
@@ -291,7 +313,13 @@ public final class AffectedTestSelector {
             String cur = seedQueue.poll();
             int d = distance.get(cur);
             if (d >= MAX_BFS_DEPTH) continue;
-            for (String rev : reverseAdj.getOrDefault(cur, Set.of())) {
+            var neighbors = new LinkedHashSet<String>(reverseAdj.getOrDefault(cur, Set.of()));
+            // Polymorphic dispatch bridge: if `cur` extends/implements `superId`, include direct consumers
+            // of `superId` (callers/injectors/tests) without bouncing down to unrelated sibling subclasses!
+            for (String superId : superTypesOf.getOrDefault(cur, Set.of())) {
+                neighbors.addAll(nonHierarchyReverseAdj.getOrDefault(superId, Set.of()));
+            }
+            for (String rev : neighbors) {
                 int nextDist = d + 1;
                 if (!distance.containsKey(rev) || nextDist < distance.get(rev)) {
                     distance.put(rev, nextDist);
@@ -363,8 +391,115 @@ public final class AffectedTestSelector {
                 || "spring.selected-binding".equals(edgeKind)
                 || "spring.injects".equals(edgeKind)
                 || "spring.bean-dependency".equals(edgeKind)
+                || "spring.bean-type".equals(edgeKind)
+                || "spring.conditional-on-bean".equals(edgeKind)
+                || "spring.conditional-on-missing-bean".equals(edgeKind)
+                || "spring.auto-config-target".equals(edgeKind)
                 || "graph.depends-on".equals(edgeKind)
                 || "java.calls".equals(edgeKind);
+    }
+
+    private static boolean isSpringConditionalEdge(String edgeKind) {
+        return "spring.conditional-on-bean".equals(edgeKind)
+                || "spring.conditional-on-missing-bean".equals(edgeKind)
+                || "spring.auto-config-target".equals(edgeKind);
+    }
+
+    private static boolean isHierarchyEdge(String edgeKind) {
+        return "asm.extends".equals(edgeKind)
+                || "asm.implements".equals(edgeKind)
+                || "java.extends".equals(edgeKind)
+                || "java.implements".equals(edgeKind)
+                || "java.overrides".equals(edgeKind);
+    }
+
+    /**
+     * Real-trace calibration audit report comparing {@link AffectedTestSelector} against per-test
+     * execution traces (e.g. JaCoCo per-test coverage collected inside Tier-1 container, WP4.1).
+     */
+    public record RtsCalibrationReport(
+            SelectionMode selectionMode,
+            Set<String> groundTruthAffectedTests,
+            Set<String> selectedTests,
+            Set<String> missedTests,
+            double missedTestRatePercent,
+            double recallPercent,
+            double precisionPercent,
+            double reductionPercent,
+            boolean safe) {
+        public RtsCalibrationReport {
+            selectionMode = Objects.requireNonNull(selectionMode, "selectionMode");
+            groundTruthAffectedTests = Collections.unmodifiableSet(new TreeSet<>(
+                    groundTruthAffectedTests == null ? Set.of() : groundTruthAffectedTests));
+            selectedTests = Collections.unmodifiableSet(new TreeSet<>(
+                    selectedTests == null ? Set.of() : selectedTests));
+            missedTests = Collections.unmodifiableSet(new TreeSet<>(
+                    missedTests == null ? Set.of() : missedTests));
+        }
+    }
+
+    /**
+     * Calibrates an {@link AffectedTestSelector} {@link Result} against real per-test execution traces
+     * ({@code testClass -> set of covered source file paths}) to measure exact safety ({@code missedTestRate == 0.0%}).
+     */
+    public static RtsCalibrationReport calibrateAgainstRealTrace(
+            Result selection,
+            Map<String, Set<String>> testClassToCoveredSourcePaths,
+            Collection<String> modifiedPaths) {
+        Objects.requireNonNull(selection, "selection");
+        var normModified = new LinkedHashSet<String>();
+        if (modifiedPaths != null) {
+            for (String p : modifiedPaths) {
+                if (p != null && !p.isBlank()) {
+                    normModified.add(CapturedFileIndex.normalizePath(p));
+                }
+            }
+        }
+        var allObservedTests = new TreeSet<String>();
+        var groundTruth = new TreeSet<String>();
+        if (testClassToCoveredSourcePaths != null) {
+            for (var e : testClassToCoveredSourcePaths.entrySet()) {
+                if (e.getKey() == null || e.getKey().isBlank()) continue;
+                String testClass = e.getKey().strip();
+                allObservedTests.add(testClass);
+                Set<String> covered = e.getValue() == null ? Set.of() : e.getValue();
+                for (String cp : covered) {
+                    if (cp != null && normModified.contains(CapturedFileIndex.normalizePath(cp))) {
+                        groundTruth.add(testClass);
+                        break;
+                    }
+                }
+            }
+        }
+        var selected = new TreeSet<String>();
+        if (selection.mode() == SelectionMode.FULL_SUITE) {
+            selected.addAll(allObservedTests);
+        } else {
+            for (var st : selection.selectedTests()) {
+                selected.add(st.testClass());
+            }
+        }
+        var missed = new TreeSet<String>(groundTruth);
+        missed.removeAll(selected);
+
+        int tp = groundTruth.size() - missed.size();
+        double missedRate = groundTruth.isEmpty() ? 0.0
+                : BigDecimal.valueOf(100.0 * missed.size() / groundTruth.size())
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double recall = groundTruth.isEmpty() ? 100.0
+                : BigDecimal.valueOf(100.0 * tp / groundTruth.size())
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double precision = selected.isEmpty() ? (groundTruth.isEmpty() ? 100.0 : 0.0)
+                : BigDecimal.valueOf(100.0 * tp / selected.size())
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        int totalObserved = Math.max(allObservedTests.size(), selection.totalTestClasses());
+        double reduction = totalObserved > 0
+                ? BigDecimal.valueOf(100.0 * Math.max(0, totalObserved - selected.size()) / totalObserved)
+                .setScale(2, RoundingMode.HALF_UP).doubleValue()
+                : 0.0;
+        return new RtsCalibrationReport(
+                selection.mode(), groundTruth, selected, missed,
+                missedRate, recall, precision, reduction, missed.isEmpty());
     }
 
     private static String extractBeanScopeFromNode(KnowledgeGraph graph, KnowledgeGraph.Node node) {

@@ -1,12 +1,17 @@
 package com.evolution.backend.query.repair;
 
 import com.evolution.analysis.assessment.v2.LeidenCommunityDetector;
+import com.evolution.analysis.contract.common.ContentDigest;
+import com.evolution.analysis.contract.common.VersionedIdentifier;
+import com.evolution.analysis.evidence.*;
 import com.evolution.analysis.graph.GraphEvidence;
 import com.evolution.analysis.graph.GraphJson;
 import com.evolution.analysis.graph.KnowledgeGraph;
+import com.evolution.analysis.javaparser.slice.JavaMethodSlicer;
 import com.evolution.analysis.query.ArchitectureQuery;
 import com.evolution.analysis.query.ArchitectureQuery.StopReason;
 import com.evolution.analysis.query.ArchitectureQueryService;
+import com.evolution.analysis.query.trace.MethodSliceResult;
 import com.evolution.backend.query.ArchitectureInsightsAdvisor;
 import com.evolution.backend.query.CapturedFileIndex;
 import com.evolution.backend.query.RepoMapBuilder;
@@ -1648,5 +1653,310 @@ public final class RepairContextPlanner {
         } catch (RuntimeException ignored) {
             return Map.of();
         }
+    }
+
+    // ─── WP4.1: CausalRepair Dual-Slicing Context & AST Skeleton Tree Assembly ───
+
+    public static final int DEFAULT_DYNAMIC_SLICE_TIMEOUT_SECONDS = 300;
+    public static final String GAP_DYNAMIC_SLICE_UNAVAILABLE = "DYNAMIC_SLICE_TIMEOUT_OR_UNAVAILABLE";
+    private static final VersionedIdentifier DUAL_SLICE_PROVIDER =
+            new VersionedIdentifier("repair.dual-slicer", "wp4.1-v1");
+    private static final VersionedIdentifier DUAL_SLICE_GAP_CATALOG =
+            new VersionedIdentifier("repair.dual-slice-gaps", "1");
+
+    public enum DualSliceMode {
+        ISOLATED_DYNAMIC_DDG,
+        STATIC_SAFE_FALLBACK
+    }
+
+    /**
+     * Execution trace collected strictly inside Tier-1 {@code DOCKER_HARDENED_CONTAINER} ({@code I1}).
+     * When {@code timedOut} or {@code failureReason} is non-empty, {@link #buildDualSliceContext}
+     * MUST emit an explicit {@link CapabilityGapRecord} ({@value #GAP_DYNAMIC_SLICE_UNAVAILABLE}, {@code I3})
+     * and fall back deterministically to passive static slicing.
+     */
+    public record DynamicSliceTrace(
+            boolean available,
+            boolean timedOut,
+            int timeoutSeconds,
+            String failureReason,
+            Map<String, Set<Integer>> executedLinesByPath) {
+        public DynamicSliceTrace {
+            timeoutSeconds = timeoutSeconds <= 0 ? DEFAULT_DYNAMIC_SLICE_TIMEOUT_SECONDS : timeoutSeconds;
+            failureReason = failureReason == null ? "" : failureReason.strip();
+            var norm = new TreeMap<String, Set<Integer>>();
+            if (executedLinesByPath != null) {
+                for (var e : executedLinesByPath.entrySet()) {
+                    if (e.getKey() == null || e.getKey().isBlank() || e.getValue() == null) continue;
+                    var sorted = new TreeSet<Integer>();
+                    for (Integer l : e.getValue()) {
+                        if (l != null && l >= 1) sorted.add(l);
+                    }
+                    if (!sorted.isEmpty()) {
+                        norm.put(CapturedFileIndex.normalizePath(e.getKey()), Collections.unmodifiableSet(sorted));
+                    }
+                }
+            }
+            executedLinesByPath = Collections.unmodifiableMap(norm);
+        }
+
+        public static DynamicSliceTrace timedOut(int timeoutSeconds, String detail) {
+            return new DynamicSliceTrace(false, true, timeoutSeconds,
+                    detail == null || detail.isBlank() ? "Isolated dynamic slicing exceeded " + timeoutSeconds + "s cap" : detail,
+                    Map.of());
+        }
+
+        public static DynamicSliceTrace unavailable(String reason) {
+            return new DynamicSliceTrace(false, false, DEFAULT_DYNAMIC_SLICE_TIMEOUT_SECONDS,
+                    reason == null || reason.isBlank() ? "Isolated dynamic trace unavailable" : reason,
+                    Map.of());
+        }
+
+        public static DynamicSliceTrace captured(Map<String, Set<Integer>> linesByPath) {
+            return new DynamicSliceTrace(true, false, DEFAULT_DYNAMIC_SLICE_TIMEOUT_SECONDS, "", linesByPath);
+        }
+    }
+
+    /**
+     * Minimal causal context combining Phase 1a Test-Side SDG slice, Phase 1b Dual-Mode source slice,
+     * and Phase 1c AST Skeleton Trees (File Path Header + preserved Javadoc + {@code Line N:}),
+     * combined with WP2.4 SALT {@code Signature(n)} compression for out-of-slice callees.
+     */
+    public record DualSliceContext(
+            DualSliceMode mode,
+            Optional<JavaMethodSlicer.TestSliceResult> testSlice,
+            List<JavaMethodSlicer.AstSkeletonResult> sourceSkeletons,
+            CompressedContext compressedCallees,
+            List<CapabilityGapRecord> capabilityGaps,
+            int originalLineCount,
+            int retainedLineCount,
+            double lineReductionPercent,
+            String renderedPrompt,
+            ContentDigest digest) {
+        public DualSliceContext {
+            mode = mode == null ? DualSliceMode.STATIC_SAFE_FALLBACK : mode;
+            testSlice = testSlice == null ? Optional.empty() : testSlice;
+            sourceSkeletons = List.copyOf(sourceSkeletons == null ? List.of() : sourceSkeletons);
+            compressedCallees = compressedCallees == null ? CompressedContext.EMPTY : compressedCallees;
+            capabilityGaps = List.copyOf(capabilityGaps == null ? List.of() : capabilityGaps);
+            renderedPrompt = renderedPrompt == null ? "" : renderedPrompt;
+            digest = digest == null ? ContentDigest.sha256Utf8(renderedPrompt) : digest;
+        }
+    }
+
+    /**
+     * Builds a CausalRepair Dual-Slicing context from the captured {@link KnowledgeGraph}.
+     * Zero host execution ({@code I1}); deterministic ordering ({@code I2}); explicit gap on dynamic
+     * trace timeout/unavailability ({@code I3}); secret-redacted output ({@code I4}).
+     */
+    public static DualSliceContext buildDualSliceContext(
+            KnowledgeGraph graph,
+            String context,
+            String failingTestPath,
+            int failingTestLine,
+            Map<String, Set<Integer>> sourceSeedLinesByPath,
+            Optional<DynamicSliceTrace> isolatedDynamicTrace,
+            CompressedContext compressedCallees) {
+        Objects.requireNonNull(graph, "graph");
+        var fileIndex = CapturedFileIndex.forGraph(graph);
+        var gaps = new ArrayList<CapabilityGapRecord>();
+
+        // Build SKG-backed helper resolver for cross-file test helpers (strictly passive --build=off)
+        JavaMethodSlicer.TestHelperResolver skgHelperResolver = (callerPath, receiverHint, methodName, arity) -> {
+            if (methodName == null || methodName.isBlank()) return Optional.empty();
+            String recvSimple = receiverHint == null ? "" : receiverHint.strip();
+            if (recvSimple.contains(".")) recvSimple = recvSimple.substring(recvSimple.lastIndexOf('.') + 1);
+            for (var entry : fileIndex.entries()) {
+                String p = CapturedFileIndex.normalizePath(entry.path());
+                if (!p.endsWith(".java") || p.equals(CapturedFileIndex.normalizePath(callerPath))) continue;
+                if (!recvSimple.isEmpty()) {
+                    String fname = p.substring(p.lastIndexOf('/') + 1);
+                    if (!fname.equalsIgnoreCase(recvSimple + ".java")
+                            && !p.toLowerCase(Locale.ROOT).contains(recvSimple.toLowerCase(Locale.ROOT))) {
+                        continue;
+                    }
+                }
+                var txtOpt = fileIndex.readText(graph, entry);
+                if (txtOpt.isEmpty()) continue;
+                String txt = txtOpt.orElseThrow();
+                if (txt.contains(methodName + "(")) {
+                    int line = findMethodDeclarationLine(txt, methodName);
+                    if (line > 0) {
+                        return Optional.of(new JavaMethodSlicer.ResolvedHelperSource(p, txt, methodName, line));
+                    }
+                }
+            }
+            return Optional.empty();
+        };
+
+        // Phase 1a: Test-side SDG static slice
+        Optional<JavaMethodSlicer.TestSliceResult> testSliceOpt = Optional.empty();
+        if (failingTestPath != null && !failingTestPath.isBlank() && failingTestLine >= 1) {
+            String normTestPath = CapturedFileIndex.normalizePath(failingTestPath);
+            var testEntryOpt = fileIndex.findExact(normTestPath);
+            if (testEntryOpt.isPresent()) {
+                var testTextOpt = fileIndex.readText(graph, testEntryOpt.orElseThrow());
+                if (testTextOpt.isPresent()) {
+                    testSliceOpt = Optional.of(JavaMethodSlicer.sliceFailingTest(
+                            normTestPath, testTextOpt.orElseThrow(), failingTestLine, skgHelperResolver));
+                }
+            }
+        }
+
+        // Phase 1b: Source-side Dual Mode (Isolated Dynamic DDG vs Safe Static Fallback)
+        DualSliceMode mode = DualSliceMode.STATIC_SAFE_FALLBACK;
+        Map<String, Set<Integer>> dynamicLines = Map.of();
+        if (isolatedDynamicTrace != null && isolatedDynamicTrace.isPresent()) {
+            DynamicSliceTrace trace = isolatedDynamicTrace.orElseThrow();
+            if (trace.available() && !trace.timedOut() && !trace.executedLinesByPath().isEmpty()) {
+                mode = DualSliceMode.ISOLATED_DYNAMIC_DDG;
+                dynamicLines = trace.executedLinesByPath();
+            } else {
+                String msg = trace.timedOut()
+                        ? "Isolated dynamic DDG slicing timed out after " + trace.timeoutSeconds() + "s: "
+                        + trace.failureReason() + ". Fell back deterministically to passive static slicing."
+                        : "Isolated dynamic DDG trace unavailable (" + trace.failureReason()
+                        + "). Fell back deterministically to passive static slicing.";
+                var subject = new EvidenceSubject(EvidenceSubject.Kind.REPOSITORY, graph.snapshot().value());
+                var obs = ProviderObservationReference.create(
+                        DUAL_SLICE_PROVIDER, "repair.dynamic-slice",
+                        ContentDigest.sha256Utf8(msg),
+                        ContentDigest.sha256Utf8(GAP_DYNAMIC_SLICE_UNAVAILABLE + "|" + msg));
+                var req = new EvidenceRequirement(
+                        EvidenceRequirement.Kind.ISOLATED_BUILD_OUTPUT, "repair.dynamic-slice-trace",
+                        List.of(subject), EvidenceRequirement.AuthorizationClass.ISOLATED_EXECUTION,
+                        List.of(msg));
+                gaps.add(CapabilityGapRecord.create(
+                        DUAL_SLICE_GAP_CATALOG,
+                        new EvidenceContext(graph.snapshot(), Optional.empty()),
+                        DUAL_SLICE_PROVIDER,
+                        "repair.dynamic-slice",
+                        GAP_DYNAMIC_SLICE_UNAVAILABLE,
+                        subject,
+                        List.of(),
+                        List.of(obs),
+                        List.of(req),
+                        List.of(),
+                        List.of(new AffectedOutput(AffectedOutput.Kind.POLICY, "repair.dual-slice")),
+                        List.of(),
+                        List.of(),
+                        List.of(msg)));
+            }
+        }
+
+        // Collect all candidate source paths deterministically
+        var candidateSourceLines = new TreeMap<String, Set<Integer>>();
+        if (mode == DualSliceMode.ISOLATED_DYNAMIC_DDG) {
+            for (var e : dynamicLines.entrySet()) {
+                candidateSourceLines.computeIfAbsent(e.getKey(), k -> new TreeSet<>()).addAll(e.getValue());
+            }
+        }
+        if (sourceSeedLinesByPath != null) {
+            for (var e : sourceSeedLinesByPath.entrySet()) {
+                if (e.getKey() == null || e.getKey().isBlank()) continue;
+                String normPath = CapturedFileIndex.normalizePath(e.getKey());
+                var entryOpt = fileIndex.findExact(normPath);
+                if (entryOpt.isEmpty()) continue;
+                var txtOpt = fileIndex.readText(graph, entryOpt.orElseThrow());
+                if (txtOpt.isEmpty()) continue;
+                String src = txtOpt.orElseThrow();
+                var merged = candidateSourceLines.computeIfAbsent(normPath, k -> new TreeSet<>());
+                if (e.getValue() != null) {
+                    for (Integer seedLine : e.getValue()) {
+                        if (seedLine == null || seedLine < 1) continue;
+                        MethodSliceResult staticSlice = JavaMethodSlicer.slice(
+                                normPath, src, seedLine, MethodSliceResult.SliceDirection.BACKWARD);
+                        if (!staticSlice.sliceLines().isEmpty()) {
+                            merged.addAll(staticSlice.sliceLines());
+                        } else {
+                            merged.add(seedLine);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 1c: Reconstruct AST Skeleton Trees with 3 Semantic Anchors
+        var skeletons = new ArrayList<JavaMethodSlicer.AstSkeletonResult>();
+        int origLines = 0;
+        int keptLines = 0;
+        for (var e : candidateSourceLines.entrySet()) {
+            String normPath = e.getKey();
+            var entryOpt = fileIndex.findExact(normPath);
+            if (entryOpt.isEmpty()) continue;
+            var txtOpt = fileIndex.readText(graph, entryOpt.orElseThrow());
+            if (txtOpt.isEmpty()) continue;
+            String src = txtOpt.orElseThrow();
+            if (LlmTransport.containsSecretForPath(normPath, src)) continue;
+            var skel = JavaMethodSlicer.buildAstSkeletonTree(normPath, src, e.getValue(), true);
+            skeletons.add(skel);
+            origLines += skel.originalLineCount();
+            keptLines += skel.retainedLineCount();
+        }
+        if (testSliceOpt.isPresent()) {
+            var ts = testSliceOpt.orElseThrow().skeleton();
+            origLines += ts.originalLineCount();
+            keptLines += ts.retainedLineCount();
+        }
+
+        // Assemble secret-redacted deterministic prompt
+        var sb = new StringBuilder();
+        sb.append("[DUAL-SLICE CAUSAL CONTEXT | mode=").append(mode.name()).append("]\n");
+        if (testSliceOpt.isPresent()) {
+            var ts = testSliceOpt.orElseThrow();
+            sb.append("## Test-Side SDG Slice (C_test = S_intra U E)\n");
+            sb.append(LlmTransport.redactSecrets(ts.skeleton().renderedSkeleton()).text()).append('\n');
+            for (var ext : ts.externalDependencies()) {
+                if ("SKG_EXTERNAL_HELPER".equals(ext.kind())) {
+                    sb.append("// External Helper (depth=").append(ext.depth()).append(") ")
+                            .append(ext.path()).append(':').append(ext.startLine()).append('\n')
+                            .append(LlmTransport.redactSecrets(ext.code()).text()).append('\n');
+                }
+            }
+        }
+        if (!skeletons.isEmpty()) {
+            sb.append("## Source-Side AST Skeleton Tree (C_source)\n");
+            for (var skel : skeletons) {
+                sb.append(LlmTransport.redactSecrets(skel.renderedSkeleton()).text()).append('\n');
+            }
+        }
+        CompressedContext safeCallees = compressedCallees == null ? CompressedContext.EMPTY : compressedCallees;
+        if (!safeCallees.contexts().isEmpty()) {
+            sb.append("## Compressed Out-of-Slice Callees (SALT Signature(n))\n");
+            for (var cc : safeCallees.contexts()) {
+                sb.append(LlmTransport.redactSecrets(cc.renderedContent()).text()).append('\n');
+            }
+        }
+        String rendered = sb.toString();
+        double reductionPct = origLines > 0
+                ? Math.round(10000.0 * (origLines - keptLines) / origLines) / 100.0
+                : 0.0;
+        return new DualSliceContext(
+                mode,
+                testSliceOpt,
+                skeletons,
+                safeCallees,
+                gaps,
+                origLines,
+                keptLines,
+                Math.max(0.0, reductionPct),
+                rendered,
+                ContentDigest.sha256Utf8(rendered));
+    }
+
+    private static int findMethodDeclarationLine(String source, String methodName) {
+        String[] lines = source.split("\\R", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            int idx = line.indexOf(methodName + "(");
+            if (idx > 0 && !line.stripLeading().startsWith("//") && !line.stripLeading().startsWith("*")) {
+                String before = line.substring(0, idx).strip();
+                if (!before.isEmpty() && !before.endsWith(".") && !before.endsWith("new")
+                        && !before.endsWith("return") && !before.endsWith("=")) {
+                    return i + 1;
+                }
+            }
+        }
+        return -1;
     }
 }

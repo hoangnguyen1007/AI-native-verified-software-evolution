@@ -9,6 +9,7 @@ import com.evolution.analysis.polyglot.FailCloseResilienceAnalyzer.PropagationDi
 import com.evolution.analysis.query.trace.MethodSliceResult;
 import com.evolution.analysis.query.trace.MethodSliceResult.SliceDirection;
 import com.evolution.analysis.query.trace.MethodSliceResult.SliceStatement;
+import com.evolution.analysis.spring.universal.CollectionContainerSummary;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ParserConfiguration;
@@ -120,13 +121,14 @@ public final class JavaMethodSlicer {
         }
 
         Set<String> enclosingFields = collectEnclosingFields(callable);
+        Map<String, String> declaredVarTypes = collectCallableVarTypes(callable);
         Set<String> parameters = new LinkedHashSet<>();
         for (Parameter p : callable.getParameters()) {
             parameters.add(p.getNameAsString());
         }
 
         // Build CFG + CDG + Def/Use IR over the method body
-        var builder = new IntraMethodGraphBuilder(enclosingFields, parameters);
+        var builder = new IntraMethodGraphBuilder(enclosingFields, parameters, declaredVarTypes);
         int headerBeginLine = callable.getBegin().map(p -> p.line).orElse(seedLine);
         boolean seededOnHeader = isSeedOnCallableHeader(callable, bodyOpt.get(), seedLine);
         int headerNodeId = -1;
@@ -507,14 +509,22 @@ public final class JavaMethodSlicer {
     private static final class IntraMethodGraphBuilder {
         final Set<String> enclosingFields;
         final Set<String> localVars = new LinkedHashSet<>();
+        final Map<String, String> varTypes = new HashMap<>();
         final List<StmtNode> nodes = new ArrayList<>();
         final Map<Integer, Set<Integer>> cfgSucc = new HashMap<>();
         final Map<Integer, Set<Integer>> cfgPred = new HashMap<>();
         final Map<Integer, Set<Integer>> controlDeps = new HashMap<>();
 
         IntraMethodGraphBuilder(Set<String> enclosingFields, Set<String> parameters) {
+            this(enclosingFields, parameters, Map.of());
+        }
+
+        IntraMethodGraphBuilder(Set<String> enclosingFields, Set<String> parameters, Map<String, String> initialVarTypes) {
             this.enclosingFields = enclosingFields;
             this.localVars.addAll(parameters);
+            if (initialVarTypes != null) {
+                this.varTypes.putAll(initialVarTypes);
+            }
         }
 
         int addParameterHeaderNode(CallableDeclaration<?> callable, int line, Set<String> parameters) {
@@ -978,6 +988,7 @@ public final class JavaMethodSlicer {
                     vd.getInitializer().ifPresent(init -> extractExprDefUse(init, node, false));
                     String name = vd.getNameAsString();
                     localVars.add(name);
+                    varTypes.put(name, vd.getTypeAsString());
                     node.strongDefs.add("var:" + name);
                 }
                 return;
@@ -1011,10 +1022,39 @@ public final class JavaMethodSlicer {
                 if (call.getScope().isPresent()) {
                     Expression scope = call.getScope().get();
                     extractExprDefUse(scope, node, false);
+                    Optional<String> recvKey = resolveReceiverVarKey(scope);
+                    // WP4.1: Sound-modulo-analysis Map/Collection/@Cacheable container flow edges (WP2.1 table)
+                    if (recvKey.isPresent()) {
+                        String rk = recvKey.orElseThrow();
+                        String recvName = rk.contains(":") ? rk.substring(rk.indexOf(':') + 1) : rk;
+                        String recvType = resolveCollectionTypeHint(varTypes.getOrDefault(recvName, ""));
+                        if (!recvType.isEmpty()) {
+                            var flowOpt = CollectionContainerSummary.resolveFlowEdge(
+                                    rk, recvType, call.getNameAsString(), call.getArguments().size());
+                            if (flowOpt.isPresent()) {
+                                var flow = flowOpt.orElseThrow();
+                                String slotKey = "contents:" + flow.abstractSlot();
+                                switch (flow.direction()) {
+                                    case PUT_TO_CONTENTS, EVICT_CONTENTS -> {
+                                        node.weakDefs.add(slotKey);
+                                        node.weakDefs.add(rk);
+                                    }
+                                    case GET_FROM_CONTENTS -> node.uses.add(slotKey);
+                                    case PASSTHROUGH_CONTENTS -> {
+                                        node.weakDefs.add(slotKey);
+                                        node.weakDefs.add(rk);
+                                        if (!call.getArguments().isEmpty()) {
+                                            resolveReceiverVarKey(call.getArgument(0)).ifPresent(argKey ->
+                                                    node.uses.add("contents:" + argKey + "." + CollectionContainerSummary.ABSTRACT_CONTENTS_FIELD));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Statement-level receiver call (e.g., list.add(x); sb.append(y); order.setTotal(z);)
                     // weakly mutates receiver state without killing its original declaration.
                     if (topLevelStmtExpr) {
-                        Optional<String> recvKey = resolveReceiverVarKey(scope);
                         recvKey.ifPresent(node.weakDefs::add);
                     }
                 }
@@ -2250,5 +2290,517 @@ public final class JavaMethodSlicer {
             cur = mc.getScope().get();
         }
         return cur;
+    }
+
+    private static Map<String, String> collectCallableVarTypes(CallableDeclaration<?> callable) {
+        var types = new HashMap<String, String>();
+        callable.findAncestor(TypeDeclaration.class).ifPresent(rawOwner -> {
+            TypeDeclaration<?> owner = (TypeDeclaration<?>) rawOwner;
+            for (BodyDeclaration<?> member : owner.getMembers()) {
+                if (member instanceof FieldDeclaration fd) {
+                    String typeStr = fd.getCommonType().asString();
+                    for (VariableDeclarator vd : fd.getVariables()) {
+                        types.put(vd.getNameAsString(), typeStr);
+                    }
+                }
+            }
+            if (owner instanceof RecordDeclaration rd) {
+                for (Parameter comp : rd.getParameters()) {
+                    types.put(comp.getNameAsString(), comp.getTypeAsString());
+                }
+            }
+        });
+        for (Parameter p : callable.getParameters()) {
+            types.put(p.getNameAsString(), p.getTypeAsString());
+        }
+        return types;
+    }
+
+    private static String resolveCollectionTypeHint(String declaredType) {
+        if (declaredType == null || declaredType.isBlank()) return "";
+        String raw = declaredType.strip();
+        int lt = raw.indexOf('<');
+        if (lt >= 0) raw = raw.substring(0, lt).strip();
+        if (raw.contains(".")) return raw;
+        return switch (raw) {
+            case "Map", "HashMap", "LinkedHashMap", "TreeMap", "Hashtable", "IdentityHashMap", "WeakHashMap",
+                    "EnumMap", "NavigableMap", "SortedMap" -> "java.util." + raw;
+            case "ConcurrentMap", "ConcurrentHashMap", "ConcurrentSkipListMap" -> "java.util.concurrent." + raw;
+            case "List", "ArrayList", "LinkedList", "Vector", "Stack", "Set", "HashSet", "LinkedHashSet",
+                    "TreeSet", "SortedSet", "NavigableSet", "Queue", "Deque", "ArrayDeque", "PriorityQueue",
+                    "Collection" -> "java.util." + raw;
+            case "CopyOnWriteArrayList", "CopyOnWriteArraySet", "ConcurrentLinkedQueue", "ConcurrentLinkedDeque",
+                    "BlockingQueue", "LinkedBlockingQueue", "ArrayBlockingQueue", "PriorityBlockingQueue" ->
+                    "java.util.concurrent." + raw;
+            case "Cache" -> "org.springframework.cache.Cache";
+            default -> raw;
+        };
+    }
+
+    // ─── WP4.1: CausalRepair Phase 1a (Test-Side SDG Static Slicing) & Phase 1c (AST Skeleton Tree) ───
+
+    private static final Set<String> TEST_SETUP_ANNOTATIONS = Set.of(
+            "BeforeEach", "BeforeAll", "Before", "BeforeClass", "SetUp", "BeforeMethod", "BeforeTest");
+
+    /**
+     * Pluggable SKG inter-procedural helper resolver for {@link #sliceFailingTest} so test-side
+     * SDG slicing can follow helper calls across files without running any host build ({@code I1}).
+     */
+    @FunctionalInterface
+    public interface TestHelperResolver {
+        TestHelperResolver NONE = (callerPath, receiverHint, methodName, arity) -> Optional.empty();
+
+        Optional<ResolvedHelperSource> resolve(String callerPath, String receiverHint, String methodName, int arity);
+    }
+
+    public record ResolvedHelperSource(String path, String javaSource, String methodSignature, int seedLine) {
+        public ResolvedHelperSource {
+            path = Objects.requireNonNull(path, "path");
+            javaSource = Objects.requireNonNull(javaSource, "javaSource");
+            methodSignature = methodSignature == null ? "" : methodSignature;
+        }
+    }
+
+    /** External setup, field, or helper entity pulled into {@code C_test = S_intra U E}. */
+    public record TestExternalDependency(
+            String kind,
+            String path,
+            String symbolName,
+            int startLine,
+            int endLine,
+            int depth,
+            String code) {
+        public TestExternalDependency {
+            kind = Objects.requireNonNull(kind, "kind");
+            path = Objects.requireNonNull(path, "path");
+            symbolName = Objects.requireNonNull(symbolName, "symbolName");
+            code = Objects.requireNonNull(code, "code");
+        }
+    }
+
+    /**
+     * CausalRepair Phase 1a (Sec. 3.2.1): {@code C_test = S_intra U E} with {@link TrustTier#SOURCE_SYNTAX}.
+     */
+    public record TestSliceResult(
+            String testPath,
+            String testMethodSignature,
+            int failingLine,
+            TrustTier trustTier,
+            MethodSliceResult intraSlice,
+            List<TestExternalDependency> externalDependencies,
+            AstSkeletonResult skeleton,
+            int maxHelperDepth,
+            List<String> limitations) {
+        public TestSliceResult {
+            testPath = Objects.requireNonNull(testPath, "testPath");
+            testMethodSignature = Objects.requireNonNull(testMethodSignature, "testMethodSignature");
+            trustTier = trustTier == null ? TrustTier.SOURCE_SYNTAX : trustTier;
+            externalDependencies = List.copyOf(externalDependencies == null ? List.of() : externalDependencies);
+            limitations = List.copyOf(limitations == null ? List.of() : limitations);
+        }
+    }
+
+    /**
+     * CausalRepair Phase 1c (Sec. 3.2.3 & Fig. 3): AST Skeleton Tree preserving File Path Header,
+     * original Javadoc/comments, and relative line numbers ({@code Line N:}).
+     */
+    public record AstSkeletonResult(
+            String path,
+            String renderedSkeleton,
+            int originalLineCount,
+            int retainedLineCount,
+            double lineReductionPercent,
+            boolean javadocPreserved,
+            List<Integer> includedLines,
+            ContentDigest digest) {
+        public AstSkeletonResult {
+            path = Objects.requireNonNull(path, "path");
+            renderedSkeleton = Objects.requireNonNull(renderedSkeleton, "renderedSkeleton");
+            includedLines = includedLines == null ? List.of() : includedLines.stream()
+                    .filter(Objects::nonNull).distinct().sorted().toList();
+            digest = digest == null ? ContentDigest.sha256Utf8(renderedSkeleton) : digest;
+        }
+    }
+
+    /**
+     * CausalRepair Phase 1a (Sec. 3.2.1): Backward SDG slice {@code C_test = S_intra U E} from a
+     * failing assertion line, recursively collecting test fields, {@code @BeforeEach}/{@code @BeforeAll}
+     * setup methods, and called helper methods up to {@code depth <= 3} (default).
+     */
+    public static TestSliceResult sliceFailingTest(
+            String testPath,
+            String testSource,
+            int failingLine,
+            TestHelperResolver skgResolver) {
+        return sliceFailingTest(testPath, testSource, failingLine, skgResolver, 3, DEFAULT_MAX_STATEMENTS);
+    }
+
+    public static TestSliceResult sliceFailingTest(
+            String testPath,
+            String testSource,
+            int failingLine,
+            TestHelperResolver skgResolver,
+            int maxHelperDepth,
+            int maxStatements) {
+        String safePath = Objects.requireNonNull(testPath, "testPath");
+        String safeSource = Objects.requireNonNull(testSource, "testSource");
+        TestHelperResolver resolver = skgResolver == null ? TestHelperResolver.NONE : skgResolver;
+        int depthCap = Math.max(0, Math.min(3, maxHelperDepth));
+
+        MethodSliceResult intra = slice(safePath, safeSource, Optional.empty(), failingLine, SliceDirection.BACKWARD, maxStatements);
+        var limitations = new ArrayList<String>(intra.limitations());
+        var externalDeps = new ArrayList<TestExternalDependency>();
+        var allIncludedTestLines = new TreeSet<Integer>(intra.sliceLines());
+
+        if (safeSource.isBlank()) {
+            AstSkeletonResult emptySkel = buildAstSkeletonTree(safePath, safeSource, allIncludedTestLines, true);
+            return new TestSliceResult(safePath, intra.methodSignature(), failingLine, TrustTier.SOURCE_SYNTAX,
+                    intra, List.of(), emptySkel, depthCap, limitations);
+        }
+
+        ParserConfiguration cfg = new ParserConfiguration()
+                .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21)
+                .setAttributeComments(true);
+        Optional<CompilationUnit> cuOpt = new JavaParser(cfg).parse(safeSource).getResult();
+        if (cuOpt.isEmpty()) {
+            AstSkeletonResult fallbackSkel = buildAstSkeletonTree(safePath, safeSource, allIncludedTestLines, true);
+            return new TestSliceResult(safePath, intra.methodSignature(), failingLine, TrustTier.SOURCE_SYNTAX,
+                    intra, List.of(), fallbackSkel, depthCap, limitations);
+        }
+
+        CompilationUnit cu = cuOpt.get();
+        CallableDeclaration<?> failingCallable = locateCallable(cu, Optional.empty(), failingLine);
+        if (failingCallable != null) {
+            TypeDeclaration<?> owner = failingCallable.findAncestor(TypeDeclaration.class).orElse(null);
+            if (owner != null) {
+                // Collect referenced fields in the slice or setup methods
+                Set<String> usedTokens = new LinkedHashSet<>();
+                for (SliceStatement st : intra.statements()) {
+                    extractIdentifiers(st.code(), usedTokens);
+                }
+
+                // 1. Collect @BeforeEach / @BeforeAll setup methods
+                var setupMethods = new ArrayList<MethodDeclaration>();
+                for (MethodDeclaration md : owner.getMethods()) {
+                    boolean isSetup = md.getAnnotations().stream()
+                            .anyMatch(a -> TEST_SETUP_ANNOTATIONS.contains(a.getName().getIdentifier()));
+                    if (isSetup && md != failingCallable) {
+                        setupMethods.add(md);
+                        int start = md.getBegin().map(p -> p.line).orElse(1);
+                        int end = md.getEnd().map(p -> p.line).orElse(start);
+                        for (int l = start; l <= end; l++) allIncludedTestLines.add(l);
+                        String code = md.toString().strip();
+                        extractIdentifiers(code, usedTokens);
+                        externalDeps.add(new TestExternalDependency(
+                                "SETUP_METHOD", safePath, md.getSignature().asString(), start, end, 1, code));
+                    }
+                }
+
+                // 2. Recursively resolve called helper methods up to depth <= depthCap
+                record HelperTask(String path, CompilationUnit unit, TypeDeclaration<?> ownerType,
+                                  CallableDeclaration<?> callable, Set<Integer> activeLines, int depth) {}
+                var queue = new ArrayDeque<HelperTask>();
+                var visitedKeys = new HashSet<String>();
+                visitedKeys.add(safePath + "#" + failingCallable.getSignature().asString());
+                queue.add(new HelperTask(safePath, cu, owner, failingCallable, new HashSet<>(intra.sliceLines()), 0));
+                for (MethodDeclaration setup : setupMethods) {
+                    visitedKeys.add(safePath + "#" + setup.getSignature().asString());
+                    queue.add(new HelperTask(safePath, cu, owner, setup, Set.of(), 1));
+                }
+
+                while (!queue.isEmpty()) {
+                    HelperTask task = queue.poll();
+                    if (task.depth() >= depthCap) continue;
+                    Optional<BlockStmt> bodyOpt = extractBody(task.callable());
+                    if (bodyOpt.isEmpty()) continue;
+
+                    var calls = bodyOpt.get().findAll(MethodCallExpr.class);
+                    for (MethodCallExpr mc : calls) {
+                        int callLine = mc.getBegin().map(p -> p.line).orElse(-1);
+                        if (!task.activeLines().isEmpty() && !task.activeLines().contains(callLine)) {
+                            continue;
+                        }
+                        String calledName = mc.getNameAsString();
+                        int arity = mc.getArguments().size();
+                        String recvHint = mc.getScope().map(Object::toString).orElse("");
+
+                        // First check same-file owner helper methods
+                        MethodDeclaration localHelper = null;
+                        if (task.ownerType() != null && (recvHint.isEmpty() || "this".equals(recvHint)
+                                || recvHint.equals(task.ownerType().getNameAsString()))) {
+                            localHelper = findMatchingHelperMethod(task.ownerType(), calledName, arity);
+                        }
+                        if (localHelper != null) {
+                            String key = task.path() + "#" + localHelper.getSignature().asString();
+                            if (visitedKeys.add(key)) {
+                                int start = localHelper.getBegin().map(p -> p.line).orElse(1);
+                                int end = localHelper.getEnd().map(p -> p.line).orElse(start);
+                                String helperCode = localHelper.toString().strip();
+                                if (task.path().equals(safePath)) {
+                                    for (int l = start; l <= end; l++) allIncludedTestLines.add(l);
+                                    extractIdentifiers(helperCode, usedTokens);
+                                }
+                                externalDeps.add(new TestExternalDependency(
+                                        "LOCAL_HELPER", task.path(), localHelper.getSignature().asString(),
+                                        start, end, task.depth() + 1, helperCode));
+                                queue.add(new HelperTask(task.path(), task.unit(), task.ownerType(),
+                                        localHelper, Set.of(), task.depth() + 1));
+                            }
+                            continue;
+                        }
+
+                        // Otherwise delegate to SKG cross-file TestHelperResolver
+                        var resolvedOpt = resolver.resolve(task.path(), recvHint, calledName, arity);
+                        if (resolvedOpt.isPresent()) {
+                            ResolvedHelperSource resolved = resolvedOpt.orElseThrow();
+                            String key = resolved.path() + "#" + (resolved.methodSignature().isBlank()
+                                    ? calledName + "/" + arity : resolved.methodSignature());
+                            if (visitedKeys.add(key)) {
+                                Optional<CompilationUnit> helperCuOpt = new JavaParser(cfg)
+                                        .parse(resolved.javaSource()).getResult();
+                                if (helperCuOpt.isPresent()) {
+                                    CompilationUnit hCu = helperCuOpt.get();
+                                    CallableDeclaration<?> hCall = locateCallable(
+                                            hCu,
+                                            resolved.methodSignature().isBlank()
+                                                    ? Optional.of(calledName)
+                                                    : Optional.of(resolved.methodSignature()),
+                                            Math.max(1, resolved.seedLine()));
+                                    if (hCall != null) {
+                                        int start = hCall.getBegin().map(p -> p.line).orElse(1);
+                                        int end = hCall.getEnd().map(p -> p.line).orElse(start);
+                                        externalDeps.add(new TestExternalDependency(
+                                                "SKG_EXTERNAL_HELPER", resolved.path(),
+                                                hCall.getSignature().asString(), start, end,
+                                                task.depth() + 1, hCall.toString().strip()));
+                                        TypeDeclaration<?> hOwner = hCall.findAncestor(TypeDeclaration.class).orElse(null);
+                                        queue.add(new HelperTask(resolved.path(), hCu, hOwner, hCall,
+                                                Set.of(), task.depth() + 1));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Collect enclosing fields referenced by slice, setup methods, OR resolved same-file local helpers
+                for (BodyDeclaration<?> member : owner.getMembers()) {
+                    if (member instanceof FieldDeclaration fd) {
+                        boolean referenced = fd.getVariables().stream()
+                                .anyMatch(v -> usedTokens.contains(v.getNameAsString()));
+                        if (referenced) {
+                            int start = fd.getBegin().map(p -> p.line).orElse(1);
+                            int end = fd.getEnd().map(p -> p.line).orElse(start);
+                            for (int l = start; l <= end; l++) allIncludedTestLines.add(l);
+                            String names = String.join(",", fd.getVariables().stream()
+                                    .map(VariableDeclarator::getNameAsString).toList());
+                            externalDeps.add(new TestExternalDependency(
+                                    "TEST_FIELD", safePath, names, start, end, 1, fd.toString().strip()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deterministic sort of external dependencies
+        externalDeps.sort(Comparator.comparingInt(TestExternalDependency::depth)
+                .thenComparing(TestExternalDependency::path)
+                .thenComparingInt(TestExternalDependency::startLine)
+                .thenComparing(TestExternalDependency::symbolName));
+
+        AstSkeletonResult skeleton = buildAstSkeletonTree(safePath, safeSource, allIncludedTestLines, true);
+        return new TestSliceResult(
+                safePath,
+                intra.methodSignature(),
+                failingLine,
+                TrustTier.SOURCE_SYNTAX,
+                intra,
+                externalDeps,
+                skeleton,
+                depthCap,
+                limitations);
+    }
+
+    /**
+     * CausalRepair Phase 1c (Sec. 3.2.3 & Fig. 3): Reconstructs an AST Skeleton Tree for
+     * {@code includedLines} preserving the 3 Semantic Anchors:
+     * (1) File Path Header, (2) original Javadoc & comments, and (3) relative line numbers ({@code Line N:}).
+     */
+    public static AstSkeletonResult buildAstSkeletonTree(
+            String path,
+            String javaSource,
+            Collection<Integer> includedLines,
+            boolean preserveJavadoc) {
+        String safePath = Objects.requireNonNull(path, "path");
+        String safeSource = javaSource == null ? "" : javaSource;
+        String[] rawLines = safeSource.isEmpty() ? new String[0] : safeSource.split("\\R", -1);
+        int totalLines = rawLines.length;
+
+        var keepLines = new TreeSet<Integer>();
+        if (includedLines != null) {
+            for (Integer l : includedLines) {
+                if (l != null && l >= 1 && l <= totalLines) {
+                    keepLines.add(l);
+                }
+            }
+        }
+
+        if (totalLines == 0) {
+            String rendered = "// File: " + safePath + "\n";
+            return new AstSkeletonResult(safePath, rendered, 0, 0, 0.0, preserveJavadoc, List.of(),
+                    ContentDigest.sha256Utf8(rendered));
+        }
+
+        var structuralKeep = new TreeSet<Integer>(keepLines);
+        ParserConfiguration cfg = new ParserConfiguration()
+                .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21)
+                .setAttributeComments(true);
+        Optional<CompilationUnit> cuOpt = new JavaParser(cfg).parse(safeSource).getResult();
+        if (cuOpt.isPresent()) {
+            CompilationUnit cu = cuOpt.get();
+            cu.getPackageDeclaration().flatMap(Node::getRange).ifPresent(r -> addRange(structuralKeep, r, totalLines));
+            // Keep enclosing type headers, Javadocs, closing braces, and touched callable headers
+            for (TypeDeclaration<?> td : cu.findAll(TypeDeclaration.class)) {
+                boolean touchesType = td.getRange().map(r -> hasLineInRange(keepLines, r)).orElse(false);
+                if (!touchesType && !keepLines.isEmpty()) continue;
+                td.getRange().ifPresent(r -> {
+                    structuralKeep.add(r.begin.line);
+                    structuralKeep.add(r.end.line);
+                });
+                if (preserveJavadoc) {
+                    td.getComment().flatMap(Node::getRange).ifPresent(r -> addRange(structuralKeep, r, totalLines));
+                }
+                for (BodyDeclaration<?> member : td.getMembers()) {
+                    if (member instanceof CallableDeclaration<?> cd) {
+                        boolean touchesCallable = cd.getRange().map(r -> hasLineInRange(keepLines, r)).orElse(false);
+                        if (!touchesCallable) continue;
+                        if (preserveJavadoc) {
+                            cd.getComment().flatMap(Node::getRange).ifPresent(r -> addRange(structuralKeep, r, totalLines));
+                        }
+                        int sigStart = cd.getBegin().map(p -> p.line).orElse(1);
+                        int bodyStart = extractBody(cd).flatMap(Node::getBegin).map(p -> p.line).orElse(sigStart);
+                        for (int l = sigStart; l <= Math.min(bodyStart, totalLines); l++) {
+                            structuralKeep.add(l);
+                        }
+                        cd.getEnd().ifPresent(p -> {
+                            if (p.line >= 1 && p.line <= totalLines) structuralKeep.add(p.line);
+                        });
+                        // Keep control structure headers enclosing any kept line + inline comments above kept lines
+                        extractBody(cd).ifPresent(body -> {
+                            for (Statement stmt : body.findAll(Statement.class)) {
+                                if (stmt instanceof IfStmt || stmt instanceof ForStmt || stmt instanceof ForEachStmt
+                                        || stmt instanceof WhileStmt || stmt instanceof DoStmt
+                                        || stmt instanceof SwitchStmt || stmt instanceof TryStmt
+                                        || stmt instanceof SynchronizedStmt) {
+                                    stmt.getRange().ifPresent(r -> {
+                                        if (hasLineInRange(keepLines, r)) {
+                                            structuralKeep.add(r.begin.line);
+                                            if (r.end.line >= 1 && r.end.line <= totalLines) {
+                                                structuralKeep.add(r.end.line);
+                                            }
+                                        }
+                                    });
+                                }
+                                if (preserveJavadoc && stmt.getRange().map(r -> hasLineInRange(keepLines, r)).orElse(false)) {
+                                    stmt.getComment().flatMap(Node::getRange).ifPresent(r -> addRange(structuralKeep, r, totalLines));
+                                }
+                            }
+                        });
+                    } else if (member instanceof FieldDeclaration fd) {
+                        if (fd.getRange().map(r -> hasLineInRange(keepLines, r)).orElse(false)) {
+                            fd.getRange().ifPresent(r -> addRange(structuralKeep, r, totalLines));
+                            if (preserveJavadoc) {
+                                fd.getComment().flatMap(Node::getRange).ifPresent(r -> addRange(structuralKeep, r, totalLines));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also retain immediately preceding comment lines above kept statements when preserveJavadoc is true
+        if (preserveJavadoc) {
+            var extraComments = new TreeSet<Integer>();
+            for (int l : structuralKeep) {
+                int cur = l - 1;
+                while (cur >= 1) {
+                    String trimmed = rawLines[cur - 1].strip();
+                    if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.endsWith("*/")) {
+                        extraComments.add(cur);
+                        cur--;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            structuralKeep.addAll(extraComments);
+        }
+
+        var sb = new StringBuilder();
+        sb.append("// File: ").append(safePath).append('\n');
+        int prevLine = 0;
+        for (int lineNo : structuralKeep) {
+            if (lineNo < 1 || lineNo > totalLines) continue;
+            if (prevLine > 0 && lineNo > prevLine + 1) {
+                sb.append("// ...\n");
+            }
+            sb.append("Line ").append(lineNo).append(": ").append(rawLines[lineNo - 1]).append('\n');
+            prevLine = lineNo;
+        }
+        String rendered = sb.toString();
+        int retained = structuralKeep.size();
+        double reductionPct = totalLines > 0
+                ? Math.round(10000.0 * (totalLines - retained) / totalLines) / 100.0
+                : 0.0;
+        return new AstSkeletonResult(
+                safePath,
+                rendered,
+                totalLines,
+                retained,
+                Math.max(0.0, reductionPct),
+                preserveJavadoc,
+                List.copyOf(structuralKeep),
+                ContentDigest.sha256Utf8(rendered));
+    }
+
+    private static void addRange(Set<Integer> lines, Range r, int totalLines) {
+        int start = Math.max(1, r.begin.line);
+        int end = Math.min(totalLines, r.end.line);
+        for (int l = start; l <= end; l++) {
+            lines.add(l);
+        }
+    }
+
+    private static boolean hasLineInRange(Set<Integer> keepLines, Range r) {
+        for (int l : keepLines) {
+            if (l >= r.begin.line && l <= r.end.line) return true;
+        }
+        return false;
+    }
+
+    private static MethodDeclaration findMatchingHelperMethod(TypeDeclaration<?> owner, String name, int arity) {
+        for (MethodDeclaration md : owner.getMethodsByName(name)) {
+            if (md.getParameters().size() == arity) {
+                return md;
+            }
+        }
+        var byName = owner.getMethodsByName(name);
+        return byName.isEmpty() ? null : byName.get(0);
+    }
+
+    private static void extractIdentifiers(String text, Set<String> out) {
+        if (text == null || text.isEmpty()) return;
+        int i = 0;
+        int n = text.length();
+        while (i < n) {
+            if (Character.isJavaIdentifierStart(text.charAt(i))) {
+                int j = i + 1;
+                while (j < n && Character.isJavaIdentifierPart(text.charAt(j))) j++;
+                out.add(text.substring(i, j));
+                i = j;
+            } else {
+                i++;
+            }
+        }
     }
 }
