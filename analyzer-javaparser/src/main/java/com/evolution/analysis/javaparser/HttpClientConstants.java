@@ -1881,4 +1881,322 @@ final class HttpClientConstants {
     private static Optional<String> bounded(String value) {
         return value.length() <= 16_384 ? Optional.of(value) : Optional.empty();
     }
+
+    // -------------------------------------------------------------------------
+    // WP2.1: Passive BeanFactory.getBean(...) / ApplicationContext.getBean(...) Constant Folding
+    // -------------------------------------------------------------------------
+
+    private static final Set<String> SPRING_BEAN_FACTORY_TYPES = Set.of(
+            "org.springframework.beans.factory.BeanFactory",
+            "org.springframework.beans.factory.ListableBeanFactory",
+            "org.springframework.beans.factory.HierarchicalBeanFactory",
+            "org.springframework.beans.factory.config.ConfigurableBeanFactory",
+            "org.springframework.beans.factory.config.ConfigurableListableBeanFactory",
+            "org.springframework.beans.factory.config.AutowireCapableBeanFactory",
+            "org.springframework.beans.factory.support.DefaultListableBeanFactory",
+            "org.springframework.context.ApplicationContext",
+            "org.springframework.context.ConfigurableApplicationContext",
+            "org.springframework.web.context.WebApplicationContext",
+            "org.springframework.web.context.ConfigurableWebApplicationContext",
+            "org.springframework.context.support.AbstractApplicationContext",
+            "org.springframework.context.support.ClassPathXmlApplicationContext",
+            "org.springframework.context.support.FileSystemXmlApplicationContext",
+            "org.springframework.context.support.GenericApplicationContext",
+            "org.springframework.context.annotation.AnnotationConfigApplicationContext");
+
+    private static final Set<String> SPRING_BEAN_FACTORY_SIMPLE_NAMES = Set.of(
+            "BeanFactory", "ListableBeanFactory", "HierarchicalBeanFactory",
+            "ConfigurableBeanFactory", "ConfigurableListableBeanFactory", "AutowireCapableBeanFactory",
+            "DefaultListableBeanFactory", "ApplicationContext", "ConfigurableApplicationContext",
+            "WebApplicationContext", "ConfigurableWebApplicationContext", "AbstractApplicationContext",
+            "ClassPathXmlApplicationContext", "FileSystemXmlApplicationContext",
+            "GenericApplicationContext", "AnnotationConfigApplicationContext");
+
+    /**
+     * One constant-folded or dynamic {@code BeanFactory.getBean(...)} /
+     * {@code ApplicationContext.getBean(...)} invocation conforming to the pinned
+     * {@code "RESOLVES_BEAN"} / {@code "spring.bean-lookup"} contract.
+     */
+    record BeanLookupCall(
+            MethodCallExpr astNode,
+            String beanName,
+            String beanType,
+            boolean dynamic,
+            String sourceFile,
+            int line,
+            String rawExpression) implements Comparable<BeanLookupCall> {
+        BeanLookupCall {
+            beanName = beanName == null ? "" : beanName.trim();
+            beanType = beanType == null ? "" : beanType.trim();
+            sourceFile = sourceFile == null ? "" : sourceFile.replace('\\', '/');
+            rawExpression = rawExpression == null ? "" : rawExpression.trim();
+        }
+
+        @Override
+        public int compareTo(BeanLookupCall other) {
+            int cmp = sourceFile.compareTo(other.sourceFile);
+            if (cmp != 0) return cmp;
+            cmp = Integer.compare(line, other.line);
+            if (cmp != 0) return cmp;
+            cmp = beanName.compareTo(other.beanName);
+            if (cmp != 0) return cmp;
+            cmp = beanType.compareTo(other.beanType);
+            if (cmp != 0) return cmp;
+            cmp = Boolean.compare(dynamic, other.dynamic);
+            return cmp != 0 ? cmp : rawExpression.compareTo(other.rawExpression);
+        }
+    }
+
+    static boolean isSpringBeanFactoryType(String qualifiedOrSimpleType) {
+        if (qualifiedOrSimpleType == null || qualifiedOrSimpleType.isBlank()) return false;
+        String clean = stripGenerics(qualifiedOrSimpleType);
+        return SPRING_BEAN_FACTORY_TYPES.contains(clean);
+    }
+
+    /**
+     * Extracts and constant-folds {@code BeanFactory.getBean(...)} and
+     * {@code ApplicationContext.getBean(...)} calls within {@code cu}.
+     * Uses semantic constant folding when symbol resolution is active and syntax-scoped
+     * constant folding (including {@link EnumConstantMap}) under {@code --build=off}.
+     */
+    static List<BeanLookupCall> extractBeanLookups(
+            CompilationUnit cu,
+            String docPath,
+            EnumConstantMap enumMap) {
+        if (cu == null) return List.of();
+        String safePath = docPath == null ? "" : docPath.replace('\\', '/');
+        EnumConstantMap activeEnums = enumMap == null ? EnumConstantMap.EMPTY : enumMap;
+        String pkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
+
+        Map<String, String> explicitImports = new HashMap<>();
+        Set<String> wildcardImports = new LinkedHashSet<>();
+        for (ImportDeclaration imp : cu.getImports()) {
+            if (imp.isStatic()) continue;
+            String q = imp.getNameAsString();
+            if (imp.isAsterisk()) {
+                wildcardImports.add(q + ".");
+            } else {
+                explicitImports.put(simpleName(q), q);
+            }
+        }
+
+        var results = new ArrayList<BeanLookupCall>();
+        for (TypeDeclaration<?> typeDecl : cu.findAll(TypeDeclaration.class)) {
+            if (!(typeDecl instanceof ClassOrInterfaceDeclaration cls)) continue;
+            Map<String, String> fieldTypes = new HashMap<>();
+            Map<String, String> fieldConsts = new LinkedHashMap<>();
+
+            var reassignedFields = new HashSet<String>();
+            for (AssignExpr a : cls.findAll(AssignExpr.class)) {
+                if (a.getTarget() instanceof NameExpr n) reassignedFields.add(n.getNameAsString());
+                else if (a.getTarget() instanceof FieldAccessExpr f) reassignedFields.add(f.getNameAsString());
+            }
+            for (FieldDeclaration fd : cls.getFields()) {
+                String rawType = stripGenerics(fd.getCommonType().asString());
+                String resolvedType = resolveBeanFactoryOrType(rawType, pkg, explicitImports, wildcardImports);
+                for (VariableDeclarator vd : fd.getVariables()) {
+                    fieldTypes.put(vd.getNameAsString(), resolvedType);
+                    if (isStringType(rawType)
+                            && (fd.isFinal() || (fd.isPrivate() && !reassignedFields.contains(vd.getNameAsString())))
+                            && vd.getInitializer().isPresent()) {
+                        String folded = syntaxUri(vd.getInitializer().orElseThrow(), fieldConsts, activeEnums);
+                        if (!folded.isEmpty()) {
+                            fieldConsts.put(vd.getNameAsString(), folded);
+                            fieldConsts.put(cls.getNameAsString() + "." + vd.getNameAsString(), folded);
+                        }
+                    }
+                }
+            }
+
+            // Collect callables inside this type (excluding nested type bodies handled in their own iteration)
+            var callables = new ArrayList<Node>();
+            callables.addAll(cls.getMethods());
+            callables.addAll(cls.getConstructors());
+            for (BodyDeclaration<?> member : cls.getMembers()) {
+                if (member instanceof InitializerDeclaration) callables.add(member);
+            }
+
+            for (Node callable : callables) {
+                Map<String, String> varTypes = new HashMap<>(fieldTypes);
+                Map<String, String> localConsts = new LinkedHashMap<>(fieldConsts);
+
+                if (callable instanceof CallableDeclaration<?> cd) {
+                    for (Parameter p : cd.getParameters()) {
+                        String pName = p.getNameAsString();
+                        localConsts.remove(pName);
+                        String rawType = stripGenerics(p.getType().asString());
+                        varTypes.put(pName, resolveBeanFactoryOrType(rawType, pkg, explicitImports, wildcardImports));
+                    }
+                }
+
+                var reassignedLocals = new HashSet<String>();
+                for (AssignExpr a : callable.findAll(AssignExpr.class)) {
+                    if (a.getTarget() instanceof NameExpr n) reassignedLocals.add(n.getNameAsString());
+                }
+                for (VariableDeclarationExpr vde : callable.findAll(VariableDeclarationExpr.class)) {
+                    String rawType = stripGenerics(vde.getCommonType().asString());
+                    String resolvedType = resolveBeanFactoryOrType(rawType, pkg, explicitImports, wildcardImports);
+                    for (VariableDeclarator vd : vde.getVariables()) {
+                        String vName = vd.getNameAsString();
+                        varTypes.put(vName, resolvedType);
+                        localConsts.remove(vName);
+                        if (!vde.isFinal() && reassignedLocals.contains(vName)) continue;
+                        vd.getInitializer().ifPresent(init -> {
+                            if (isStringType(rawType)) {
+                                String folded = syntaxUri(init, localConsts, activeEnums);
+                                if (!folded.isEmpty()) localConsts.put(vName, folded);
+                            }
+                        });
+                    }
+                }
+
+                for (MethodCallExpr call : callable.findAll(MethodCallExpr.class)) {
+                    if (!"getBean".equals(call.getNameAsString()) || call.getArguments().isEmpty()) continue;
+                    // Avoid double-visiting calls inside nested classes
+                    if (call.findAncestor(TypeDeclaration.class).map(t -> t != cls).orElse(false)) continue;
+                    if (!isBeanFactoryReceiver(call, varTypes, pkg, explicitImports, wildcardImports)) continue;
+
+                    BeanLookupCall folded = foldGetBeanCall(
+                            call, safePath, localConsts, activeEnums, pkg, explicitImports, wildcardImports);
+                    if (folded != null) {
+                        results.add(folded);
+                    }
+                }
+            }
+        }
+        results.sort(Comparator.naturalOrder());
+        return List.copyOf(results);
+    }
+
+    private static boolean isBeanFactoryReceiver(
+            MethodCallExpr call,
+            Map<String, String> varTypes,
+            String pkg,
+            Map<String, String> explicitImports,
+            Set<String> wildcardImports) {
+        // 1. Prefer resolved declaring type when JavaSymbolSolver is available
+        try {
+            var resolved = call.resolve();
+            String declaring = resolved.declaringType().getQualifiedName();
+            if (isSpringBeanFactoryType(declaring)) return true;
+            for (var anc : resolved.declaringType().getAllAncestors()) {
+                if (isSpringBeanFactoryType(anc.getQualifiedName())) return true;
+            }
+            // Resolved to a non-Spring class (e.g. custom cache/service with a getBean method)
+            return false;
+        } catch (RuntimeException | LinkageError ignored) {
+            // Fall through to passive syntax + import verification (--build=off)
+        }
+        String root = rootIdOf(call.getScope().orElse(null));
+        if (root.isEmpty()) return false;
+        String varType = varTypes.getOrDefault(root, "");
+        if (isSpringBeanFactoryType(varType)) return true;
+        String resolvedRoot = resolveBeanFactoryOrType(root, pkg, explicitImports, wildcardImports);
+        return isSpringBeanFactoryType(resolvedRoot);
+    }
+
+    private static BeanLookupCall foldGetBeanCall(
+            MethodCallExpr call,
+            String sourceFile,
+            Map<String, String> localConsts,
+            EnumConstantMap enumMap,
+            String pkg,
+            Map<String, String> explicitImports,
+            Set<String> wildcardImports) {
+        int line = call.getRange().map(r -> r.begin.line).orElse(1);
+        Expression arg0 = call.getArgument(0);
+        String rawExpr = call.toString();
+
+        // Case A: getBean(Class<T> requiredType [, Object... args])
+        if (arg0 instanceof ClassExpr classExpr) {
+            String typeName = resolveClassExprFqn(classExpr, pkg, explicitImports, wildcardImports);
+            return new BeanLookupCall(call, "", typeName, typeName.isEmpty(), sourceFile, line, rawExpr);
+        }
+
+        // Case B: getBean(String name) or getBean(String name, Class<T> requiredType) or getBean(String name, Object...)
+        String foldedName = foldStringConstantStrict(arg0, localConsts, enumMap);
+        String beanType = "";
+        boolean typeArgDynamic = false;
+        if (call.getArguments().size() == 2) {
+            Expression arg1 = call.getArgument(1);
+            if (arg1 instanceof ClassExpr ce) {
+                beanType = resolveClassExprFqn(ce, pkg, explicitImports, wildcardImports);
+            } else if (looksLikeClassTypedExpr(arg1)) {
+                typeArgDynamic = true;
+            }
+        }
+        boolean dynamic = foldedName.isEmpty() || typeArgDynamic;
+        return new BeanLookupCall(call, foldedName, beanType, dynamic, sourceFile, line, rawExpr);
+    }
+
+    private static String foldStringConstantStrict(
+            Expression expr,
+            Map<String, String> localConsts,
+            EnumConstantMap enumMap) {
+        String semantic = uri(expr, enumMap).trim();
+        if (!semantic.isEmpty()) {
+            return semantic;
+        }
+        // Strict syntax folding: reject partial "{param}" placeholders so dynamic keys stay dynamic=true
+        String syntax = syntaxUri(expr, localConsts, enumMap).trim();
+        if (syntax.isEmpty() || syntax.contains("{param}")) {
+            return "";
+        }
+        return syntax;
+    }
+
+    private static String resolveClassExprFqn(
+            ClassExpr classExpr,
+            String pkg,
+            Map<String, String> explicitImports,
+            Set<String> wildcardImports) {
+        try {
+            var resolved = classExpr.getType().resolve();
+            if (resolved.isReferenceType()) {
+                return resolved.asReferenceType().getQualifiedName();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        String raw = stripGenerics(classExpr.getType().asString());
+        return resolveBeanFactoryOrType(raw, pkg, explicitImports, wildcardImports);
+    }
+
+    private static boolean looksLikeClassTypedExpr(Expression expr) {
+        try {
+            var resolved = expr.calculateResolvedType();
+            if (resolved.isReferenceType()
+                    && "java.lang.Class".equals(resolved.asReferenceType().getQualifiedName())) {
+                return true;
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        String s = expr.toString();
+        return s.endsWith("Class") || s.endsWith("Type") || s.contains("Class.forName");
+    }
+
+    private static String resolveBeanFactoryOrType(
+            String rawType,
+            String pkg,
+            Map<String, String> explicitImports,
+            Set<String> wildcardImports) {
+        if (rawType == null || rawType.isEmpty()) return "";
+        String clean = stripGenerics(rawType);
+        if (clean.contains(".")) {
+            int dot = clean.indexOf('.');
+            String outer = clean.substring(0, dot);
+            if (explicitImports.containsKey(outer)) {
+                return explicitImports.get(outer) + clean.substring(dot);
+            }
+            return clean;
+        }
+        String direct = explicitImports.get(clean);
+        if (direct != null) return direct;
+        for (String wc : wildcardImports) {
+            if (wc.startsWith("org.springframework.") && SPRING_BEAN_FACTORY_SIMPLE_NAMES.contains(clean)) {
+                String candidate = wc + clean;
+                if (SPRING_BEAN_FACTORY_TYPES.contains(candidate)) return candidate;
+            }
+        }
+        return pkg.isEmpty() ? clean : pkg + "." + clean;
+    }
 }

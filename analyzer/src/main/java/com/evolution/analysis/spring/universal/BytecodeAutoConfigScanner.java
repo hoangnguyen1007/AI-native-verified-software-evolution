@@ -89,6 +89,25 @@ public final class BytecodeAutoConfigScanner {
             "org.springframework.boot.autoconfigure.AutoConfigureOrder";
     private static final String ANN_ORDER =
             "org.springframework.core.annotation.Order";
+    private static final String ANN_SCOPE =
+            "org.springframework.context.annotation.Scope";
+    private static final String ANN_REQUEST_SCOPE =
+            "org.springframework.web.context.annotation.RequestScope";
+    private static final String ANN_SESSION_SCOPE =
+            "org.springframework.web.context.annotation.SessionScope";
+    private static final String ANN_APPLICATION_SCOPE =
+            "org.springframework.web.context.annotation.ApplicationScope";
+    private static final String ANN_QUALIFIER =
+            "org.springframework.beans.factory.annotation.Qualifier";
+    private static final String ANN_JAKARTA_NAMED = "jakarta.inject.Named";
+    private static final String ANN_JAVAX_NAMED = "javax.inject.Named";
+    private static final String ANN_ASPECT = "org.aspectj.lang.annotation.Aspect";
+    private static final String ANN_POINTCUT = "org.aspectj.lang.annotation.Pointcut";
+    private static final String ANN_AROUND = "org.aspectj.lang.annotation.Around";
+    private static final String ANN_BEFORE = "org.aspectj.lang.annotation.Before";
+    private static final String ANN_AFTER_RETURNING = "org.aspectj.lang.annotation.AfterReturning";
+    private static final String ANN_AFTER_THROWING = "org.aspectj.lang.annotation.AfterThrowing";
+    private static final String ANN_AFTER = "org.aspectj.lang.annotation.After";
     private static final String SPRING_BOOT_CONDITION_PREFIX =
             "org.springframework.boot.autoconfigure.condition.";
 
@@ -140,6 +159,62 @@ public final class BytecodeAutoConfigScanner {
         }
     }
 
+    public record BytecodePointcut(String methodName, String expression) implements Comparable<BytecodePointcut> {
+        public BytecodePointcut {
+            methodName = Objects.requireNonNull(methodName);
+            expression = Objects.requireNonNull(expression);
+        }
+
+        @Override
+        public int compareTo(BytecodePointcut other) {
+            int cmp = methodName.compareTo(other.methodName);
+            return cmp != 0 ? cmp : expression.compareTo(other.expression);
+        }
+    }
+
+    public record BytecodeAdvice(
+            String methodName,
+            String adviceKind,
+            String pointcutExpression) implements Comparable<BytecodeAdvice> {
+        public BytecodeAdvice {
+            methodName = Objects.requireNonNull(methodName);
+            adviceKind = Objects.requireNonNull(adviceKind);
+            pointcutExpression = Objects.requireNonNull(pointcutExpression);
+        }
+
+        @Override
+        public int compareTo(BytecodeAdvice other) {
+            int cmp = methodName.compareTo(other.methodName);
+            if (cmp != 0) return cmp;
+            cmp = adviceKind.compareTo(other.adviceKind);
+            return cmp != 0 ? cmp : pointcutExpression.compareTo(other.pointcutExpression);
+        }
+    }
+
+    public record StarterAspect(
+            String classFqn,
+            String jarLogicalName,
+            ContentDigest jarDigest,
+            int order,
+            List<BytecodePointcut> pointcuts,
+            List<BytecodeAdvice> advices,
+            ConditionEvidence.Artifact evidence) implements Comparable<StarterAspect> {
+        public StarterAspect {
+            classFqn = Objects.requireNonNull(classFqn);
+            jarLogicalName = Objects.requireNonNull(jarLogicalName);
+            jarDigest = Objects.requireNonNull(jarDigest);
+            pointcuts = pointcuts == null ? List.of() : pointcuts.stream().sorted().distinct().toList();
+            advices = advices == null ? List.of() : advices.stream().sorted().distinct().toList();
+            evidence = Objects.requireNonNull(evidence);
+        }
+
+        @Override
+        public int compareTo(StarterAspect other) {
+            int cmp = jarDigest.value().compareTo(other.jarDigest.value());
+            return cmp != 0 ? cmp : classFqn.compareTo(other.classFqn);
+        }
+    }
+
     public record StarterBean(
             String declaringClassFqn,
             String methodName,
@@ -151,7 +226,26 @@ public final class BytecodeAutoConfigScanner {
             boolean fallback,
             boolean lazy,
             List<ConditionAnnotation> conditions,
-            ConditionEvidence.Artifact evidence) {
+            ConditionEvidence.Artifact evidence,
+            String scope,
+            List<String> qualifiers) {
+        public StarterBean(
+                String declaringClassFqn,
+                String methodName,
+                String methodDescriptor,
+                String returnTypeFqn,
+                List<String> beanNames,
+                List<String> parameterTypeFqns,
+                boolean primary,
+                boolean fallback,
+                boolean lazy,
+                List<ConditionAnnotation> conditions,
+                ConditionEvidence.Artifact evidence) {
+            this(declaringClassFqn, methodName, methodDescriptor, returnTypeFqn, beanNames,
+                    parameterTypeFqns, primary, fallback, lazy, conditions, evidence,
+                    "singleton", List.of());
+        }
+
         public StarterBean {
             declaringClassFqn = Objects.requireNonNull(declaringClassFqn);
             methodName = Objects.requireNonNull(methodName);
@@ -161,6 +255,8 @@ public final class BytecodeAutoConfigScanner {
             parameterTypeFqns = List.copyOf(parameterTypeFqns);
             conditions = List.copyOf(conditions);
             evidence = Objects.requireNonNull(evidence);
+            scope = SpringXmlBeanExtractor.normalizeScope(scope);
+            qualifiers = qualifiers == null ? List.of() : qualifiers.stream().filter(s -> s != null && !s.isBlank()).distinct().sorted().toList();
         }
     }
 
@@ -218,13 +314,29 @@ public final class BytecodeAutoConfigScanner {
             List<ScanProblem> problems,
             Map<String, Integer> conditionHistogram,
             Set<String> indexedClassFqns,
-            long elapsedMs) {
+            long elapsedMs,
+            List<StarterAspect> aspects) {
+        public ScanResult(
+                ContentDigest identity,
+                int scannedJars,
+                int metadataFilesRead,
+                int seedCandidates,
+                List<StarterConfiguration> configurations,
+                List<ScanProblem> problems,
+                Map<String, Integer> conditionHistogram,
+                Set<String> indexedClassFqns,
+                long elapsedMs) {
+            this(identity, scannedJars, metadataFilesRead, seedCandidates, configurations, problems,
+                    conditionHistogram, indexedClassFqns, elapsedMs, List.of());
+        }
+
         public ScanResult {
             identity = Objects.requireNonNull(identity);
             configurations = List.copyOf(configurations);
             problems = List.copyOf(problems);
             conditionHistogram = Collections.unmodifiableMap(new TreeMap<>(conditionHistogram));
             indexedClassFqns = Collections.unmodifiableSet(new TreeSet<>(indexedClassFqns));
+            aspects = aspects == null ? List.of() : aspects.stream().sorted().distinct().toList();
         }
 
         public int totalBeans() {
@@ -591,6 +703,7 @@ public final class BytecodeAutoConfigScanner {
         var openZips = new HashMap<String, ZipFile>();
         var metaCache = new HashMap<String, Optional<ParsedAnnotationType>>();
         var configurations = new ArrayList<StarterConfiguration>();
+        var aspects = new ArrayList<StarterAspect>();
         var histogram = new TreeMap<String, Integer>();
         int inspectedClasses = 0;
 
@@ -696,7 +809,20 @@ public final class BytecodeAutoConfigScanner {
                             rawBean.fallback(),
                             rawBean.lazy(),
                             sortedBeanConds,
-                            rawBean.evidence()));
+                            rawBean.evidence(),
+                            rawBean.scope(),
+                            rawBean.qualifiers()));
+                }
+
+                if (parsed.aspect || !parsed.pointcuts.isEmpty() || !parsed.advices.isEmpty()) {
+                    aspects.add(new StarterAspect(
+                            parsed.classFqn,
+                            ref.binary().entry().logicalName(),
+                            ref.jarDigest(),
+                            parsed.aspectOrder,
+                            parsed.pointcuts,
+                            parsed.advices,
+                            evidence));
                 }
 
                 boolean relevant = task.depth() == 0
@@ -777,19 +903,24 @@ public final class BytecodeAutoConfigScanner {
 
         configurations.sort(Comparator.comparing((StarterConfiguration c) -> c.jarDigest().value())
                 .thenComparing(StarterConfiguration::classFqn));
+        aspects.sort(Comparator.naturalOrder());
         problems.sort(Comparator.comparing((ScanProblem p) -> p.jarDigest().value())
                 .thenComparing(ScanProblem::entryPath)
                 .thenComparing(ScanProblem::reason)
                 .thenComparing(ScanProblem::detail));
 
         long elapsedMs = Math.max(0L, (System.nanoTime() - tStart) / 1_000_000L);
-        ContentDigest identity = IngestionEvidence.digest(Map.of(
-                "provider", PROVIDER,
-                "scannedJars", scannedJars,
-                "metadataFilesRead", metadataFilesRead,
-                "seedCandidates", seedSources.size(),
-                "configurations", configurations,
-                "problems", problems));
+        var digestInput = new TreeMap<String, Object>();
+        digestInput.put("provider", PROVIDER);
+        digestInput.put("scannedJars", scannedJars);
+        digestInput.put("metadataFilesRead", metadataFilesRead);
+        digestInput.put("seedCandidates", seedSources.size());
+        digestInput.put("configurations", configurations);
+        digestInput.put("problems", problems);
+        if (!aspects.isEmpty()) {
+            digestInput.put("aspects", aspects);
+        }
+        ContentDigest identity = IngestionEvidence.digest(digestInput);
 
         return new ScanResult(
                 identity,
@@ -800,7 +931,69 @@ public final class BytecodeAutoConfigScanner {
                 problems,
                 histogram,
                 indexedFqns,
-                elapsedMs);
+                elapsedMs,
+                aspects);
+    }
+
+    /**
+     * Passively scans all {@code .class} entries in supplied JARs ({@code SKIP_CODE}) to discover
+     * bytecode {@code @Aspect} / {@code @Pointcut} / advice definitions even when not declared in
+     * {@code AutoConfiguration.imports} or {@code spring.factories}.
+     */
+    public static List<StarterAspect> scanAspects(List<BinaryInput> dependencies, Limits limits) {
+        Objects.requireNonNull(dependencies, "dependencies");
+        Objects.requireNonNull(limits, "limits");
+        var sortedDeps = dependencies.stream()
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing((BinaryInput b) -> b.entry().contentDigest().value())
+                        .thenComparing(b -> b.entry().logicalName())
+                        .thenComparing(b -> b.path().toString()))
+                .toList();
+        var aspects = new ArrayList<StarterAspect>();
+        int inspected = 0;
+        int jars = 0;
+        for (var dep : sortedDeps) {
+            if (jars >= limits.maxJars() || inspected >= limits.maxTotalClasses()) break;
+            if (!Files.isRegularFile(dep.path(), LinkOption.NOFOLLOW_LINKS)) continue;
+            jars++;
+            try (var zip = new ZipFile(dep.path().toFile(), StandardCharsets.UTF_8)) {
+                int jarClasses = 0;
+                var entries = zip.entries();
+                while (entries.hasMoreElements() && inspected < limits.maxTotalClasses()) {
+                    ZipEntry entry = entries.nextElement();
+                    if (entry.isDirectory()) continue;
+                    String name = entry.getName();
+                    if (!name.endsWith(".class") || name.equals("module-info.class")
+                            || name.endsWith("/package-info.class") || name.equals("package-info.class")
+                            || name.startsWith("META-INF/versions/")) {
+                        continue;
+                    }
+                    if (++jarClasses > limits.maxClassesPerJar()) break;
+                    inspected++;
+                    byte[] bytes = readEntryBounded(zip, entry, limits.maxEntryBytes() + 1);
+                    if (bytes.length > limits.maxEntryBytes()) continue;
+                    String fqn = name.substring(0, name.length() - 6).replace('/', '.');
+                    var evidence = new ConditionEvidence.Artifact(
+                            dep.entry().contentDigest(), ContentDigest.sha256(bytes), name);
+                    try {
+                        ParsedClass parsed = parseClassBytes(bytes, fqn, evidence);
+                        if (parsed.aspect || !parsed.pointcuts.isEmpty() || !parsed.advices.isEmpty()) {
+                            aspects.add(new StarterAspect(
+                                    parsed.classFqn,
+                                    dep.entry().logicalName(),
+                                    dep.entry().contentDigest(),
+                                    parsed.aspectOrder,
+                                    parsed.pointcuts,
+                                    parsed.advices,
+                                    evidence));
+                        }
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return aspects.stream().sorted().distinct().toList();
     }
 
     public static SpikeAnalysis analyzeInteractions(ScanResult scan, UserSpringSummary user) {
@@ -1363,13 +1556,17 @@ public final class BytecodeAutoConfigScanner {
             boolean lazy,
             List<ConditionAnnotation> conditions,
             List<RawAnnUse> candidateMetaAnnotations,
-            ConditionEvidence.Artifact evidence) {}
+            ConditionEvidence.Artifact evidence,
+            String scope,
+            List<String> qualifiers) {}
 
     private static final class ParsedClass {
         String classFqn;
         boolean autoConfiguration;
         boolean configuration;
         boolean proxyBeanMethods = true;
+        boolean aspect;
+        int aspectOrder = Integer.MAX_VALUE;
         final List<String> importedClasses = new ArrayList<>();
         final List<String> enabledConfigProperties = new ArrayList<>();
         final List<String> nestedClasses = new ArrayList<>();
@@ -1377,6 +1574,8 @@ public final class BytecodeAutoConfigScanner {
         final List<RawAnnUse> candidateMetaAnnotations = new ArrayList<>();
         final List<OrderingAnnotation> orderings = new ArrayList<>();
         final List<ParsedBean> beans = new ArrayList<>();
+        final List<BytecodePointcut> pointcuts = new ArrayList<>();
+        final List<BytecodeAdvice> advices = new ArrayList<>();
     }
 
     private static ParsedClass parseClassBytes(
@@ -1455,8 +1654,12 @@ public final class BytecodeAutoConfigScanner {
                                 } catch (NumberFormatException ignored) {
                                 }
                             }
+                            if (ANN_ORDER.equals(annFqn) && orderVal.isPresent()) {
+                                parsed.aspectOrder = orderVal.orElseThrow();
+                            }
                             parsed.orderings.add(new OrderingAnnotation(annFqn, List.of(), List.of(), orderVal));
                         }
+                        case ANN_ASPECT -> parsed.aspect = true;
                         default -> {
                             if (isPrimitiveConditionAnnotation(annFqn)) {
                                 parsed.conditions.add(new ConditionAnnotation(annFqn, attrs, isOpaqueCondition(annFqn)));
@@ -1478,6 +1681,8 @@ public final class BytecodeAutoConfigScanner {
                     boolean primary;
                     boolean fallback;
                     boolean lazy;
+                    String scope = "singleton";
+                    final List<String> qualifiers = new ArrayList<>();
                     final List<String> beanNames = new ArrayList<>();
                     final List<ConditionAnnotation> methodConditions = new ArrayList<>();
                     final List<RawAnnUse> candidateMethodMeta = new ArrayList<>();
@@ -1498,6 +1703,32 @@ public final class BytecodeAutoConfigScanner {
                                     var vals = attrs.get("value");
                                     lazy = vals == null || vals.isEmpty() || Boolean.parseBoolean(vals.getFirst());
                                 }
+                                case ANN_SCOPE -> {
+                                    var vals = attrs.getOrDefault("scopeName", attrs.getOrDefault("value", List.of()));
+                                    if (!vals.isEmpty()) {
+                                        scope = SpringXmlBeanExtractor.normalizeScope(vals.getFirst());
+                                    }
+                                }
+                                case ANN_REQUEST_SCOPE -> scope = "request";
+                                case ANN_SESSION_SCOPE -> scope = "session";
+                                case ANN_APPLICATION_SCOPE -> scope = "application";
+                                case ANN_QUALIFIER, ANN_JAKARTA_NAMED, ANN_JAVAX_NAMED -> {
+                                    var vals = attrs.getOrDefault("value", List.of());
+                                    for (String q : vals) {
+                                        if (q != null && !q.isBlank()) qualifiers.add(q.trim());
+                                    }
+                                }
+                                case ANN_POINTCUT -> {
+                                    var vals = attrs.getOrDefault("value", List.of());
+                                    if (!vals.isEmpty() && !vals.getFirst().isBlank()) {
+                                        parsed.pointcuts.add(new BytecodePointcut(name, vals.getFirst().trim()));
+                                    }
+                                }
+                                case ANN_AROUND -> recordBytecodeAdvice("AROUND", attrs);
+                                case ANN_BEFORE -> recordBytecodeAdvice("BEFORE", attrs);
+                                case ANN_AFTER_RETURNING -> recordBytecodeAdvice("AFTER_RETURNING", attrs);
+                                case ANN_AFTER_THROWING -> recordBytecodeAdvice("AFTER_THROWING", attrs);
+                                case ANN_AFTER -> recordBytecodeAdvice("AFTER", attrs);
                                 default -> {
                                     if (isPrimitiveConditionAnnotation(annFqn)) {
                                         methodConditions.add(new ConditionAnnotation(
@@ -1508,6 +1739,12 @@ public final class BytecodeAutoConfigScanner {
                                 }
                             }
                         });
+                    }
+
+                    private void recordBytecodeAdvice(String kind, Map<String, List<String>> attrs) {
+                        var pc = attrs.getOrDefault("pointcut", attrs.getOrDefault("value", List.of()));
+                        String expr = pc.isEmpty() ? "" : pc.getFirst().trim();
+                        parsed.advices.add(new BytecodeAdvice(name, kind, expr));
                     }
 
                     @Override
@@ -1534,7 +1771,9 @@ public final class BytecodeAutoConfigScanner {
                                 lazy,
                                 methodConditions,
                                 candidateMethodMeta,
-                                evidence));
+                                evidence,
+                                scope,
+                                qualifiers.stream().distinct().sorted().toList()));
                     }
                 };
             }
@@ -1784,6 +2023,18 @@ public final class BytecodeAutoConfigScanner {
                 && !fqn.equals(ANN_FALLBACK)
                 && !fqn.equals(ANN_LAZY)
                 && !fqn.equals(ANN_ORDER)
+                && !fqn.equals(ANN_SCOPE)
+                && !fqn.equals(ANN_REQUEST_SCOPE)
+                && !fqn.equals(ANN_SESSION_SCOPE)
+                && !fqn.equals(ANN_APPLICATION_SCOPE)
+                && !fqn.equals(ANN_QUALIFIER)
+                && !fqn.equals(ANN_ASPECT)
+                && !fqn.equals(ANN_POINTCUT)
+                && !fqn.equals(ANN_AROUND)
+                && !fqn.equals(ANN_BEFORE)
+                && !fqn.equals(ANN_AFTER_RETURNING)
+                && !fqn.equals(ANN_AFTER_THROWING)
+                && !fqn.equals(ANN_AFTER)
                 && !fqn.equals(ANN_AUTO_CONFIGURE_BEFORE)
                 && !fqn.equals(ANN_AUTO_CONFIGURE_AFTER)
                 && !fqn.equals(ANN_AUTO_CONFIGURE_ORDER)

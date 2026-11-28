@@ -4,6 +4,7 @@ import com.evolution.analysis.contract.common.*;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.ingestion.*;
 import com.evolution.analysis.frontend.SourceInput;
+import com.evolution.analysis.spring.universal.SpringXmlBeanExtractor;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.CodingErrorAction;
@@ -35,14 +36,34 @@ public final class ConfigDataIngestion {
     }
     public record Result(ContentDigest inputIdentity, List<Document> documents, Map<String,String> properties,
                          List<String> activeProfiles, Optional<ConfigurationAssignment> assignment,
-                         List<IngestionEvidence.Issue> issues, List<CapabilityGapRecord> gaps) {
+                         List<IngestionEvidence.Issue> issues, List<CapabilityGapRecord> gaps,
+                         SpringXmlBeanExtractor.Result xmlBeans) {
+        public Result(ContentDigest inputIdentity, List<Document> documents, Map<String,String> properties,
+                      List<String> activeProfiles, Optional<ConfigurationAssignment> assignment,
+                      List<IngestionEvidence.Issue> issues, List<CapabilityGapRecord> gaps) {
+            this(inputIdentity, documents, properties, activeProfiles, assignment, issues, gaps,
+                    SpringXmlBeanExtractor.Result.empty());
+        }
         public Result {
             documents = List.copyOf(documents); properties = Collections.unmodifiableMap(new TreeMap<>(properties));
             activeProfiles = List.copyOf(activeProfiles); Objects.requireNonNull(assignment);
             issues = List.copyOf(issues); gaps = List.copyOf(gaps);
+            xmlBeans = xmlBeans == null ? SpringXmlBeanExtractor.Result.empty() : xmlBeans;
         }
-        public ContentDigest identity() { return IngestionEvidence.digest(Map.of("input",inputIdentity,"documents",documents,
-                "properties",properties,"profiles",activeProfiles,"assignment",assignment.map(ConfigurationAssignment::identity),"issues",issues,"gaps",gaps)); }
+        public ContentDigest identity() {
+            var map = new TreeMap<String, Object>();
+            map.put("input", inputIdentity);
+            map.put("documents", documents);
+            map.put("properties", properties);
+            map.put("profiles", activeProfiles);
+            map.put("assignment", assignment.map(ConfigurationAssignment::identity));
+            map.put("issues", issues);
+            map.put("gaps", gaps);
+            if (!xmlBeans.isEmpty()) {
+                map.put("xmlBeans", xmlBeans.identity());
+            }
+            return IngestionEvidence.digest(map);
+        }
     }
     private static final int PHASE_BOOTSTRAP = 0;
     private static final int PHASE_CONFIG_SERVER_APP = 1;
@@ -265,9 +286,23 @@ public final class ConfigDataIngestion {
         profiles.forEach(p -> { if (!p.isBlank()) baseline.put(new FiniteDomain.Variable(FiniteDomain.Kind.PROFILE,p),FiniteDomain.Value.bool(true)); });
         var evidence = new ConditionEvidence.Derived(List.of(identity),PROVIDER,"repository-baseline");
         var sortedIssues = issues.stream().distinct().sorted(Comparator.comparing(IngestionEvidence.Issue::identity)).toList();
+        var xmlBeans = SpringXmlBeanExtractor.extract(inputs);
+        var allGaps = new TreeSet<>(IngestionEvidence.gaps(inputs.snapshot().identity(),PROVIDER,identity,sortedIssues));
+        allGaps.addAll(xmlBeans.gaps());
         return new Result(identity,documents,resolved,active,
                 sortedIssues.isEmpty() ? Optional.of(new ConfigurationAssignment(baseline,evidence)) : Optional.empty(),
-                sortedIssues,IngestionEvidence.gaps(inputs.snapshot().identity(),PROVIDER,identity,sortedIssues));
+                sortedIssues,List.copyOf(allGaps),xmlBeans);
+    }
+
+    /** Passive discovery of captured Spring XML configuration file paths inside the snapshot. */
+    public static List<String> discoverSpringXmlPaths(RepositoryInputs inputs) {
+        Objects.requireNonNull(inputs, "inputs");
+        var res = SpringXmlBeanExtractor.extract(inputs);
+        var paths = new TreeSet<String>();
+        for (var b : res.beans()) if (!b.sourceFile().isEmpty()) paths.add(b.sourceFile());
+        for (var i : res.imports()) if (!i.sourceFile().isEmpty()) paths.add(i.sourceFile());
+        for (var a : res.authProviders()) if (!a.sourceFile().isEmpty()) paths.add(a.sourceFile());
+        return List.copyOf(paths);
     }
 
     /** Reads only captured repository bytes. A relative import has no authority to read the host.

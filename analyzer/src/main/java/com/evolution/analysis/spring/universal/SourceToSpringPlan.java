@@ -5,6 +5,7 @@ import com.evolution.analysis.contract.identity.EntityIdentity;
 import com.evolution.analysis.contract.semantic.SemanticStatus;
 import com.evolution.analysis.contract.semantic.EntityKind;
 import com.evolution.analysis.contract.semantic.EntityOrigin;
+import com.evolution.analysis.contract.semantic.TrustTier;
 import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.frontend.JavaType;
 import com.evolution.analysis.ingestion.IngestionEvidence;
@@ -76,12 +77,108 @@ public final class SourceToSpringPlan {
                 }
         }
 
+        /**
+         * Explicit per-bean {@code @Scope} and {@code (beanId, qualifiers)} metadata avoiding
+         * singleton conflation across same-type beans with distinct qualifiers/IDs (Jasmine Sec. 5.2.1).
+         */
+        public record BeanMetadata(
+                        String beanId,
+                        String className,
+                        String scope,
+                        List<String> qualifiers,
+                        String sourceKind,
+                        TrustTier trustTier) implements Comparable<BeanMetadata> {
+                public BeanMetadata {
+                        beanId = beanId == null ? "" : beanId.trim();
+                        className = className == null ? "" : className.trim();
+                        scope = SpringXmlBeanExtractor.normalizeScope(scope);
+                        qualifiers = qualifiers == null ? List.of()
+                                        : qualifiers.stream().filter(q -> q != null && !q.isBlank())
+                                                        .map(String::trim).distinct().sorted().toList();
+                        sourceKind = sourceKind == null || sourceKind.isBlank() ? "COMPONENT" : sourceKind.trim();
+                        trustTier = trustTier == null ? TrustTier.SOURCE_SYNTAX : trustTier;
+                }
+
+                public Map<String, Object> toEvidencePayload() {
+                        var map = new TreeMap<String, Object>();
+                        map.put("beanId", beanId);
+                        map.put("className", className);
+                        map.put("qualifiers", qualifiers);
+                        map.put("scope", scope);
+                        map.put("sourceKind", sourceKind);
+                        map.put("trustTier", trustTier.name());
+                        return Collections.unmodifiableMap(map);
+                }
+
+                @Override
+                public int compareTo(BeanMetadata other) {
+                        int cmp = beanId.compareTo(other.beanId);
+                        if (cmp != 0) return cmp;
+                        cmp = className.compareTo(other.className);
+                        if (cmp != 0) return cmp;
+                        cmp = scope.compareTo(other.scope);
+                        if (cmp != 0) return cmp;
+                        cmp = String.join(",", qualifiers).compareTo(String.join(",", other.qualifiers));
+                        return cmp != 0 ? cmp : sourceKind.compareTo(other.sourceKind);
+                }
+        }
+
+        /**
+         * Optional passive XML and bytecode starter inputs wired end-to-end into {@link SourceToSpringPlan}.
+         */
+        public record SupplementalInputs(
+                        SpringXmlBeanExtractor.Result xmlBeans,
+                        Optional<BytecodeAutoConfigScanner.ScanResult> bytecodeScan) {
+                private static final SupplementalInputs EMPTY = new SupplementalInputs(
+                                SpringXmlBeanExtractor.Result.empty(), Optional.empty());
+
+                public SupplementalInputs {
+                        xmlBeans = xmlBeans == null ? SpringXmlBeanExtractor.Result.empty() : xmlBeans;
+                        bytecodeScan = bytecodeScan == null ? Optional.empty() : bytecodeScan;
+                }
+
+                public static SupplementalInputs empty() {
+                        return EMPTY;
+                }
+
+                public static SupplementalInputs ofXml(SpringXmlBeanExtractor.Result xmlBeans) {
+                        return new SupplementalInputs(xmlBeans, Optional.empty());
+                }
+
+                public static SupplementalInputs ofBytecode(BytecodeAutoConfigScanner.ScanResult scan) {
+                        return new SupplementalInputs(SpringXmlBeanExtractor.Result.empty(), Optional.ofNullable(scan));
+                }
+
+                public static SupplementalInputs of(
+                                SpringXmlBeanExtractor.Result xmlBeans,
+                                BytecodeAutoConfigScanner.ScanResult scan) {
+                        return new SupplementalInputs(xmlBeans, Optional.ofNullable(scan));
+                }
+        }
+
         public record Result(ContentDigest inputIdentity, SpringMechanismInventory inventory,
                         ConditionEvidenceLowering.Result conditions, InjectionBindingPlan binding,
-                        List<CapabilityGapRecord> gaps, List<SourceMethodSelection.Decision> methodSelections) {
+                        List<CapabilityGapRecord> gaps, List<SourceMethodSelection.Decision> methodSelections,
+                        List<BeanMetadata> beanMetadata, SpringXmlBeanExtractor.Result xmlBeans,
+                        SpringAopMetadataExtractor.Result aopMetadata, SpringProxyTrapDetector.Result proxyTraps,
+                        List<BytecodeAutoConfigScanner.StarterBean> starterBeans) {
                 public Result {
                         gaps = com.evolution.analysis.ingestion.AnalysisWorkspace.ReplayList.copy(gaps);
                         methodSelections = List.copyOf(methodSelections);
+                        beanMetadata = beanMetadata == null ? List.of() : beanMetadata.stream().sorted().distinct().toList();
+                        xmlBeans = xmlBeans == null ? SpringXmlBeanExtractor.Result.empty() : xmlBeans;
+                        aopMetadata = aopMetadata == null ? SpringAopMetadataExtractor.Result.empty() : aopMetadata;
+                        proxyTraps = proxyTraps == null ? SpringProxyTrapDetector.Result.empty() : proxyTraps;
+                        starterBeans = starterBeans == null ? List.of() : List.copyOf(starterBeans);
+                }
+
+                public Result(ContentDigest inputIdentity, SpringMechanismInventory inventory,
+                                ConditionEvidenceLowering.Result conditions, InjectionBindingPlan binding,
+                                List<CapabilityGapRecord> gaps, List<SourceMethodSelection.Decision> methodSelections) {
+                        this(inputIdentity, inventory, conditions, binding, gaps, methodSelections,
+                                        List.of(), SpringXmlBeanExtractor.Result.empty(),
+                                        SpringAopMetadataExtractor.Result.empty(), SpringProxyTrapDetector.Result.empty(),
+                                        List.of());
                 }
 
                 public Result(ContentDigest inputIdentity, SpringMechanismInventory inventory,
@@ -91,9 +188,21 @@ public final class SourceToSpringPlan {
                 }
 
                 public ContentDigest identity() {
-                        return memoizedIdentity(this, () -> IngestionEvidence.digest(List.of(inputIdentity,
-                                        inventory.identity(), conditions.identity(), binding.identity(), gaps,
-                                        methodSelections)));
+                        return memoizedIdentity(this, () -> {
+                                var parts = new ArrayList<Object>(11);
+                                parts.add(inputIdentity);
+                                parts.add(inventory.identity());
+                                parts.add(conditions.identity());
+                                parts.add(binding.identity());
+                                parts.add(gaps);
+                                parts.add(methodSelections);
+                                if (!beanMetadata.isEmpty()) parts.add(beanMetadata);
+                                if (!xmlBeans.isEmpty()) parts.add(xmlBeans.identity());
+                                if (!aopMetadata.isEmpty()) parts.add(aopMetadata.identity());
+                                if (!proxyTraps.findings().isEmpty()) parts.add(proxyTraps.identity());
+                                if (!starterBeans.isEmpty()) parts.add(starterBeans);
+                                return IngestionEvidence.digest(parts);
+                        });
                 }
 
                 public Evaluation evaluate(ConfigurationSpace space, ConfigurationAssignment baseline,
@@ -224,9 +333,17 @@ public final class SourceToSpringPlan {
                         "org.springframework.context.annotation.ComponentScan",
                         "org.springframework.core.annotation.Order",
                         "org.springframework.context.annotation.Lazy", "org.springframework.context.annotation.Scope",
+                        "org.springframework.web.context.annotation.RequestScope",
+                        "org.springframework.web.context.annotation.SessionScope",
+                        "org.springframework.web.context.annotation.ApplicationScope",
                         "org.springframework.context.annotation.DependsOn",
                         "org.springframework.context.annotation.Import",
                         "org.springframework.context.annotation.ImportResource",
+                        "org.aspectj.lang.annotation.Aspect",
+                        "org.springframework.transaction.annotation.Transactional",
+                        "org.springframework.cache.annotation.Cacheable",
+                        "org.springframework.scheduling.annotation.Async",
+                        "org.springframework.security.access.prepost.PreAuthorize",
                         "org.springframework.boot.context.properties.ConfigurationProperties",
                         "org.springframework.boot.context.properties.EnableConfigurationProperties",
                         "org.springframework.boot.autoconfigure.condition.ConditionalOnExpression",
@@ -253,8 +370,18 @@ public final class SourceToSpringPlan {
                         ComponentScanIngestion.Result components, ConstructorInjectionIngestion.Result constructors,
                         Scope scope, int limit,
                         com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode validationMode) {
+                return normalize(build, source, components, constructors, scope, limit, validationMode,
+                                SupplementalInputs.empty());
+        }
+
+        public static Result normalize(SpringBuildContext build, SpringSourceEvidence source,
+                        ComponentScanIngestion.Result components, ConstructorInjectionIngestion.Result constructors,
+                        Scope scope, int limit,
+                        com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode validationMode,
+                        SupplementalInputs supplemental) {
                 return normalizeInternal(build, source, components, constructors, Objects.requireNonNull(scope), null,
-                                null, validationMode, limit);
+                                null, validationMode, limit,
+                                supplemental == null ? SupplementalInputs.empty() : supplemental);
         }
 
         public static Result normalizeAutoScoped(SpringBuildContext build, SpringSourceEvidence source,
@@ -262,16 +389,26 @@ public final class SourceToSpringPlan {
                         String container, ConditionEvidence evidence,
                         com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode validationMode,
                         int limit) {
+                return normalizeAutoScoped(build, source, components, constructors, container, evidence,
+                                validationMode, limit, SupplementalInputs.empty());
+        }
+
+        public static Result normalizeAutoScoped(SpringBuildContext build, SpringSourceEvidence source,
+                        ComponentScanIngestion.Result components, ConstructorInjectionIngestion.Result constructors,
+                        String container, ConditionEvidence evidence,
+                        com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode validationMode,
+                        int limit, SupplementalInputs supplemental) {
                 return normalizeInternal(build, source, components, constructors, null,
                                 ContractChecks.text(container, "container"),
-                                Objects.requireNonNull(evidence), Objects.requireNonNull(validationMode), limit);
+                                Objects.requireNonNull(evidence), Objects.requireNonNull(validationMode), limit,
+                                supplemental == null ? SupplementalInputs.empty() : supplemental);
         }
 
         private static Result normalizeInternal(SpringBuildContext build, SpringSourceEvidence source,
                         ComponentScanIngestion.Result components, ConstructorInjectionIngestion.Result constructors,
                         Scope explicitScope, String autoContainer, ConditionEvidence autoEvidence,
                         com.evolution.analysis.spring.SpringFrameworkEvidence.ValidationMode validationMode,
-                        int limit) {
+                        int limit, SupplementalInputs supplemental) {
                 if (limit < 1 || limit > 50_000)
                         throw new IllegalArgumentException("Plan acquisition limit must be in [1,50000]");
                 long squareBudget = Math.min(100_000_000L, (long) limit * limit);
@@ -298,7 +435,8 @@ public final class SourceToSpringPlan {
                         });
                 var inventory = SpringMechanismScanner.scan(new SpringMechanismScanRequest(source.frontend(),
                                 source.framework(), List.of(), List.of()));
-                var buildObservations = deriveBuildObservations(build, source, inventory, validationMode);
+                var buildObservations = deriveBuildObservations(build, source, inventory, validationMode,
+                                supplemental.bytecodeScan().orElse(null));
                 var lowering = ConditionEvidenceLowering.lower(build, inventory, buildObservations,
                                 ConditionEvidenceLowering.Limits.conservative(), validationMode);
                 var generation = FrameworkGeneration.from(source.framework(), Optional.empty(), validationMode,
@@ -815,8 +953,76 @@ public final class SourceToSpringPlan {
                         gaps.addAll(UniversalSpringEvidence.gaps(build.snapshotIdentity(), input, List.of(
                                         new UniversalSpringEvidence.Issue(UniversalSpringEvidence.Reason.RESOURCE_LIMIT,
                                                         "source-to-plan", List.of(proof)))));
+
+                // WP2.1: Explicit @Scope / (beanId, qualifiers) tracking, passive XML/getBean, AOP & proxy trap wiring
+                var beanMetadataList = new ArrayList<BeanMetadata>();
+                var javaBeansById = new HashMap<String, String>();
+                var javaBeanIdsByType = new HashMap<String, List<String>>();
+                for (var entry : byDeclaration.entrySet()) {
+                        var declId = entry.getKey();
+                        var cand = entry.getValue();
+                        var beanMethod = methods.get(declId);
+                        String beanId = cand.declaredNameKey().primary().orElse(cand.definitionSlot());
+                        String className = cand.exposedTypes().isEmpty()
+                                        ? Objects.toString(source.typeName(declId), "")
+                                        : Objects.toString(source.typeName(cand.exposedTypes().getFirst()), "");
+                        String beanScope = extractDeclaredScope(source, declId);
+                        List<String> quals = extractDeclaredQualifiers(source, declId);
+                        String kind = beanMethod == null ? "COMPONENT" : "BEAN_METHOD";
+                        TrustTier tier = source.framework().artifacts().isEmpty()
+                                        ? TrustTier.SOURCE_SYNTAX : TrustTier.COMPILER;
+                        beanMetadataList.add(new BeanMetadata(beanId, className, beanScope, quals, kind, tier));
+                        if (!beanId.isEmpty()) {
+                                javaBeansById.putIfAbsent(beanId, className);
+                                for (String alias : cand.declaredNameKey().aliases()) {
+                                        javaBeansById.putIfAbsent(alias, className);
+                                }
+                                if (!className.isEmpty()) {
+                                        javaBeanIdsByType.computeIfAbsent(className, k -> new ArrayList<>()).add(beanId);
+                                }
+                        }
+                }
+
+                // Merge passive XML beans into bean metadata (TrustTier.SOURCE_SYNTAX)
+                var xmlBeanClasses = new HashSet<String>();
+                for (var xb : supplemental.xmlBeans().beans()) {
+                        if (!xb.className().isEmpty()) {
+                                xmlBeanClasses.add(xb.className());
+                        }
+                        beanMetadataList.add(new BeanMetadata(
+                                        xb.beanId(), xb.className(), xb.scope(), xb.qualifiers(),
+                                        "XML_BEAN", TrustTier.SOURCE_SYNTAX));
+                }
+
+                // Wire BytecodeAutoConfigScanner starter beans end-to-end into SourceToSpringPlan
+                var starterBeans = new ArrayList<BytecodeAutoConfigScanner.StarterBean>();
+                var bytecodeScan = supplemental.bytecodeScan().orElse(null);
+                if (bytecodeScan != null) {
+                        for (var cfg : bytecodeScan.configurations()) {
+                                for (var sb : cfg.beans()) {
+                                        starterBeans.add(sb);
+                                        String sbId = sb.beanNames().isEmpty() ? sb.methodName() : sb.beanNames().getFirst();
+                                        beanMetadataList.add(new BeanMetadata(
+                                                        sbId, sb.returnTypeFqn(), sb.scope(), sb.qualifiers(),
+                                                        "STARTER_BYTECODE", TrustTier.COMPILER));
+                                }
+                        }
+                }
+
+                var lookupProjection = SpringXmlBeanExtractor.extractBeanLookups(
+                                source, supplemental.xmlBeans().beans(), javaBeansById, javaBeanIdsByType);
+                var enrichedXml = supplemental.xmlBeans().withBeanLookups(
+                                lookupProjection.edges(), lookupProjection.gaps());
+                gaps.addAll(enrichedXml.gaps());
+
+                var aopMetadata = SpringAopMetadataExtractor.extract(source, bytecodeScan);
+                gaps.addAll(aopMetadata.gaps());
+
+                var proxyTraps = SpringProxyTrapDetector.detect(source, aopMetadata, xmlBeanClasses);
+
                 return new Result(input, inventory, lowering, binding, List.copyOf(gaps),
-                                List.copyOf(methodSelections.values()));
+                                List.copyOf(methodSelections.values()),
+                                beanMetadataList, enrichedXml, aopMetadata, proxyTraps, starterBeans);
         }
 
         private enum OrderRankState { EXPLICIT, ABSENT, UNPARSEABLE }
@@ -1106,7 +1312,8 @@ public final class SourceToSpringPlan {
                         SpringBuildContext build,
                         SpringSourceEvidence source,
                         SpringMechanismInventory inventory,
-                        SpringFrameworkEvidence.ValidationMode validationMode) {
+                        SpringFrameworkEvidence.ValidationMode validationMode,
+                        BytecodeAutoConfigScanner.ScanResult bytecodeScan) {
                 var rawById = new HashMap<ContentDigest, SpringMechanismInventory.RawObservation>(
                                 inventory.rawObservations().size() * 2);
                 for (var r : inventory.rawObservations()) rawById.put(r.identity(), r);
@@ -1207,6 +1414,9 @@ public final class SourceToSpringPlan {
                                         if (classTokens.isEmpty() && nameTokens.isEmpty()) continue;
                                         if (knownPresentTypes == null) {
                                                 knownPresentTypes = indexKnownPresentTypes(source);
+                                                if (bytecodeScan != null) {
+                                                        knownPresentTypes.addAll(bytecodeScan.indexedClassFqns());
+                                                }
                                         }
                                         var resolvedNames = new ArrayList<String>(classTokens.size() + nameTokens.size());
                                         boolean allTokensResolved = true;
@@ -1406,6 +1616,81 @@ public final class SourceToSpringPlan {
                         }
                 return candidate.producer().producerKind() == BeanProducer.Kind.BEAN_METHOD || complete ? FALSE
                                 : LogicalValue.UNKNOWN;
+        }
+
+        private static String extractDeclaredScope(SpringSourceEvidence source, EntityIdentity id) {
+                for (var ann : source.annotations(id)) {
+                        String resolved = ann.name().orElse("");
+                        String sp = ann.use().spelling().stripLeading();
+                        if ("org.springframework.web.context.annotation.RequestScope".equals(resolved)
+                                        || sp.startsWith("@RequestScope")) {
+                                return "request";
+                        }
+                        if ("org.springframework.web.context.annotation.SessionScope".equals(resolved)
+                                        || sp.startsWith("@SessionScope")) {
+                                return "session";
+                        }
+                        if ("org.springframework.web.context.annotation.ApplicationScope".equals(resolved)
+                                        || sp.startsWith("@ApplicationScope")) {
+                                return "application";
+                        }
+                        if ("org.springframework.context.annotation.Scope".equals(resolved)
+                                        || sp.startsWith("@Scope")) {
+                                try {
+                                        var attrs = LiteralConditionAnnotation.parse(sp);
+                                        var scopeName = LiteralConditionAnnotation.strings(attrs, "scopeName", List.of());
+                                        if (!scopeName.isEmpty() && !scopeName.getFirst().isBlank()) {
+                                                return SpringXmlBeanExtractor.normalizeScope(scopeName.getFirst());
+                                        }
+                                        var val = LiteralConditionAnnotation.strings(attrs, "value", List.of());
+                                        if (!val.isEmpty() && !val.getFirst().isBlank()) {
+                                                return SpringXmlBeanExtractor.normalizeScope(val.getFirst());
+                                        }
+                                        var rawVal = attrs.getOrDefault("scopeName", attrs.get("value"));
+                                        if (rawVal instanceof LiteralConditionAnnotation.Enums enums && !enums.names().isEmpty()) {
+                                                return SpringXmlBeanExtractor.normalizeScope(enums.names().getFirst());
+                                        }
+                                } catch (IllegalArgumentException ignored) {
+                                        int q1 = sp.indexOf('"');
+                                        int q2 = q1 >= 0 ? sp.indexOf('"', q1 + 1) : -1;
+                                        if (q1 >= 0 && q2 > q1) {
+                                                return SpringXmlBeanExtractor.normalizeScope(sp.substring(q1 + 1, q2));
+                                        }
+                                        if (sp.contains("SCOPE_PROTOTYPE")) return "prototype";
+                                        if (sp.contains("SCOPE_REQUEST")) return "request";
+                                        if (sp.contains("SCOPE_SESSION")) return "session";
+                                        if (sp.contains("SCOPE_SINGLETON")) return "singleton";
+                                }
+                        }
+                }
+                return "singleton";
+        }
+
+        private static List<String> extractDeclaredQualifiers(SpringSourceEvidence source, EntityIdentity id) {
+                var qualifiers = new TreeSet<String>();
+                for (var ann : source.annotations(id)) {
+                        String resolved = ann.name().orElse("");
+                        String sp = ann.use().spelling().stripLeading();
+                        if ("org.springframework.beans.factory.annotation.Qualifier".equals(resolved)
+                                        || "jakarta.inject.Named".equals(resolved)
+                                        || "javax.inject.Named".equals(resolved)
+                                        || sp.startsWith("@Qualifier")
+                                        || sp.startsWith("@Named")) {
+                                try {
+                                        String val = LiteralConditionAnnotation.string(
+                                                        LiteralConditionAnnotation.parse(sp), "value", "");
+                                        if (!val.isBlank()) qualifiers.add(val.trim());
+                                } catch (IllegalArgumentException ignored) {
+                                        int q1 = sp.indexOf('"');
+                                        int q2 = q1 >= 0 ? sp.indexOf('"', q1 + 1) : -1;
+                                        if (q1 >= 0 && q2 > q1) {
+                                                String raw = sp.substring(q1 + 1, q2).trim();
+                                                if (!raw.isEmpty()) qualifiers.add(raw);
+                                        }
+                                }
+                        }
+                }
+                return List.copyOf(qualifiers);
         }
 
         private SourceToSpringPlan() {

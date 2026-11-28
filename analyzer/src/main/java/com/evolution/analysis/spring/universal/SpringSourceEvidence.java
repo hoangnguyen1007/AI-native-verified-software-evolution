@@ -123,12 +123,36 @@ public final class SpringSourceEvidence {
             Map.entry("ConditionalOnJava", "org.springframework.boot.autoconfigure.condition.ConditionalOnJava"),
             Map.entry("EnableAutoConfiguration", "org.springframework.boot.autoconfigure.EnableAutoConfiguration"),
             Map.entry("Scope", "org.springframework.context.annotation.Scope"),
+            Map.entry("RequestScope", "org.springframework.web.context.annotation.RequestScope"),
+            Map.entry("SessionScope", "org.springframework.web.context.annotation.SessionScope"),
+            Map.entry("ApplicationScope", "org.springframework.web.context.annotation.ApplicationScope"),
             Map.entry("DependsOn", "org.springframework.context.annotation.DependsOn"),
             Map.entry("Import", "org.springframework.context.annotation.Import"),
             Map.entry("ImportResource", "org.springframework.context.annotation.ImportResource"),
             Map.entry("ConfigurationProperties", "org.springframework.boot.context.properties.ConfigurationProperties"),
             Map.entry("EnableConfigurationProperties",
                     "org.springframework.boot.context.properties.EnableConfigurationProperties"),
+            Map.entry("Aspect", "org.aspectj.lang.annotation.Aspect"),
+            Map.entry("Pointcut", "org.aspectj.lang.annotation.Pointcut"),
+            Map.entry("Around", "org.aspectj.lang.annotation.Around"),
+            Map.entry("Before", "org.aspectj.lang.annotation.Before"),
+            Map.entry("After", "org.aspectj.lang.annotation.After"),
+            Map.entry("AfterReturning", "org.aspectj.lang.annotation.AfterReturning"),
+            Map.entry("AfterThrowing", "org.aspectj.lang.annotation.AfterThrowing"),
+            Map.entry("EnableAspectJAutoProxy", "org.springframework.context.annotation.EnableAspectJAutoProxy"),
+            Map.entry("Transactional", "org.springframework.transaction.annotation.Transactional"),
+            Map.entry("EnableTransactionManagement",
+                    "org.springframework.transaction.annotation.EnableTransactionManagement"),
+            Map.entry("Cacheable", "org.springframework.cache.annotation.Cacheable"),
+            Map.entry("CachePut", "org.springframework.cache.annotation.CachePut"),
+            Map.entry("CacheEvict", "org.springframework.cache.annotation.CacheEvict"),
+            Map.entry("EnableCaching", "org.springframework.cache.annotation.EnableCaching"),
+            Map.entry("Async", "org.springframework.scheduling.annotation.Async"),
+            Map.entry("EnableAsync", "org.springframework.scheduling.annotation.EnableAsync"),
+            Map.entry("PreAuthorize", "org.springframework.security.access.prepost.PreAuthorize"),
+            Map.entry("PostAuthorize", "org.springframework.security.access.prepost.PostAuthorize"),
+            Map.entry("Secured", "org.springframework.security.access.annotation.Secured"),
+            Map.entry("RolesAllowed", "jakarta.annotation.security.RolesAllowed"),
             Map.entry("FeignClient", "org.springframework.cloud.openfeign.FeignClient"),
             Map.entry("EnableDiscoveryClient", "org.springframework.cloud.client.discovery.EnableDiscoveryClient"),
             Map.entry("EnableEurekaClient", "org.springframework.cloud.netflix.eureka.EnableEurekaClient"),
@@ -149,6 +173,9 @@ public final class SpringSourceEvidence {
         set.add("javax.inject.Inject");
         set.add("javax.inject.Named");
         set.add("javax.annotation.Resource");
+        set.add("javax.annotation.security.RolesAllowed");
+        set.add("javax.transaction.Transactional");
+        set.add("jakarta.transaction.Transactional");
         set.add("org.springframework.cloud.netflix.feign.FeignClient");
         return Set.copyOf(set);
     }
@@ -310,18 +337,32 @@ public final class SpringSourceEvidence {
                         ? artifact.groupId().equals("org.springframework.boot")
                         : n.startsWith("org.springframework.data.")
                                 ? artifact.groupId().equals("org.springframework.data")
-                                : n.startsWith("org.springframework.")
-                                        ? artifact.groupId().equals("org.springframework")
-                                        : n.startsWith("javax.inject.") ? artifact.groupId().equals("javax.inject")
-                                                : n.startsWith("jakarta.inject.")
-                                                        ? artifact.groupId().equals("jakarta.inject")
-                                                        : n.startsWith("javax.annotation.")
-                                                                ? Set.of("javax.annotation", "jakarta.annotation")
-                                                                        .contains(artifact.groupId())
-                                                                : n.startsWith("jakarta.annotation.")
-                                                                        ? artifact.groupId()
-                                                                                .equals("jakarta.annotation")
-                                                                        : false;
+                                : n.startsWith("org.springframework.security.")
+                                        ? artifact.groupId().equals("org.springframework.security")
+                                        : n.startsWith("org.springframework.")
+                                                ? artifact.groupId().equals("org.springframework")
+                                                : n.startsWith("org.aspectj.")
+                                                        ? artifact.groupId().equals("org.aspectj")
+                                                        : n.startsWith("javax.inject.")
+                                                                ? artifact.groupId().equals("javax.inject")
+                                                                : n.startsWith("jakarta.inject.")
+                                                                        ? artifact.groupId().equals("jakarta.inject")
+                                                                        : n.startsWith("javax.annotation.")
+                                                                                ? Set.of("javax.annotation",
+                                                                                        "jakarta.annotation")
+                                                                                        .contains(artifact.groupId())
+                                                                                : n.startsWith("jakarta.annotation.")
+                                                                                        ? artifact.groupId()
+                                                                                                .equals("jakarta.annotation")
+                                                                                        : n.startsWith("jakarta.transaction.")
+                                                                                                ? artifact.groupId()
+                                                                                                        .equals("jakarta.transaction")
+                                                                                                : n.startsWith("javax.transaction.")
+                                                                                                        ? Set.of("javax.transaction",
+                                                                                                                "jakarta.transaction")
+                                                                                                                .contains(artifact
+                                                                                                                        .groupId())
+                                                                                                        : false;
                 if (!valid)
                     name = Optional.empty();
             }
@@ -869,6 +910,7 @@ public final class SpringSourceEvidence {
             boolean suppressUnresolved = validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
                     && framework.artifacts().isEmpty();
             boolean blockingDiagnostics = diagnosticsByDoc.getOrDefault(span.document(), List.of()).stream()
+                    .filter(d -> d.severity() != DiagnosticSeverity.INFO)
                     .filter(d -> !suppressUnresolved || !isSuppressibleUnresolvedDiagnostic(d))
                     .map(d -> d.span().orElseThrow())
                     .anyMatch(s -> before(s.startLine(), s.startColumn(), span.endLine(), span.endColumn())
@@ -1002,6 +1044,7 @@ public final class SpringSourceEvidence {
         boolean suppressUnresolved = validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
                 && framework.artifacts().isEmpty();
         boolean hasBlockingDiag = diagnosticsByDoc.getOrDefault(span.document(), List.of()).stream()
+                .filter(d -> d.severity() != DiagnosticSeverity.INFO)
                 .filter(d -> !suppressUnresolved || !isSuppressibleUnresolvedDiagnostic(d))
                 .map(d -> d.span().orElseThrow())
                 .anyMatch(s -> before(s.startLine(), s.startColumn(), span.endLine(), span.endColumn())
@@ -1076,6 +1119,7 @@ public final class SpringSourceEvidence {
         boolean suppressUnresolved = validationMode == SpringFrameworkEvidence.ValidationMode.COMPATIBLE_FAMILY_OR_SOURCE_SCOPED
                 && framework.artifacts().isEmpty();
         return diagnosticsByDoc.getOrDefault(span.document(), List.of()).stream()
+                .filter(d -> d.severity() != DiagnosticSeverity.INFO)
                 .filter(d -> !suppressUnresolved || !isSuppressibleUnresolvedDiagnostic(d))
                 .map(d -> d.span().orElseThrow())
                 .noneMatch(s -> before(s.startLine(), s.startColumn(), span.endLine(), span.endColumn())

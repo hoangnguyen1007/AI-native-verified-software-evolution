@@ -335,6 +335,100 @@ class BytecodeAutoConfigScannerTest {
                 + " scanMs=" + forward.elapsedMs());
     }
 
+    @Test
+    void extractsBytecodeScopeQualifierAndAspectMetadataDeterministically(@TempDir Path temp) throws Exception {
+        Path jar = temp.resolve("aop-scope-starter-1.0.0.jar");
+        try (var zos = new ZipOutputStream(Files.newOutputStream(jar))) {
+            putEntry(zos, "META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports",
+                    "com.acme.aopstarter.AopAutoConfiguration\n".getBytes(StandardCharsets.UTF_8));
+            putEntry(zos, "com/acme/aopstarter/AopAutoConfiguration.class", buildScopedAndImportingAutoConfig());
+            putEntry(zos, "com/acme/aopstarter/MetricsAspect.class", buildBytecodeAspectClass());
+        }
+
+        var dep = binaryInput("com.acme:aop-scope-starter:1.0.0", jar);
+        var result = BytecodeAutoConfigScanner.scan(
+                List.of(dep), FrameworkGeneration.MetadataPolicy.IMPORTS, BytecodeAutoConfigScanner.Limits.defaults());
+
+        var cfg = result.configurations().stream()
+                .filter(c -> c.classFqn().equals("com.acme.aopstarter.AopAutoConfiguration"))
+                .findFirst().orElseThrow();
+        assertEquals(1, cfg.beans().size());
+        var scopedBean = cfg.beans().getFirst();
+        assertEquals("prototype", scopedBean.scope());
+        assertEquals(List.of("fastPool"), scopedBean.qualifiers());
+
+        assertEquals(1, result.aspects().size());
+        var aspect = result.aspects().getFirst();
+        assertEquals("com.acme.aopstarter.MetricsAspect", aspect.classFqn());
+        assertEquals(5, aspect.order());
+        assertEquals(1, aspect.pointcuts().size());
+        assertEquals("execution(* com.acme.service..*(..))", aspect.pointcuts().getFirst().expression());
+        assertEquals(2, aspect.advices().size());
+        assertTrue(aspect.advices().stream().anyMatch(a -> "AROUND".equals(a.adviceKind()) && "serviceCalls()".equals(a.pointcutExpression())));
+        assertTrue(aspect.advices().stream().anyMatch(a -> "BEFORE".equals(a.adviceKind())));
+
+        // Verify passive full-JAR scanAspects() discovers the same aspect independently
+        var scannedAspects = BytecodeAutoConfigScanner.scanAspects(List.of(dep), BytecodeAutoConfigScanner.Limits.defaults());
+        assertEquals(1, scannedAspects.size());
+        assertEquals(aspect, scannedAspects.getFirst());
+    }
+
+    private static byte[] buildScopedAndImportingAutoConfig() {
+        var cw = new ClassWriter(0);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "com/acme/aopstarter/AopAutoConfiguration",
+                null, "java/lang/Object", null);
+        cw.visitAnnotation("Lorg/springframework/boot/autoconfigure/AutoConfiguration;", true).visitEnd();
+        var imp = cw.visitAnnotation("Lorg/springframework/context/annotation/Import;", true);
+        var arr = imp.visitArray("value");
+        arr.visit(null, Type.getObjectType("com/acme/aopstarter/MetricsAspect"));
+        arr.visitEnd();
+        imp.visitEnd();
+
+        var mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "workerPool", "()Ljava/lang/Object;", null, null);
+        mv.visitAnnotation("Lorg/springframework/context/annotation/Bean;", true).visitEnd();
+        var scope = mv.visitAnnotation("Lorg/springframework/context/annotation/Scope;", true);
+        scope.visit("value", "prototype");
+        scope.visitEnd();
+        var qual = mv.visitAnnotation("Lorg/springframework/beans/factory/annotation/Qualifier;", true);
+        qual.visit("value", "fastPool");
+        qual.visitEnd();
+        mv.visitEnd();
+
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static byte[] buildBytecodeAspectClass() {
+        var cw = new ClassWriter(0);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "com/acme/aopstarter/MetricsAspect",
+                null, "java/lang/Object", null);
+        cw.visitAnnotation("Lorg/aspectj/lang/annotation/Aspect;", true).visitEnd();
+        var order = cw.visitAnnotation("Lorg/springframework/core/annotation/Order;", true);
+        order.visit("value", 5);
+        order.visitEnd();
+
+        var pc = cw.visitMethod(Opcodes.ACC_PUBLIC, "serviceCalls", "()V", null, null);
+        var pcAnn = pc.visitAnnotation("Lorg/aspectj/lang/annotation/Pointcut;", true);
+        pcAnn.visit("value", "execution(* com.acme.service..*(..))");
+        pcAnn.visitEnd();
+        pc.visitEnd();
+
+        var around = cw.visitMethod(Opcodes.ACC_PUBLIC, "measure", "()Ljava/lang/Object;", null, null);
+        var aroundAnn = around.visitAnnotation("Lorg/aspectj/lang/annotation/Around;", true);
+        aroundAnn.visit("value", "serviceCalls()");
+        aroundAnn.visitEnd();
+        around.visitEnd();
+
+        var before = cw.visitMethod(Opcodes.ACC_PUBLIC, "tag", "()V", null, null);
+        var beforeAnn = before.visitAnnotation("Lorg/aspectj/lang/annotation/Before;", true);
+        beforeAnn.visit("value", "@annotation(com.acme.Tracked)");
+        beforeAnn.visitEnd();
+        before.visitEnd();
+
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     private static byte[] buildMetaUsingAutoConfig() {
         var cw = new ClassWriter(0);
         cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "com/acme/meta/ComposedAutoConfiguration",

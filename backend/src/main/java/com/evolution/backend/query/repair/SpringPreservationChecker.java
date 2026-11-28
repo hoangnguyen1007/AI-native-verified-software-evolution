@@ -52,11 +52,35 @@ public final class SpringPreservationChecker {
 
     private record ExtractedFact(String key, String factKind, String label, String classification) {}
 
+    private record BeanScopeInfo(
+            String key,
+            String beanId,
+            String className,
+            String scope,
+            Set<String> qualifiers) {}
+
+    private record AopAdviceInfo(
+            String key,
+            String aspectClass,
+            String adviceKind,
+            int order,
+            String pointcut,
+            String targetClass,
+            String targetMethod) {}
+
+    private record AopProxyInfo(
+            String key,
+            String targetClass,
+            String aspectClass) {}
+
     private record SpringSnapshotFacts(
             boolean hasSpringContext,
             Map<String, ExtractedFact> factsByKey,
             Set<String> worldKeys,
-            Set<String> endpoints) {}
+            Set<String> endpoints,
+            Map<String, BeanScopeInfo> beanScopes,
+            Map<String, AopAdviceInfo> aopAdvices,
+            Map<String, AopProxyInfo> aopProxies) {}
 
     private SpringPreservationChecker() {}
 
@@ -65,7 +89,8 @@ public final class SpringPreservationChecker {
             return notApplicable(0, 0, "Baseline graph unavailable for Spring preservation check.");
         }
         var baseFacts = extract(baseline);
-        if (!baseFacts.hasSpringContext() && baseFacts.factsByKey().isEmpty() && baseFacts.endpoints().isEmpty()) {
+        if (!baseFacts.hasSpringContext() && baseFacts.factsByKey().isEmpty() && baseFacts.endpoints().isEmpty()
+                && baseFacts.beanScopes().isEmpty() && baseFacts.aopAdvices().isEmpty() && baseFacts.aopProxies().isEmpty()) {
             return notApplicable(0, 0, "No Spring contexts or conditional truth regions modeled in baseline graph.");
         }
         if (candidate == null || candidate.isEmpty()) {
@@ -123,6 +148,94 @@ public final class SpringPreservationChecker {
                         "REMOVED",
                         "HIGH",
                         "Spring HTTP endpoint '" + epLabel + "' present in baseline was removed or lost in candidate."));
+            }
+        }
+
+        // WP2.1: @Scope & @Qualifier preservation checks (per distinct beanId + qualifiers, avoiding singleton conflation)
+        for (var entry : baseFacts.beanScopes().entrySet()) {
+            var before = entry.getValue();
+            var after = candFacts.beanScopes().get(entry.getKey());
+            String beanLabel = before.beanId()
+                    + (before.qualifiers().isEmpty() ? "" : (" @Qualifier(" + String.join(",", before.qualifiers()) + ")"));
+            if (after == null) {
+                drifts.add(new SpringDrift(
+                        "BEAN_SCOPE|" + entry.getKey(),
+                        "BEAN_SCOPE",
+                        beanLabel,
+                        "SCOPE:" + before.scope(),
+                        "REMOVED",
+                        "HIGH",
+                        "Baseline Spring bean '" + beanLabel + "' (scope=" + before.scope()
+                                + ") disappeared or changed identity/qualifiers in candidate snapshot."));
+                continue;
+            }
+            if (!before.scope().equals(after.scope())) {
+                String severity = isScopeNarrowingToSingleton(before.scope(), after.scope()) ? "HIGH" : "MEDIUM";
+                drifts.add(new SpringDrift(
+                        "BEAN_SCOPE|" + entry.getKey(),
+                        "BEAN_SCOPE",
+                        beanLabel,
+                        "SCOPE:" + before.scope(),
+                        "SCOPE:" + after.scope(),
+                        severity,
+                        "Spring bean scope regression detected for '" + beanLabel + "': "
+                                + before.scope() + " -> " + after.scope() + "."));
+            }
+            if (!before.qualifiers().isEmpty() && !after.qualifiers().containsAll(before.qualifiers())) {
+                drifts.add(new SpringDrift(
+                        "BEAN_QUALIFIER|" + entry.getKey(),
+                        "BEAN_QUALIFIER",
+                        beanLabel,
+                        "QUALIFIERS:" + String.join(",", before.qualifiers()),
+                        "QUALIFIERS:" + String.join(",", after.qualifiers()),
+                        "HIGH",
+                        "Spring bean qualifier(s) dropped for '" + before.beanId() + "': "
+                                + before.qualifiers() + " -> " + after.qualifiers() + "."));
+            }
+        }
+
+        // WP2.1: AOP ADVISES_METHOD preservation checks (dropped advice or @Order precedence regression)
+        for (var entry : baseFacts.aopAdvices().entrySet()) {
+            var before = entry.getValue();
+            var after = candFacts.aopAdvices().get(entry.getKey());
+            String adviceLabel = before.aspectClass() + " [" + before.adviceKind() + "] -> "
+                    + before.targetClass() + "#" + before.targetMethod();
+            if (after == null) {
+                drifts.add(new SpringDrift(
+                        "AOP_ADVICE|" + entry.getKey(),
+                        "AOP_ADVICE",
+                        adviceLabel,
+                        "MUST",
+                        "REMOVED",
+                        "HIGH",
+                        "Baseline Spring AOP advice '" + adviceLabel + "' (pointcut=" + before.pointcut()
+                                + ") was dropped in candidate snapshot."));
+            } else if (before.order() != after.order()) {
+                drifts.add(new SpringDrift(
+                        "AOP_ADVICE_ORDER|" + entry.getKey(),
+                        "AOP_ADVICE_ORDER",
+                        adviceLabel,
+                        "ORDER:" + before.order(),
+                        "ORDER:" + after.order(),
+                        "MEDIUM",
+                        "Spring AOP advice @Order precedence changed for '" + adviceLabel + "': "
+                                + before.order() + " -> " + after.order() + "."));
+            }
+        }
+
+        // WP2.1: PROXIED_BY_ASPECT proxy invariant preservation checks
+        for (var entry : baseFacts.aopProxies().entrySet()) {
+            if (!candFacts.aopProxies().containsKey(entry.getKey())) {
+                var before = entry.getValue();
+                String proxyLabel = before.targetClass() + " proxied by " + before.aspectClass();
+                drifts.add(new SpringDrift(
+                        "AOP_PROXY|" + entry.getKey(),
+                        "AOP_PROXY",
+                        proxyLabel,
+                        "MUST",
+                        "REMOVED",
+                        "HIGH",
+                        "Baseline Spring AOP proxy invariant '" + proxyLabel + "' was lost in candidate snapshot."));
             }
         }
 
@@ -184,11 +297,18 @@ public final class SpringPreservationChecker {
             boolean completeMetadata,
             Set<String> candidateKeys) {}
 
+    private static boolean isScopeNarrowingToSingleton(String before, String after) {
+        return "singleton".equals(after) && !"singleton".equals(before);
+    }
+
     private static SpringSnapshotFacts extract(KnowledgeGraph graph) {
         boolean hasSpring = false;
         var facts = new TreeMap<String, ExtractedFact>();
         var worlds = new TreeSet<String>();
         var endpoints = new TreeSet<String>();
+        var beanScopes = new TreeMap<String, BeanScopeInfo>();
+        var aopAdvices = new TreeMap<String, AopAdviceInfo>();
+        var aopProxies = new TreeMap<String, AopProxyInfo>();
         var labels = buildLabelIndex(graph);
         var contextScopes = resolveContextScopes(graph);
 
@@ -203,6 +323,14 @@ public final class SpringPreservationChecker {
             for (var edge : graph.edges(ctx.identity())) {
                 if ("spring.has-condition".equals(edge.kind())) {
                     conditionedEvents.add(edge.source());
+                } else if ("ADVISES_METHOD".equals(edge.kind()) || "spring.advises-method".equals(edge.kind())) {
+                    hasSpring = true;
+                    extractAopAdviceEdge(graph, edge, labels, ctxScope)
+                            .ifPresent(info -> aopAdvices.put(info.key(), info));
+                } else if ("PROXIED_BY_ASPECT".equals(edge.kind()) || "spring.proxied-by-aspect".equals(edge.kind())) {
+                    hasSpring = true;
+                    extractAopProxyEdge(graph, edge, labels, ctxScope)
+                            .ifPresent(info -> aopProxies.put(info.key(), info));
                 }
             }
 
@@ -222,13 +350,20 @@ public final class SpringPreservationChecker {
                     hasSpring = true;
                     extractTruthRegion(graph, node, labels, ctxScope)
                             .ifPresent(f -> ctxTruthFacts.put(f.key(), f));
-                } else if ("BEAN_DEFINITION_CANDIDATE".equals(node.kind())) {
+                } else if ("BEAN_DEFINITION_CANDIDATE".equals(node.kind()) || "SPRING_BEAN".equals(node.kind())) {
                     hasSpring = true;
-                    ctxFallbackBeans.add(node);
+                    if ("BEAN_DEFINITION_CANDIDATE".equals(node.kind())) {
+                        ctxFallbackBeans.add(node);
+                    }
+                    extractBeanScopeInfo(graph, node, labels, ctxScope)
+                            .ifPresent(info -> beanScopes.put(info.key(), info));
                 } else if ("REGISTRATION_EVENT".equals(node.kind())) {
                     hasSpring = true;
                     extractRegistrationEvent(graph, node, labels, conditionedEvents.contains(node.identity()))
                             .ifPresent(parsed -> ctxEventsById.put(parsed.eventId(), parsed));
+                } else {
+                    // Standalone spring.aop-advice / spring.xml-bean evidence nodes
+                    extractStandaloneAopOrBeanEvidence(graph, node, ctxScope, beanScopes, aopAdvices);
                 }
             }
 
@@ -258,7 +393,153 @@ public final class SpringPreservationChecker {
                 }
             }
         }
-        return new SpringSnapshotFacts(hasSpring, facts, worlds, endpoints);
+        return new SpringSnapshotFacts(hasSpring, facts, worlds, endpoints, beanScopes, aopAdvices, aopProxies);
+    }
+
+    private static Optional<BeanScopeInfo> extractBeanScopeInfo(
+            KnowledgeGraph graph, KnowledgeGraph.Node node, Map<String, String> labels, String ctxScope) {
+        for (var ref : node.evidence()) {
+            var ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if (!Set.of("spring.bean", "spring.xml-bean", "spring.candidate", "spring.bean-metadata").contains(ev.family())) {
+                continue;
+            }
+            try {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                String rawScope = optText(obj.get("scope"));
+                var qualifiers = extractStringSet(obj.get("qualifiers"));
+                if (rawScope.isBlank() && qualifiers.isEmpty()) {
+                    continue; // Preserve baseline fact count on legacy fixtures without explicit scope/qualifiers
+                }
+                String beanId = optText(obj.get("beanId"));
+                if (beanId.isBlank()) {
+                    beanId = beanSemanticKeyFromObject(obj, labels);
+                }
+                if (beanId.isBlank()) {
+                    beanId = labels.getOrDefault(node.identity(), node.identity());
+                }
+                String className = optText(obj.get("className"));
+                String normScope = rawScope.isBlank() ? "singleton" : rawScope.toLowerCase(Locale.ROOT);
+                String key = ctxScope + "|" + beanId + "|" + className;
+                return Optional.of(new BeanScopeInfo(key, beanId, className, normScope, qualifiers));
+            } catch (RuntimeException ignored) {}
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<AopAdviceInfo> extractAopAdviceEdge(
+            KnowledgeGraph graph, KnowledgeGraph.Edge edge, Map<String, String> labels, String ctxScope) {
+        String aspectClass = resolveLabel(edge.source(), labels);
+        String targetClass = edge.target().identities().isEmpty()
+                ? edge.target().unresolvedReference().orElse("")
+                : resolveLabel(edge.target().identities().getFirst(), labels);
+        String targetMethod = "";
+        String adviceKind = "AROUND";
+        int order = Integer.MAX_VALUE;
+        String pointcut = "";
+
+        for (var ref : edge.evidence()) {
+            var ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if (!"spring.aop-advice".equals(ev.family()) && !"spring.aop".equals(ev.family())) continue;
+            try {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                String ac = optText(obj.get("aspectClass"));
+                if (!ac.isBlank()) aspectClass = ac;
+                String ak = optText(obj.get("adviceKind"));
+                if (!ak.isBlank()) adviceKind = ak.toUpperCase(Locale.ROOT);
+                String tc = optText(obj.get("targetClass"));
+                if (!tc.isBlank()) targetClass = tc;
+                String tm = optText(obj.get("targetMethod"));
+                if (!tm.isBlank()) targetMethod = tm;
+                String pc = optText(obj.get("pointcut"));
+                if (!pc.isBlank()) pointcut = pc;
+                if (obj.get("order") instanceof Number n) {
+                    order = n.intValue();
+                } else if (obj.get("order") instanceof String os && !os.isBlank()) {
+                    try {
+                        order = Integer.parseInt(os.trim());
+                    } catch (NumberFormatException ignored) {}
+                }
+            } catch (RuntimeException ignored) {}
+        }
+        if (aspectClass.isBlank() && targetClass.isBlank()) return Optional.empty();
+        String key = ctxScope + "|" + aspectClass + "|" + adviceKind + "|" + targetClass + "#" + targetMethod;
+        return Optional.of(new AopAdviceInfo(key, aspectClass, adviceKind, order, pointcut, targetClass, targetMethod));
+    }
+
+    private static Optional<AopProxyInfo> extractAopProxyEdge(
+            KnowledgeGraph graph, KnowledgeGraph.Edge edge, Map<String, String> labels, String ctxScope) {
+        String targetClass = resolveLabel(edge.source(), labels);
+        String aspectClass = edge.target().identities().isEmpty()
+                ? edge.target().unresolvedReference().orElse("")
+                : resolveLabel(edge.target().identities().getFirst(), labels);
+        for (var ref : edge.evidence()) {
+            var ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            try {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                String tc = optText(obj.get("targetClass"));
+                if (!tc.isBlank()) targetClass = tc;
+                String ac = optText(obj.get("aspectClass"));
+                if (!ac.isBlank()) aspectClass = ac;
+            } catch (RuntimeException ignored) {}
+        }
+        if (targetClass.isBlank() || aspectClass.isBlank()) return Optional.empty();
+        return Optional.of(new AopProxyInfo(ctxScope + "|" + targetClass + "|" + aspectClass, targetClass, aspectClass));
+    }
+
+    private static void extractStandaloneAopOrBeanEvidence(
+            KnowledgeGraph graph,
+            KnowledgeGraph.Node node,
+            String ctxScope,
+            Map<String, BeanScopeInfo> beanScopes,
+            Map<String, AopAdviceInfo> aopAdvices) {
+        for (var ref : node.evidence()) {
+            var ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if ("spring.xml-bean".equals(ev.family())) {
+                try {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                    String beanId = optText(obj.get("beanId"));
+                    String className = optText(obj.get("className"));
+                    String rawScope = optText(obj.get("scope"));
+                    var qualifiers = extractStringSet(obj.get("qualifiers"));
+                    if (!beanId.isBlank() && (!rawScope.isBlank() || !qualifiers.isEmpty())) {
+                        String normScope = rawScope.isBlank() ? "singleton" : rawScope.toLowerCase(Locale.ROOT);
+                        String key = ctxScope + "|" + beanId + "|" + className;
+                        beanScopes.putIfAbsent(key, new BeanScopeInfo(key, beanId, className, normScope, qualifiers));
+                    }
+                } catch (RuntimeException ignored) {}
+            } else if ("spring.aop-advice".equals(ev.family())) {
+                try {
+                    var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                    String aspectClass = optText(obj.get("aspectClass"));
+                    String adviceKind = optText(obj.get("adviceKind")).toUpperCase(Locale.ROOT);
+                    String targetClass = optText(obj.get("targetClass"));
+                    String targetMethod = optText(obj.get("targetMethod"));
+                    String pointcut = optText(obj.get("pointcut"));
+                    int order = obj.get("order") instanceof Number n ? n.intValue() : Integer.MAX_VALUE;
+                    if (!aspectClass.isBlank() && !targetClass.isBlank()) {
+                        String key = ctxScope + "|" + aspectClass + "|" + adviceKind + "|" + targetClass + "#" + targetMethod;
+                        aopAdvices.putIfAbsent(key, new AopAdviceInfo(key, aspectClass, adviceKind, order, pointcut, targetClass, targetMethod));
+                    }
+                } catch (RuntimeException ignored) {}
+            }
+        }
+    }
+
+    private static Set<String> extractStringSet(Object raw) {
+        var set = new TreeSet<String>();
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                String text = optText(item);
+                if (!text.isBlank()) set.add(text);
+            }
+        } else if (raw instanceof String s && !s.isBlank()) {
+            set.add(s.strip());
+        }
+        return set;
     }
 
     private static Map<String, String> resolveContextScopes(KnowledgeGraph graph) {

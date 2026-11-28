@@ -692,6 +692,7 @@ final class Extraction {
                 }
             }
             httpClientCalls.addAll(httpClientCalls(unit));
+            extractSpringBeanLookups(unit);
             for (var node : unit.ast.findAll(ObjectCreationExpr.class)) {
                 if (isArchitecturalCreation(node)) {
                     observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
@@ -704,6 +705,7 @@ final class Extraction {
             for (var node : unit.ast.findAll(MethodCallExpr.class))
                 observe(node, "calls", () -> resolveCall(node), () -> owner(node));
             httpClientCalls.addAll(httpClientCalls(unit));
+            extractSpringBeanLookups(unit);
             for (var node : unit.ast.findAll(ObjectCreationExpr.class))
                 observe(node, "constructor-calls", () -> resolveCall(node), () -> owner(node));
             for (var node : unit.ast.findAll(ExplicitConstructorInvocationStmt.class))
@@ -1718,15 +1720,17 @@ final class Extraction {
             outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
         }
         for (var unit : orderedUnits) {
+            boolean hasNonInfo = unit.diagnostics.stream().anyMatch(d -> d.severity() != DiagnosticSeverity.INFO);
             var outcome = new SourceOutcome(unit.input.document().identity(),
-                    unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
+                    !hasNonInfo ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
                     List.copyOf(unit.diagnostics));
             outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
         }
         for (var reactor : reactorUnits) {
             Unit unit = reactor.unit();
+            boolean hasNonInfo = unit.diagnostics.stream().anyMatch(d -> d.severity() != DiagnosticSeverity.INFO);
             var outcome = new SourceOutcome(unit.input.document().identity(),
-                    unit.diagnostics.isEmpty() ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
+                    !hasNonInfo ? SourceOutcome.State.PROCESSED : SourceOutcome.State.PARTIAL,
                     List.copyOf(unit.diagnostics));
             outcomesByDoc.merge(outcome.document(), outcome, Extraction::mergeOutcome);
         }
@@ -1988,6 +1992,46 @@ final class Extraction {
         return result;
     }
 
+    private void extractSpringBeanLookups(Unit unit) {
+        var activeEnums = wrapperIndex != null
+                ? wrapperIndex.enumConstants()
+                : HttpClientConstants.EnumConstantMap.from(unit.ast);
+        var lookups = HttpClientConstants.extractBeanLookups(unit.ast, unit.input.document().path(), activeEnums);
+        if (lookups.isEmpty()) return;
+        for (var lookup : lookups) {
+            try {
+                var span = source(lookup.astNode()).span(lookup.astNode());
+                String callerId = "";
+                try {
+                    callerId = owner(lookup.astNode()).identity().value();
+                } catch (RuntimeException | LinkageError ignored) {
+                }
+                var details = new TreeMap<String, String>();
+                details.put("edgeType", "RESOLVES_BEAN");
+                details.put("evidenceFamily", "spring.bean-lookup");
+                if (!lookup.beanName().isBlank()) details.put("beanName", lookup.beanName().strip());
+                if (!lookup.beanType().isBlank()) details.put("beanType", lookup.beanType().strip());
+                details.put("dynamic", Boolean.toString(lookup.dynamic()));
+                if (!lookup.sourceFile().isBlank()) details.put("sourceFile", lookup.sourceFile().strip());
+                details.put("line", Integer.toString(lookup.line()));
+                if (!callerId.isBlank()) details.put("caller", callerId.strip());
+                if (!lookup.rawExpression().isBlank()) details.put("rawExpression", lookup.rawExpression().strip());
+                if (lookup.dynamic()) {
+                    details.put("reasonCode", "DYNAMIC_BEAN_LOOKUP_UNRESOLVED");
+                }
+                String msg = lookup.dynamic()
+                        ? "Dynamic Spring getBean() lookup requires runtime key resolution"
+                        : "Statically folded Spring getBean() lookup ("
+                                + (!lookup.beanName().isEmpty() ? lookup.beanName() : lookup.beanType()) + ")";
+                var diag = new Diagnostic(DiagnosticSeverity.INFO, "spring.bean-lookup", msg,
+                        Optional.of(span), details);
+                unit.diagnostics.add(diag);
+                diagnostics.add(diag);
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+        }
+    }
+
     private String resolveJaxRsWebTargetUri(MethodCallExpr requestCall, HttpClientConstants.EnumConstantMap enumConstants) {
         var pathSegments = new ArrayList<String>();
         String baseUri = "";
@@ -2106,7 +2150,7 @@ final class Extraction {
             mergedState = SourceOutcome.State.ERROR;
         } else if (a.state() == SourceOutcome.State.PARTIAL
                 || b.state() == SourceOutcome.State.PARTIAL
-                || !mergedDiagnostics.isEmpty()) {
+                || mergedDiagnostics.stream().anyMatch(d -> d.severity() != DiagnosticSeverity.INFO)) {
             mergedState = SourceOutcome.State.PARTIAL;
         } else {
             mergedState = SourceOutcome.State.PROCESSED;

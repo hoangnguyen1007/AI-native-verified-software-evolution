@@ -125,6 +125,10 @@ public final class AffectedTestSelector {
         var reverseAdj = new HashMap<String, Set<String>>();
         var parentByChild = new HashMap<String, String>();
         var unresolvedObservations = new ArrayList<KnowledgeGraph.Node>();
+        var singletonBeanNodes = new HashSet<String>();
+        var prototypeBeanNodes = new HashSet<String>();
+        var beanConsumersByBean = new HashMap<String, Set<String>>();
+        var aopAspectToTargetFqns = new HashMap<String, Set<String>>();
 
         for (String ctx : contexts) {
             for (var node : graph.nodes(ctx)) {
@@ -138,6 +142,14 @@ public final class AffectedTestSelector {
                     String norm = CapturedFileIndex.normalizePath(p);
                     nodePath.put(node.identity(), norm);
                     nodesByPath.computeIfAbsent(norm, k -> new LinkedHashSet<>()).add(node.identity());
+                }
+                if ("SPRING_BEAN".equals(node.kind()) || "BEAN_DEFINITION_CANDIDATE".equals(node.kind())) {
+                    String beanScope = extractBeanScopeFromNode(graph, node);
+                    if ("prototype".equals(beanScope)) {
+                        prototypeBeanNodes.add(node.identity());
+                    } else if ("singleton".equals(beanScope)) {
+                        singletonBeanNodes.add(node.identity());
+                    }
                 }
                 if (TYPE_NODE_KINDS.contains(node.kind())) {
                     String label = nodeLabel.get(node.identity());
@@ -163,9 +175,58 @@ public final class AffectedTestSelector {
                     }
                     continue;
                 }
+                // WP2.1: AOP ADVISES_METHOD (aspect -> advised target) propagates impact forward
+                // from modified aspect to every advised target method/class and its tests.
+                if ("ADVISES_METHOD".equals(edge.kind()) || "spring.advises-method".equals(edge.kind())) {
+                    for (String targetId : edge.target().identities()) {
+                        reverseAdj.computeIfAbsent(edge.source(), k -> new LinkedHashSet<>()).add(targetId);
+                        reverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
+                    }
+                    indexAopAdviceEdgeBridge(graph, edge, aopAspectToTargetFqns);
+                    continue;
+                }
+                // WP2.1: PROXIED_BY_ASPECT (targetBean -> aspect) propagates impact from aspect -> targetBean.
+                if ("PROXIED_BY_ASPECT".equals(edge.kind()) || "spring.proxied-by-aspect".equals(edge.kind())) {
+                    for (String aspectId : edge.target().identities()) {
+                        reverseAdj.computeIfAbsent(aspectId, k -> new LinkedHashSet<>()).add(edge.source());
+                    }
+                    indexAopAdviceEdgeBridge(graph, edge, aopAspectToTargetFqns);
+                    continue;
+                }
                 for (String targetId : edge.target().identities()) {
                     reverseAdj.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
+                    if (isBeanDependencyEdge(edge.kind())) {
+                        beanConsumersByBean.computeIfAbsent(targetId, k -> new LinkedHashSet<>()).add(edge.source());
+                    }
                 }
+            }
+        }
+
+        // WP2.1: Bridge cross-context AOP aspectClass -> targetClass FQN pairs from spring.aop-advice evidence
+        for (var entry : aopAspectToTargetFqns.entrySet()) {
+            Set<String> aspectNodes = typeNodesByFqn.getOrDefault(entry.getKey(), Set.of());
+            for (String targetFqn : entry.getValue()) {
+                Set<String> targetNodes = typeNodesByFqn.getOrDefault(targetFqn, Set.of());
+                for (String aId : aspectNodes) {
+                    for (String tId : targetNodes) {
+                        reverseAdj.computeIfAbsent(aId, k -> new LinkedHashSet<>()).add(tId);
+                    }
+                }
+            }
+        }
+
+        // WP2.1: Propagate test impact across shared singleton beans (multiple consumers share state
+        // through the same singleton instance; prototype beans remain isolated per consumer).
+        for (var entry : beanConsumersByBean.entrySet()) {
+            String beanNodeId = entry.getKey();
+            if (prototypeBeanNodes.contains(beanNodeId) || !singletonBeanNodes.contains(beanNodeId)) {
+                continue;
+            }
+            Set<String> consumers = entry.getValue();
+            if (consumers.size() < 2) continue;
+            for (String consumer : consumers) {
+                // Modifying one consumer of a shared singleton can affect sibling consumers via shared state
+                reverseAdj.computeIfAbsent(consumer, k -> new LinkedHashSet<>()).add(beanNodeId);
             }
         }
 
@@ -290,10 +351,56 @@ public final class AffectedTestSelector {
             return true;
         }
         if ((name.startsWith("application") || name.startsWith("bootstrap"))
-                && (name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".properties"))) {
+                && (name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".properties")
+                        || name.endsWith(".xml"))) {
             return true;
         }
         return low.contains("meta-inf/spring");
+    }
+
+    private static boolean isBeanDependencyEdge(String edgeKind) {
+        return "RESOLVES_BEAN".equals(edgeKind)
+                || "spring.selected-binding".equals(edgeKind)
+                || "spring.injects".equals(edgeKind)
+                || "spring.bean-dependency".equals(edgeKind)
+                || "graph.depends-on".equals(edgeKind)
+                || "java.calls".equals(edgeKind);
+    }
+
+    private static String extractBeanScopeFromNode(KnowledgeGraph graph, KnowledgeGraph.Node node) {
+        for (var ref : node.evidence()) {
+            GraphEvidence ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if (!Set.of("spring.bean", "spring.xml-bean", "spring.candidate", "spring.bean-metadata").contains(ev.family())) {
+                continue;
+            }
+            try {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), new GraphJson.Limits(32_768, 16, 2_048)));
+                if (obj.get("scope") instanceof String s && !s.isBlank()) {
+                    return s.trim().toLowerCase(Locale.ROOT);
+                }
+            } catch (RuntimeException ignored) {}
+        }
+        return "";
+    }
+
+    private static void indexAopAdviceEdgeBridge(
+            KnowledgeGraph graph,
+            KnowledgeGraph.Edge edge,
+            Map<String, Set<String>> aspectToTargetFqns) {
+        for (var ref : edge.evidence()) {
+            GraphEvidence ev = graph.evidence(ref).orElse(null);
+            if (ev == null) continue;
+            if (!"spring.aop-advice".equals(ev.family()) && !"spring.aop".equals(ev.family())) continue;
+            try {
+                var obj = GraphJson.object(GraphJson.read(ev.canonicalJson(), new GraphJson.Limits(32_768, 16, 2_048)));
+                String aspectClass = obj.get("aspectClass") instanceof String s ? s.trim() : "";
+                String targetClass = obj.get("targetClass") instanceof String s ? s.trim() : "";
+                if (!aspectClass.isEmpty() && !targetClass.isEmpty()) {
+                    aspectToTargetFqns.computeIfAbsent(aspectClass, k -> new LinkedHashSet<>()).add(targetClass);
+                }
+            } catch (RuntimeException ignored) {}
+        }
     }
 
     static boolean isTestFilePath(String path) {
