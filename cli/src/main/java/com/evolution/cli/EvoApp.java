@@ -1892,6 +1892,9 @@ public final class EvoApp {
             if (!incrementalDisabled) {
                 JavaParserFrontend.configureModuleCacheDirectory(r.storage().root.resolve("acquisition")
                         .resolve("incremental-cache").resolve("javaparser-modules"));
+            } else {
+                JavaParserFrontend.configureModuleCacheDirectory(null);
+                com.evolution.analysis.javaparser.ModuleIncrementalCache.clearInMemoryCache();
             }
             String intakeRevision = UUID.randomUUID().toString();
             StreamingRepositoryAcquirer.Receipt captured;
@@ -2318,8 +2321,11 @@ public final class EvoApp {
                 try (var closeableWorkspace = diskWorkspace) {
                     UniversalArchitecturePipeline.DetailedResult detailed;
                     try {
+                        java.util.function.Function<String, ContentDigest> polyglotSyntaxDigestForModule = modulePath ->
+                                polyglotFuture.join().moduleSyntaxDigest(modulePath);
                         detailed = new UniversalArchitecturePipeline(analysisWorkspace, aggWorkers,
-                                incrementalDisabled ? null : sharedCaches.springCache())
+                                incrementalDisabled ? null : sharedCaches.springCache(),
+                                polyglotSyntaxDigestForModule)
                                 .runWithEvidence(decoded, policy);
                         polyglot = polyglotFuture.join();
                     } catch (java.util.concurrent.CompletionException ce) {
@@ -2425,7 +2431,7 @@ public final class EvoApp {
                                         input.javaEvidence()),
                                 graphLedgers, store -> new PolyglotScan().project(finalPolyglot, store,
                                         resolvedProfile, () -> Thread.currentThread().isInterrupted()),
-                                fast, graphProjector);
+                                fast, graphProjector, finalPolyglot::moduleProjectionDigest);
                         var afterGraphStats = sharedCaches.graphProjector().stats();
                         reusedGraphContexts = Math.max(0,
                                 afterGraphStats.reusedContexts() - beforeGraphStats.reusedContexts());

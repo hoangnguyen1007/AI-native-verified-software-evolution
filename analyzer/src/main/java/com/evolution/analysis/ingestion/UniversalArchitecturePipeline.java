@@ -43,6 +43,7 @@ public final class UniversalArchitecturePipeline {
     private final AnalysisWorkspace workspace;
     private final int aggregationWorkers;
     private final IncrementalSpringCache springCache;
+    private final java.util.function.Function<String, ContentDigest> polyglotSyntaxDigestForModule;
 
     public UniversalArchitecturePipeline() {
         this(AnalysisWorkspace.MEMORY);
@@ -51,20 +52,34 @@ public final class UniversalArchitecturePipeline {
     public UniversalArchitecturePipeline(AnalysisWorkspace workspace) {
         this(workspace,
                 workspace.concurrentTables() ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers() : 1,
-                null);
+                null, (java.util.function.Function<String, ContentDigest>) null);
     }
 
     public UniversalArchitecturePipeline(AnalysisWorkspace workspace, int aggregationWorkers) {
-        this(workspace, aggregationWorkers, null);
+        this(workspace, aggregationWorkers, null, (java.util.function.Function<String, ContentDigest>) null);
     }
 
     public UniversalArchitecturePipeline(AnalysisWorkspace workspace, int aggregationWorkers,
             IncrementalSpringCache springCache) {
+        this(workspace, aggregationWorkers, springCache, (java.util.function.Function<String, ContentDigest>) null);
+    }
+
+    public UniversalArchitecturePipeline(AnalysisWorkspace workspace, int aggregationWorkers,
+            IncrementalSpringCache springCache,
+            java.util.function.Supplier<ContentDigest> polyglotSyntaxDigestSupplier) {
+        this(workspace, aggregationWorkers, springCache,
+                polyglotSyntaxDigestSupplier == null ? null : ignored -> polyglotSyntaxDigestSupplier.get());
+    }
+
+    public UniversalArchitecturePipeline(AnalysisWorkspace workspace, int aggregationWorkers,
+            IncrementalSpringCache springCache,
+            java.util.function.Function<String, ContentDigest> polyglotSyntaxDigestForModule) {
         this.workspace = Objects.requireNonNull(workspace);
         if (aggregationWorkers < 1 || aggregationWorkers > 8 || aggregationWorkers > 1 && !workspace.concurrentTables())
             throw new IllegalArgumentException("Aggregation workers require a compatible workspace and 1..8 admission");
         this.aggregationWorkers = aggregationWorkers;
         this.springCache = springCache;
+        this.polyglotSyntaxDigestForModule = polyglotSyntaxDigestForModule;
     }
 
     /**
@@ -1306,7 +1321,16 @@ public final class UniversalArchitecturePipeline {
                             var req = unitRequestOpt.orElseThrow();
                             var fw = frameworkCache.computeIfAbsent(req.manifest().identity(),
                                     ignored -> extractSpringFramework(req));
-                            springFrontendDigest = IncrementalSpringCache.springFrontendDigest(frontend, fw);
+                            String unitModulePath = req.manifest().modules().stream()
+                                    .filter(m -> m.identity().equals(req.module()))
+                                    .map(ModuleDescriptor::path)
+                                    .findFirst()
+                                    .orElse(".");
+                            ContentDigest polyglotSyntaxDigest = polyglotSyntaxDigestForModule != null
+                                    ? polyglotSyntaxDigestForModule.apply(unitModulePath)
+                                    : null;
+                            springFrontendDigest = IncrementalSpringCache.springFrontendDigest(
+                                    req, frontend, fw, polyglotSyntaxDigest);
                             configDataDigest = unitOutcome.configuration().identity();
                             var related = workspace.gaps(contextGaps.getOrDefault(Optional.empty(), List.of()));
                             related.addAll(contextGaps.getOrDefault(Optional.of(frontend.analysis()), List.of()));
@@ -1318,11 +1342,11 @@ public final class UniversalArchitecturePipeline {
                                     Optional.ofNullable(policy.springScopes().get(unit.sourceSet())),
                                     policy.configurationSpace(), policy.baselineConfiguration(),
                                     policy.springSatMode(), policy.truthEvaluationMode(), policy.truthLimits(),
-                                    policy.maxTypes(), validationMode);
+                                    policy.maxTypes(), validationMode, polyglotSyntaxDigest);
                             springSemanticKey = IncrementalSpringCache.semanticKey(
                                     unit.sourceSet(), springFrontendDigest, configDataDigest,
                                     policy.springSatMode(), policy.truthEvaluationMode(), policy.truthLimits(),
-                                    validationMode);
+                                    validationMode, polyglotSyntaxDigest);
                             cachedSpring = springCache.getExact(springExactKey);
                         }
                         if (cachedSpring.isPresent()) {

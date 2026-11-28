@@ -60,23 +60,32 @@ public final class StaticPolyglotScan {
 
     public record Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
             long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses,
-            JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace) {
+            JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace,
+            Map<String, ContentDigest> fileSyntaxDigests) {
         public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
                 long documents, long parsed, long workerFileBytes) {
             this(records, categories, failures, documents, parsed, workerFileBytes, 0L, 0L,
-                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY);
+                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, Map.of());
         }
 
         public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
                 long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses) {
             this(records, categories, failures, documents, parsed, workerFileBytes, cacheHits, cacheMisses,
-                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY);
+                    JsWorkspaceAliasResolver.WorkspaceModel.EMPTY, Map.of());
+        }
+
+        public Result(SemanticTables.Table records, Map<String, Long> categories, Map<String, Long> failures,
+                long documents, long parsed, long workerFileBytes, long cacheHits, long cacheMisses,
+                JsWorkspaceAliasResolver.WorkspaceModel jsWorkspace) {
+            this(records, categories, failures, documents, parsed, workerFileBytes, cacheHits, cacheMisses,
+                    jsWorkspace, Map.of());
         }
 
         public Result {
             categories = Map.copyOf(categories);
             failures = Map.copyOf(failures);
             jsWorkspace = jsWorkspace == null ? JsWorkspaceAliasResolver.WorkspaceModel.EMPTY : jsWorkspace;
+            fileSyntaxDigests = fileSyntaxDigests == null ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(fileSyntaxDigests));
         }
 
         public Map<String, Object> summary() {
@@ -156,6 +165,7 @@ public final class StaticPolyglotScan {
         var javaGrpc = new JavaGrpcSourceFrontend();
         var javaServiceSyntax = new JavaServiceSyntaxExtractor();
         var memoryRows = new TreeMap<String, SemanticTables.Row>();
+        var fileSyntaxDigests = new TreeMap<String, ContentDigest>();
         var spillRef = new SemanticRootCensus.Index[] { null };
         var toolIdentities = new ConcurrentHashMap<String, String>();
         IncrementalPolyglotCache polyglotCache = incrementalCacheRoot.map(IncrementalPolyglotCache::open).orElse(null);
@@ -215,7 +225,7 @@ public final class StaticPolyglotScan {
                         flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
                                 supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache,
                                 toolIdentities,
-                                memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
+                                memoryRows, fileSyntaxDigests, spillRef, scratch, categories, failures, counts, cancelled);
                         batch.clear();
                         batchBytes = 0L;
                     }
@@ -230,7 +240,7 @@ public final class StaticPolyglotScan {
                         flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
                                 supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache,
                                 toolIdentities,
-                                memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
+                                memoryRows, fileSyntaxDigests, spillRef, scratch, categories, failures, counts, cancelled);
                         batch.clear();
                         batchBytes = 0L;
                     }
@@ -286,7 +296,7 @@ public final class StaticPolyglotScan {
                         flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
                                 supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache,
                                 toolIdentities,
-                                memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
+                                memoryRows, fileSyntaxDigests, spillRef, scratch, categories, failures, counts, cancelled);
                         batch.clear();
                         batchBytes = 0L;
                     }
@@ -295,7 +305,7 @@ public final class StaticPolyglotScan {
             if (!batch.isEmpty()) {
                 flushBatch(batch, inventory, content, fileBudget, verifiedBytes, fastArchitecture,
                         supportedGrammars, treeSitter, javaGrpc, javaServiceSyntax, polyglotCache, toolIdentities,
-                        memoryRows, spillRef, scratch, categories, failures, counts, cancelled);
+                        memoryRows, fileSyntaxDigests, spillRef, scratch, categories, failures, counts, cancelled);
                 batch.clear();
             }
             long hits = polyglotCache == null ? 0L : polyglotCache.hits();
@@ -306,7 +316,8 @@ public final class StaticPolyglotScan {
             if (spillRef[0] == null) {
                 return new Result(
                         tables.write(SemanticTables.Kind.OBSERVATION, memoryRows.values().iterator(), cancelled),
-                        categories, failures, counts[0], counts[1], fileBudget, hits, misses, jsWorkspace);
+                        categories, failures, counts[0], counts[1], fileBudget, hits, misses, jsWorkspace,
+                        fileSyntaxDigests);
             }
             try (var rows = spillRef[0].rows("syntax", false)) {
                 var iterator = new Iterator<SemanticTables.Row>() {
@@ -336,7 +347,7 @@ public final class StaticPolyglotScan {
                     }
                 };
                 return new Result(tables.write(SemanticTables.Kind.OBSERVATION, iterator, cancelled), categories,
-                        failures, counts[0], counts[1], fileBudget, hits, misses, jsWorkspace);
+                        failures, counts[0], counts[1], fileBudget, hits, misses, jsWorkspace, fileSyntaxDigests);
             } catch (UncheckedIOException failure) {
                 throw failure.getCause();
             }
@@ -370,6 +381,7 @@ public final class StaticPolyglotScan {
             IncrementalPolyglotCache polyglotCache,
             ConcurrentHashMap<String, String> toolIdentities,
             TreeMap<String, SemanticTables.Row> memoryRows,
+            TreeMap<String, ContentDigest> fileSyntaxDigests,
             SemanticRootCensus.Index[] spillRef,
             Path scratch,
             TreeMap<String, Long> categories,
@@ -525,6 +537,16 @@ public final class StaticPolyglotScan {
             String docKey = "document:" + task.document();
             putSyntaxRow(memoryRows, spillRef, scratch, docKey, new SemanticTables.Row(
                     SemanticTables.Kind.OBSERVATION, docKey, inventory.inventory(), metadata));
+            ContentDigest entryDigest = CanonicalJson.sha256(List.of(
+                    task.path(),
+                    task.provider(),
+                    task.hinted(),
+                    task.source().digest(),
+                    metadata.get("status"),
+                    out.failureReason() != null ? out.failureReason() : out.summary().toMap(),
+                    out.facts().stream().map(TreeSitterSourceFrontend.Fact::toMap).toList()));
+            fileSyntaxDigests.merge(task.path(), entryDigest,
+                    (prev, cur) -> CanonicalJson.sha256(List.of(prev, cur)));
         }
     }
 
@@ -599,13 +621,10 @@ public final class StaticPolyglotScan {
 
             if (task.mode() == TaskMode.YAML_CONFIG_PROBE) {
                 String lowerPath = task.path().toLowerCase(Locale.ROOT);
-                String configRepoStem = DeclarativeTopologyParsers.configRepoFileStem(task.path());
                 boolean isHelmPath = DeclarativeTopologyParsers.isHelmTemplatePath(task.path());
                 boolean isTestPath = DeclarativeTopologyParsers.isTestSourcePath(task.path());
                 String extTag = lowerPath.endsWith(".properties") ? "props" : "yaml";
-                int slashIdx = lowerPath.lastIndexOf('/');
-                String baseName = slashIdx >= 0 ? lowerPath.substring(slashIdx + 1) : lowerPath;
-                String probeSlot = "yaml-probe@" + extTag + "@" + baseName + "@" + configRepoStem
+                String probeSlot = "yaml-probe@" + extTag + "@" + task.path()
                         + "@" + (isHelmPath ? "h" : "n") + (isTestPath ? "t" : "m");
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
@@ -811,7 +830,7 @@ public final class StaticPolyglotScan {
                                         : "other";
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
-                                "build-" + descKind, task.source().digest(), task.source().size(), fastArchitecture)
+                                "build-" + descKind + "@" + task.path(), task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
                 if (cacheKey != null) {
                     var cachedSlot = polyglotCache.lookup(cacheKey);
@@ -895,7 +914,7 @@ public final class StaticPolyglotScan {
             if (task.mode() == TaskMode.OPENAPI_JSON_PROBE) {
                 ContentDigest cacheKey = (polyglotCache != null && task.source().size() <= fileBudget)
                         ? IncrementalPolyglotCache.key(DECLARATIVE_PROVIDER, DECLARATIVE_TOOL_IDENTITY,
-                                "openapi-json-probe", task.source().digest(), task.source().size(), fastArchitecture)
+                                "openapi-json-probe@" + task.path(), task.source().digest(), task.source().size(), fastArchitecture)
                         : null;
                 if (cacheKey != null) {
                     var cachedSlot = polyglotCache.lookup(cacheKey);

@@ -959,6 +959,10 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                         + (afterBuildStats.gradleResolverRecomputed() - beforeBuildStats.gradleResolverRecomputed()));
 
         var frontend = new JavaParserFrontend();
+        if (!incrementalEnabled) {
+            JavaParserFrontend.configureModuleCacheDirectory(null);
+            com.evolution.analysis.javaparser.ModuleIncrementalCache.clearInMemoryCache();
+        }
         var javaIncrementalCache = new IncrementalJavaFrontendCache(intakeDirectory.resolve("incremental-cache"));
         var javaCacheHits = new java.util.concurrent.atomic.AtomicLong();
         var javaCacheMisses = new java.util.concurrent.atomic.AtomicLong();
@@ -1228,10 +1232,13 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     ? com.evolution.analysis.concurrent.BoundedTasks.automaticWorkers()
                     : 1;
             try {
+                java.util.function.Function<String, ContentDigest> polyglotSyntaxDigestForModule = modulePath ->
+                        polyglotFuture.join().moduleSyntaxDigest(modulePath);
                 detailed = new UniversalArchitecturePipeline(
                         analysisWorkspace,
                         aggregationWorkers,
-                        incrementalEnabled ? sharedCaches.springCache() : null)
+                        incrementalEnabled ? sharedCaches.springCache() : null,
+                        polyglotSyntaxDigestForModule)
                         .runWithEvidence(decoded, finalPolicy);
                 control.checkpoint();
                 polyglot = polyglotFuture.join();
@@ -1304,7 +1311,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                 var beforeGraphStats = sharedCaches.graphProjector().stats();
                 var publication = pagesStore.build(canonicalInput, storeDir, control, graphLedgers,
                         store -> new PolyglotScan().project(finalPolyglot, store, projectionProfile, control), fast,
-                        incrementalEnabled ? sharedCaches.graphProjector() : null);
+                        incrementalEnabled ? sharedCaches.graphProjector() : null,
+                        finalPolyglot::moduleProjectionDigest);
                 var afterGraphStats = sharedCaches.graphProjector().stats();
                 int deltaReusedGraphContexts = Math.max(0,
                         afterGraphStats.reusedContexts() - beforeGraphStats.reusedContexts());
@@ -1407,7 +1415,8 @@ public final class LocalAnalysisRunner implements AnalysisJobs.Runner {
                     graphLedgers,
                     store -> new PolyglotScan().project(finalPolyglot, store, projectionProfile, control),
                     fast,
-                    incrementalEnabled ? sharedCaches.graphProjector() : null);
+                    incrementalEnabled ? sharedCaches.graphProjector() : null,
+                    finalPolyglot::moduleProjectionDigest);
             var afterGraphStats = sharedCaches.graphProjector().stats();
             int deltaReusedGraphContexts = Math.max(0,
                     afterGraphStats.reusedContexts() - beforeGraphStats.reusedContexts());

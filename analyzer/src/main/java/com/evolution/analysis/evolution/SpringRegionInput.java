@@ -66,8 +66,7 @@ final class SpringRegionInput {
         var spaceEvidence=required(side,"spring.space",maybe(descriptor,"space"));
         var plan=EvolutionInput.payload(planEvidence);
         var registration=registration(plan);
-        var discovery=discovery(plan);
-        var discoveryInputs=obj(discovery.get("inputs"));
+        var discoveryInputs=discoveryInputFields(plan);
         var binding=obj(plan.get("binding"));
         if(descriptor.get("parameters")==null)throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.UNAVAILABLE);
         var parameters=obj(descriptor.get("parameters"));
@@ -86,10 +85,10 @@ final class SpringRegionInput {
                 "catalog",fields(obj(plan.get("inventory")),"provider","mechanismCatalog","catalogRevision"),
                 "truthLimits",parameters.get("limits"),
                 "registrationLimits",registration.get("limits"),"bindingLimits",binding.get("limits"),
-                "discoveryLimits",obj(discoveryInputs.get("eventDescriptors")).get("limits"),
+                "discoveryLimits",discoveryLimits(plan),
                 "overrides",discoveryInputs.get("overridePolicy"),
                 "bindingPolicy",fields(obj(binding.get("environment")),"comparator","noResolvableDependencies","noPostRegistrationMutation"));
-        order=registration.get("establishedOrderPrefix");
+        order=establishedOrderPrefix(side,plan);
         workPolicy=fields(parameters,"reasonerPolicy","symbolicLimits","maxSignatures","evaluatorArtifact");
         orderComplete="COMPLETE".equals(discoveryInputs.get("orderCompleteness"))&&"COMPLETE".equals(registration.get("order"))
                 &&"COMPLETE".equals(registration.get("initialRegistry"))&&"COMPLETE".equals(registration.get("noParentContainer"));
@@ -111,7 +110,7 @@ final class SpringRegionInput {
             var coverage=obj(result.get("coverage"));
             if(!"spring-truth-region-result-v1".equals(result.get("schema"))||
                     !CanonicalJson.write(TruthProcessing.PROVIDER).equals(CanonicalJson.write(result.get("provider")))||
-                    !context.equals(explicitContext(plan,build,parameters))||!legalOrder(plan).equals(result.get("legalOrderIdentity"))||
+                    !context.equals(explicitContext(plan,build,parameters))||!legalOrder(side,plan).equals(result.get("legalOrderIdentity"))||
                     number(result.get("worldsCount"))!=worlds.size()||number(coverage.get("enumeratedAssignments"))!=worlds.size()
                     ||number(result.get("witnessesCount"))!=witnesses.size()||number(result.get("replaysCount"))!=replays.size()
                     ||number(coverage.get("feasibleAssignments"))!=worlds.values().stream().filter(w->w.feasibility==LogicalValue.TRUE).count()
@@ -194,6 +193,7 @@ final class SpringRegionInput {
     }
 
     private static boolean emptyDemoBindingPlan(Map<String,Object> plan,Map<String,Object> binding) {
+        if (isPagedPlan(plan)) return false;
         var environment=obj(binding.get("environment"));
         var framework=obj(obj(plan.get("inventory")).get("frameworkEvidence"));
         var discovery=obj(plan.get("discovery"));
@@ -221,7 +221,6 @@ final class SpringRegionInput {
     }
 
     private String explicitContext(Map<String,Object> plan,String build,Map<String,Object> parameters) {
-        var discoveryInput=obj(discovery(plan).get("inputs"));
         var registration=registration(plan);
         var binding=obj(plan.get("binding"));
         return identity("spring-semantics-context",row("buildContextIdentity",build,"configurationSpaceIdentity",domain.identity,
@@ -229,17 +228,14 @@ final class SpringRegionInput {
                 "conditionIrVersion",ConditionExpression.IR,"frameworkSemantics",obj(plan.get("conditions")).get("semantics"),
                 "registrationSemantics",BeanRegistrationProcessing.SEMANTICS,"bindingSemantics",BindingProcessing.SEMANTICS,
                 "bindingPlanIdentity",bindingIdentity(plan),"reasonerPolicy",parameters.get("reasonerPolicy"),
-                "deterministicLimits",row("discovery",obj(discoveryInput.get("eventDescriptors")).get("limits"),
+                "deterministicLimits",row("discovery",discoveryLimits(plan),
                         "registration",registration.get("limits"),"binding",binding.get("limits"),"truth",parameters.get("limits"))));
     }
 
-    private static String legalOrder(Map<String,Object> plan) {
+    private static String legalOrder(EvolutionInput side, Map<String,Object> plan) throws IOException {
         var registration=registration(plan);
-        var steps=new HashMap<String,String>();
-        for(var item:list(registration.get("steps"))) {
-            var step=obj(item);steps.put(text(step,"key"),text(step,"discoveryEvent"));
-        }
-        var events=list(registration.get("establishedOrderPrefix")).stream().map(steps::get).toList();
+        var steps=registrationStepEvents(side, plan);
+        var events=establishedOrderPrefix(side, plan).stream().map(steps::get).toList();
         return identity("spring-legal-order",row("registrationPlanIdentity",registrationIdentity(plan),"orderedEventIdentities",events,
                 "realizabilityEvidence",row("evidence",CanonicalJson.sha256(registration.get("orderEvidence")),"completeness",registration.get("order")),
                 "orderInterpretation","evidenced-registration-prefix-v1"));
@@ -290,25 +286,39 @@ final class SpringRegionInput {
             domain.atoms.forEach((key,choice)->local.put(key,choice.value().equals(typed.values().get(choice.coordinate()))));
             var traceRegion=formula(text(raw,"region"),false,SpringEvolution.LIMITS);
             if(!traceRegion.evaluate(local))continue;
-            Object payload=raw.get("facts");
-            if(payload instanceof Map<?,?> empty&&empty.isEmpty())continue;
-            for(var item:list(payload)) {
-                if(++cells>SpringEvolution.MAX_CELLS)throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.RESOURCE_LIMIT);
-                var pair=list(item);
-                var fact=byFact.get((String)pair.getFirst());if(fact==null)continue;
-                String expected=(String)pair.getLast();
-                if(!Set.of("TRUE","FALSE").contains(expected))continue;
-                var region=obj(fact.region.raw.get("region"));
-                boolean yes=formula(text(region,"trueRegion"),false,SpringEvolution.LIMITS).evaluate(local);
-                boolean no=formula(text(region,"falseRegion"),false,SpringEvolution.LIMITS).evaluate(local);
-                if(yes==no||!expected.equals(yes?"TRUE":"FALSE"))continue;
-                var choices=traceWitnesses.computeIfAbsent(fact.local,key->new TreeMap<>());
-                var previous=choices.get(expected);
-                if(previous!=null&&text(previous,"assignment").compareTo(typed.key())<=0)continue;
-                choices.put(expected,row("graph",side.graph,"side",side.name,"context",context,"region",fact.region.id,
-                        "assignment",typed.key(),"trace",CanonicalJson.sha256(raw),"result",result.get("evidence"),
-                        "bindingResult",raw.get("bindingResult"),"tier","CAPTURED_SYMBOLIC_TRACE_REPLAY","minimality","NONE"));
+            var traceDigest = "spring.symbolic-trace:m8.4-paged-v1".equals(raw.get("schema"))
+                    ? new ContentDigest(text(raw, "traceDigest"))
+                    : CanonicalJson.sha256(raw);
+            long[] cellsBox = { cells };
+            SpringOperands.ObjectConsumer factHandler = item -> {
+                if (++cellsBox[0] > SpringEvolution.MAX_CELLS)
+                    throw new EvolutionSnapshot.ReadFailure(EvolutionSnapshot.Failure.RESOURCE_LIMIT);
+                var pair = list(item);
+                var fact = byFact.get((String) pair.getFirst());
+                if (fact == null) return;
+                String expected = (String) pair.getLast();
+                if (!Set.of("TRUE", "FALSE").contains(expected)) return;
+                var region = obj(fact.region.raw.get("region"));
+                boolean yes = formula(text(region, "trueRegion"), false, SpringEvolution.LIMITS).evaluate(local);
+                boolean no = formula(text(region, "falseRegion"), false, SpringEvolution.LIMITS).evaluate(local);
+                if (yes == no || !expected.equals(yes ? "TRUE" : "FALSE")) return;
+                var choices = traceWitnesses.computeIfAbsent(fact.local, key -> new TreeMap<>());
+                var previous = choices.get(expected);
+                if (previous != null && text(previous, "assignment").compareTo(typed.key()) <= 0) return;
+                choices.put(expected, row("graph", side.graph, "side", side.name, "context", context,
+                        "region", fact.region.id, "assignment", typed.key(), "trace", traceDigest,
+                        "result", result.get("evidence"), "bindingResult", raw.get("bindingResult"),
+                        "tier", "CAPTURED_SYMBOLIC_TRACE_REPLAY", "minimality", "NONE"));
+            };
+            if ("spring.symbolic-trace:m8.4-paged-v1".equals(raw.get("schema"))) {
+                visitObjectPages(side, raw.get("factPages"), "spring.symbolic-trace-fact-page", "facts", factHandler);
+            } else {
+                Object payload = raw.get("facts");
+                if (!(payload instanceof Map<?, ?> empty && empty.isEmpty())) {
+                    for (var item : list(payload)) factHandler.accept(item);
+                }
             }
+            cells = cellsBox[0];
         }
         tracesRead=true;
     }

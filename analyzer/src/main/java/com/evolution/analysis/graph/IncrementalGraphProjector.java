@@ -385,19 +385,33 @@ public final class IncrementalGraphProjector {
     /**
      * Computes a cryptographically exact SHA-256 structural key over ALL fields of {@link FrontendResult}
      * that contribute to context-invariant graph evidence, nodes, and edges (deliberately excluding
-     * {@code frontend.analysis()} and {@code httpClientCalls}, which are emitted live per context).
+     * {@code frontend.analysis()} and {@code httpClientCalls}, which are emitted live per context),
+     * plus optional Spring and polyglot context digests so stale {@code .gt2} templates invalidate
+     * whenever Spring or polyglot semantics change.
      */
     public static ContentDigest frontendStructuralKey(FrontendResult f) {
-        return frontendStructuralKey(f, false);
+        return frontendStructuralKey(f, false, null, null);
     }
 
     public static ContentDigest frontendStructuralKey(FrontendResult f, boolean fastArchitecture) {
+        return frontendStructuralKey(f, fastArchitecture, null, null);
+    }
+
+    public static ContentDigest frontendStructuralKey(
+            FrontendResult f,
+            boolean fastArchitecture,
+            ContentDigest springContextDigest,
+            ContentDigest polyglotProjectionDigest) {
         Objects.requireNonNull(f);
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             try (var out = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), md))) {
-                writeLongUtf(out, "graph-frontend-template:v2");
+                writeLongUtf(out, "graph-frontend-template:v3");
                 out.writeBoolean(fastArchitecture);
+                out.writeBoolean(springContextDigest != null);
+                if (springContextDigest != null) writeLongUtf(out, springContextDigest.value());
+                out.writeBoolean(polyglotProjectionDigest != null);
+                if (polyglotProjectionDigest != null) writeLongUtf(out, polyglotProjectionDigest.value());
                 writeLongUtf(out, f.frontend().id());
                 writeLongUtf(out, f.frontend().version());
                 out.writeByte(f.state().ordinal());

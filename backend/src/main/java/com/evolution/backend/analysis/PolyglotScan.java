@@ -27,6 +27,52 @@ public final class PolyglotScan {
             long nativeContexts,long nativeDocuments,long nativeObservationRows,List<CapabilityGapRecord> gaps,Optional<Published> published,StaticPolyglotScan.Result syntax) {
         public Result {languages=Map.copyOf(languages);uncovered=Map.copyOf(uncovered);gaps=List.copyOf(gaps);}
         public boolean nonJavaSources(){return languages.keySet().stream().anyMatch(l->!l.equals("java"));}
+        /** Deterministic digest of all parsed and cached polyglot syntax/service facts (including reused cache entries). */
+        public ContentDigest syntaxDigest() {
+            return moduleSyntaxDigest(".");
+        }
+        /** Deterministic digest scoped to a single module path so unchanged sibling modules keep cache hits. */
+        public ContentDigest moduleSyntaxDigest(String modulePath) {
+            String norm = normalizeModulePath(modulePath);
+            var entries = new ArrayList<List<Object>>();
+            for (var e : syntax.fileSyntaxDigests().entrySet()) {
+                if (belongsToModule(e.getKey(), norm)) {
+                    entries.add(List.of(e.getKey(), e.getValue().value()));
+                }
+            }
+            return CanonicalJson.sha256(List.of("polyglot.module-syntax-digest:v1", norm, entries));
+        }
+        /** Deterministic digest of all polyglot inputs contributing to canonical graph projection. */
+        public ContentDigest projectionDigest() {
+            return moduleProjectionDigest(".");
+        }
+        /** Deterministic projection digest scoped to a single module path for .gt2 template invalidation. */
+        public ContentDigest moduleProjectionDigest(String modulePath) {
+            String norm = normalizeModulePath(modulePath);
+            var entries = new ArrayList<List<Object>>();
+            for (var e : syntax.fileSyntaxDigests().entrySet()) {
+                if (belongsToModule(e.getKey(), norm)) {
+                    entries.add(List.of(e.getKey(), e.getValue().value()));
+                }
+            }
+            return CanonicalJson.sha256(List.of(
+                    "polyglot.module-projection-digest:v1",
+                    norm,
+                    entries,
+                    published.map(p -> p.publication().document().digest().value()).orElse("")));
+        }
+        private static String normalizeModulePath(String modulePath) {
+            if (modulePath == null || modulePath.isBlank() || ".".equals(modulePath)) return ".";
+            String s = modulePath.replace('\\', '/');
+            while (s.startsWith("./")) s = s.substring(2);
+            while (s.endsWith("/") && s.length() > 1) s = s.substring(0, s.length() - 1);
+            return s.isEmpty() ? "." : s;
+        }
+        private static boolean belongsToModule(String path, String normModule) {
+            if (".".equals(normModule)) return true;
+            String p = path.replace('\\', '/');
+            return p.equals(normModule) || p.startsWith(normModule + "/");
+        }
         public Map<String,Object> summary() {
             return Map.ofEntries(Map.entry("inventory",inventory),Map.entry("filesByLanguage",languages),Map.entry("withoutNativeContextByLanguage",uncovered),
                     Map.entry("buildComponents",readiness.modules().size()),Map.entry("nativeContexts",nativeContexts),Map.entry("nativeDocuments",nativeDocuments),Map.entry("nativeObservationRows",nativeObservationRows),

@@ -78,7 +78,10 @@ final class Workspace {
         return publish(input,ledgers,contribution,false,null);
     }
     com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input,Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers,PartitionedGraphStore.Contribution contribution,boolean fastArchitecture,IncrementalGraphProjector projector)throws IOException {
-        create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),ledgers,contribution,fastArchitecture,projector);
+        return publish(input,ledgers,contribution,fastArchitecture,projector,(java.util.function.Function<String,ContentDigest>)null);
+    }
+    com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(CanonicalGraphInput input,Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers,PartitionedGraphStore.Contribution contribution,boolean fastArchitecture,IncrementalGraphProjector projector,java.util.function.Function<String,ContentDigest> modulePolyglotDigest)throws IOException {
+        create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),ledgers,contribution,fastArchitecture,projector,modulePolyglotDigest);
     }
     com.evolution.analysis.filesystem.PartitionedGraphStore.Publication publish(KnowledgeGraph input,PartitionedGraphStore.Contribution contribution)throws IOException {
         create();return partitioned().build(input,root,()->Thread.currentThread().isInterrupted(),contribution);

@@ -146,7 +146,13 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
                 var manifest=new TreeMap<>(GraphJson.object(copy.get("manifest")));snapshotMember(manifest);copy.put("manifest",manifest);
             }
             case "evidence.attempt" -> removeTiming(copy);
-            case "evidence.ledger","evidence.ledger-index" -> copy.put("attempts",GraphJson.array(copy.get("attempts")).stream().map(a->{var row=new TreeMap<>(GraphJson.object(a));removeTiming(row);return row;}).toList());
+            case "evidence.ledger","evidence.ledger-index" -> {
+                if (copy.get("attempts") != null) {
+                    copy.put("attempts", GraphJson.array(copy.get("attempts")).stream()
+                            .map(a -> { var row = new TreeMap<>(GraphJson.object(a)); removeTiming(row); return row; })
+                            .toList());
+                }
+            }
             default -> throw new IllegalStateException("Unknown semantic evidence family");
         }
         return digest(family,CanonicalJson.write(copy));
@@ -176,6 +182,78 @@ public record GraphEvidence(ContentDigest identity, String family, String canoni
         }
         var preimage = List.of("graph.evidence:m5.1-v1", family, json);
         return json.length() < 8192 ? ContentDigest.sha256Utf8(CanonicalJson.write(preimage)) : CanonicalJson.sha256(preimage);
+    }
+
+    private static final class LimitReachedException extends RuntimeException {
+        private static final LimitReachedException INSTANCE = new LimitReachedException();
+        private LimitReachedException() { super(null, null, false, false); }
+    }
+
+    private static final class CountingUtf8Appendable implements Appendable {
+        private final long cap;
+        private long bytes;
+
+        CountingUtf8Appendable(long cap) {
+            this.cap = cap;
+        }
+
+        private void addChar(char c) {
+            if (c < 0x80) bytes += 1;
+            else if (c < 0x800) bytes += 2;
+            else if (Character.isSurrogate(c)) bytes += 2;
+            else bytes += 3;
+            if (bytes > cap) throw LimitReachedException.INSTANCE;
+        }
+
+        @Override
+        public Appendable append(CharSequence csq) {
+            return append(csq, 0, csq.length());
+        }
+
+        @Override
+        public Appendable append(CharSequence csq, int start, int end) {
+            for (int i = start; i < end; i++) addChar(csq.charAt(i));
+            return this;
+        }
+
+        @Override
+        public Appendable append(char c) {
+            addChar(c);
+            return this;
+        }
+    }
+
+    /** Computes exact UTF-8 byte length of canonical evidence JSON without materializing a monolithic String. */
+    static long encodedUtf8Length(Object value) {
+        return encodedUtf8LengthCapped(value, Long.MAX_VALUE - 1);
+    }
+
+    /** Computes exact UTF-8 byte length, returning {@code cap + 1} immediately once the cap is exceeded. */
+    static long encodedUtf8LengthCapped(Object value, long cap) {
+        var counter = new CountingUtf8Appendable(cap);
+        try {
+            writeFormTo(value, counter, 0);
+            return counter.bytes;
+        } catch (LimitReachedException exceeded) {
+            return cap + 1;
+        } catch (java.io.IOException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** Streams canonical evidence JSON directly into SHA-256 without allocating a giant String on heap. */
+    static ContentDigest canonicalSha256(Object value) {
+        var md = CanonicalJson.borrowSha256();
+        try {
+            try (var writer = CanonicalJson.newUtf8DigestWriter(md)) {
+                writeFormTo(value, writer, 0);
+            } catch (java.io.IOException impossible) {
+                throw new IllegalStateException("Canonical digest unavailable", impossible);
+            }
+            return new ContentDigest("sha256:" + HexFormat.of().formatHex(md.digest()));
+        } finally {
+            CanonicalJson.releaseSha256(md);
+        }
     }
 
     /** Single-pass streaming canonical evidence encoder — zero intermediate TreeMaps or Lists. */

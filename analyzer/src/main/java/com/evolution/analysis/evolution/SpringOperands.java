@@ -12,7 +12,45 @@ import static com.evolution.analysis.evolution.EvolutionRows.*;
 
 /** Indexes existing M4 evidence by the producer's exact reference, never by a context name. */
 final class SpringOperands {
+    @FunctionalInterface interface StringConsumer { void accept(String value) throws IOException; }
+    @FunctionalInterface interface ObjectConsumer { void accept(Object value) throws IOException; }
+
     private SpringOperands() {}
+
+    static boolean isPagedPlan(Map<String, Object> plan) {
+        return "spring.plan:m8.4-paged-v1".equals(plan.get("schema"));
+    }
+
+    static void visitStringPages(EvolutionInput side, Object rawPages, String leafFamily, StringConsumer consumer) throws IOException {
+        visitPagesRecursive(side, list(rawPages), leafFamily, "records", item -> consumer.accept(GraphJson.string(item)), 0);
+    }
+
+    static void visitObjectPages(EvolutionInput side, Object rawPages, String leafFamily, String fieldName, ObjectConsumer consumer) throws IOException {
+        visitPagesRecursive(side, list(rawPages), leafFamily, fieldName, consumer, 0);
+    }
+
+    private static void visitPagesRecursive(EvolutionInput side, List<Object> pageRefs, String leafFamily,
+            String fieldName, ObjectConsumer consumer, int depth) throws IOException {
+        if (depth > 8) throw EvolutionInput.corrupt();
+        String dirFamily = leafFamily + ".dir";
+        long expectedPage = 0L;
+        for (Object refObj : pageRefs) {
+            EvolutionSnapshot.check(side.run.cancelled);
+            var pageEv = side.evidence(new ContentDigest(GraphJson.string(refObj)));
+            var pageObj = EvolutionInput.payload(pageEv);
+            if (number(pageObj.get("page")) != expectedPage++) throw EvolutionInput.corrupt();
+            if (dirFamily.equals(pageEv.family())) {
+                visitPagesRecursive(side, list(pageObj.get("pages")), leafFamily, fieldName, consumer, depth + 1);
+            } else if (leafFamily.equals(pageEv.family())) {
+                for (Object item : list(pageObj.get(fieldName))) {
+                    EvolutionSnapshot.check(side.run.cancelled);
+                    consumer.accept(item);
+                }
+            } else {
+                throw EvolutionInput.corrupt();
+            }
+        }
+    }
 
     static void index(EvolutionInput side, GraphEvidence evidence) throws IOException {
         String family=evidence.family();
@@ -32,13 +70,25 @@ final class SpringOperands {
                 String identity=switch(family) {
                     case "spring.space" -> identity("spring-configuration-space",space(raw));
                     case "spring.configuration-envelope" -> identity("spring-envelope",envelope(raw));
-                    default -> planIdentity(raw);
+                    default -> isPagedPlan(raw) ? verifyPagedPlanIdentity(side, raw) : planIdentity(raw);
                 };
                 remember(side,family,identity,evidence.identity());
             }
             case "spring.explicit-result", "spring.symbolic-result" -> indexResult(side,evidence);
             default -> { }
         }
+    }
+
+    private static String verifyPagedPlanIdentity(EvolutionInput side, Map<String, Object> raw) throws IOException {
+        String id = text(raw, "planIdentity");
+        long[] gapCount = { 0L };
+        visitStringPages(side, raw.get("gapPages"), "spring.plan-gap-index-page", ignored -> gapCount[0]++);
+        if (gapCount[0] != number(raw.get("gapsCount"))) throw EvolutionInput.corrupt();
+        long[] selCount = { 0L };
+        visitObjectPages(side, raw.get("methodSelectionPages"), "spring.plan-method-selection-page",
+                "methodSelections", ignored -> selCount[0]++);
+        if (selCount[0] != number(raw.get("methodSelectionsCount"))) throw EvolutionInput.corrupt();
+        return id;
     }
 
     static List<GraphEvidence> sourceSupport(EvolutionInput side,String id,String family,String analysis)throws IOException {
@@ -64,9 +114,10 @@ final class SpringOperands {
                 new GraphJson.StreamLimits(Math.max(1,evidence.canonicalJson().length()),128,Long.MAX_VALUE),
                 (field,value)->{
                     switch(field) {
-                        case "schema","provider","inputIdentity","semanticsContextIdentity","legalOrderIdentity",
+                        case "schema","pagedSchema","provider","inputIdentity","semanticsContextIdentity","legalOrderIdentity",
                                 "coverage","feasibility","identity","signaturesComplete" -> meta.put(field,value.read());
-                        case "regionsCount","tracesCount" -> declaredCounts.put(field,number(value.read()));
+                        case "worldsCount","regionsCount","witnessesCount","replaysCount","tracesCount" ->
+                                declaredCounts.put(field,number(value.read()));
                         case "worlds","regions","witnesses","replays","traces" -> {
                             var ordinal=new long[1];
                             value.array(member->{
@@ -81,48 +132,53 @@ final class SpringOperands {
                             });
                             meta.put(field+"Count",ordinal[0]);
                         }
-                        case "regionDigestPages" -> {
-                            var ordinal=new long[1];
-                            var pageIdx=new long[1];
-                            String prefix=side.name+"|"+evidence.identity().value()+"|regions|";
-                            value.array(pageRef->{
-                                EvolutionSnapshot.check(side.run.cancelled);
-                                var pageEv=side.evidence(new ContentDigest(GraphJson.string(pageRef)));
-                                if(!"spring.symbolic-region-digest-page".equals(pageEv.family()))throw EvolutionInput.corrupt();
-                                var pageObj=EvolutionInput.payload(pageEv);
-                                if(number(pageObj.get("page"))!=pageIdx[0]++)throw EvolutionInput.corrupt();
-                                for(var digestObj:list(pageObj.get("records"))) {
-                                    EvolutionSnapshot.check(side.run.cancelled);
-                                    String digest=GraphJson.string(digestObj);
-                                    unique(side.run.index,"spring-member",prefix+digest,row("ordinal",ordinal[0]));
-                                    ordinal[0]++;
-                                }
+                        case "worldDigestPages","regionDigestPages","witnessDigestPages","replayDigestPages" -> {
+                            boolean explicit = "spring.explicit-result".equals(evidence.family());
+                            String memberField = switch (field) {
+                                case "worldDigestPages" -> "worlds";
+                                case "regionDigestPages" -> "regions";
+                                case "witnessDigestPages" -> "witnesses";
+                                default -> "replays";
+                            };
+                            String leafFamily = switch (field) {
+                                case "worldDigestPages" -> "spring.explicit-world-digest-page";
+                                case "regionDigestPages" -> explicit
+                                        ? "spring.explicit-region-digest-page"
+                                        : "spring.symbolic-region-digest-page";
+                                case "witnessDigestPages" -> "spring.explicit-witness-digest-page";
+                                default -> "spring.explicit-replay-digest-page";
+                            };
+                            var ordinal = new long[1];
+                            String prefix = side.name + "|" + evidence.identity().value() + "|" + memberField + "|";
+                            visitStringPages(side, value.read(), leafFamily, digest -> {
+                                unique(side.run.index, "spring-member", prefix + digest, row("ordinal", ordinal[0]));
+                                ordinal[0]++;
                             });
-                            meta.put("regionsCount",ordinal[0]);
+                            meta.put(memberField + "Count", ordinal[0]);
                         }
                         case "traceEvidencePages" -> {
                             var ordinal=new long[1];
-                            var pageIdx=new long[1];
                             String prefix=side.name+"|"+evidence.identity().value()+"|traces|";
-                            value.array(pageRef->{
-                                EvolutionSnapshot.check(side.run.cancelled);
-                                var pageEv=side.evidence(new ContentDigest(GraphJson.string(pageRef)));
-                                if(!"spring.symbolic-trace-index-page".equals(pageEv.family()))throw EvolutionInput.corrupt();
-                                var pageObj=EvolutionInput.payload(pageEv);
-                                if(number(pageObj.get("page"))!=pageIdx[0]++)throw EvolutionInput.corrupt();
-                                for(var traceRefObj:list(pageObj.get("records"))) {
-                                    EvolutionSnapshot.check(side.run.cancelled);
-                                    var traceEv=side.evidence(new ContentDigest(GraphJson.string(traceRefObj)));
-                                    if(!"spring.symbolic-trace".equals(traceEv.family()))throw EvolutionInput.corrupt();
-                                    var digest=ContentDigest.sha256Utf8(traceEv.canonicalJson());
-                                    unique(side.run.index,"spring-member",prefix+digest.value(),row("ordinal",ordinal[0]));
-                                    var traceLimits=new GraphJson.Limits(
-                                            Math.max(GraphJson.Limits.defaults().maxCharacters(),traceEv.canonicalJson().length()),
-                                            128,Integer.MAX_VALUE-8);
-                                    unique(side.run.index,"spring-trace",prefix+digest.value(),
-                                            obj(GraphJson.read(traceEv.canonicalJson(),traceLimits)));
-                                    ordinal[0]++;
+                            visitStringPages(side, value.read(), "spring.symbolic-trace-index-page", traceRef -> {
+                                var traceEv = side.evidence(new ContentDigest(traceRef));
+                                if (!"spring.symbolic-trace".equals(traceEv.family())) throw EvolutionInput.corrupt();
+                                var traceLimits = new GraphJson.Limits(
+                                        Math.max(GraphJson.Limits.defaults().maxCharacters(), traceEv.canonicalJson().length()),
+                                        128, Integer.MAX_VALUE - 8);
+                                var traceObj = obj(GraphJson.read(traceEv.canonicalJson(), traceLimits));
+                                ContentDigest digest;
+                                if ("spring.symbolic-trace:m8.4-paged-v1".equals(traceObj.get("schema"))) {
+                                    digest = new ContentDigest(text(traceObj, "traceDigest"));
+                                    long[] factsSeen = { 0L };
+                                    visitObjectPages(side, traceObj.get("factPages"),
+                                            "spring.symbolic-trace-fact-page", "facts", ignored -> factsSeen[0]++);
+                                    if (factsSeen[0] != number(traceObj.get("factsCount"))) throw EvolutionInput.corrupt();
+                                } else {
+                                    digest = ContentDigest.sha256Utf8(traceEv.canonicalJson());
                                 }
+                                unique(side.run.index, "spring-member", prefix + digest.value(), row("ordinal", ordinal[0]));
+                                unique(side.run.index, "spring-trace", prefix + digest.value(), traceObj);
+                                ordinal[0]++;
                             });
                             meta.put("tracesCount",ordinal[0]);
                         }
@@ -136,6 +192,14 @@ final class SpringOperands {
             if(!declaredCounts.get("regionsCount").equals(meta.get("regionsCount"))
                     ||!declaredCounts.get("tracesCount").equals(meta.get("tracesCount")))
                 throw EvolutionInput.corrupt();
+        }
+        if("spring.explicit-result:m8.4-paged-v1".equals(meta.get("pagedSchema"))) {
+            for (String countKey : List.of("worldsCount", "regionsCount", "witnessesCount", "replaysCount")) {
+                if (!meta.containsKey(countKey) || !declaredCounts.containsKey(countKey)
+                        || !declaredCounts.get(countKey).equals(meta.get(countKey))) {
+                    throw EvolutionInput.corrupt();
+                }
+            }
         }
         meta.put("evidence",evidence.identity());
         String key=evidence.family().equals("spring.explicit-result")?text(meta,"semanticsContextIdentity"):text(meta,"inputIdentity");
@@ -177,23 +241,67 @@ final class SpringOperands {
         if(ev==null)return null;
         var plan=EvolutionInput.payload(ev);
         var discovery=obj(plan.get("discovery"));
-        if(!Objects.equals(discovery.get("build"),descriptor.get("build"))
+        boolean buildMatches = isPagedPlan(plan)
+                ? Objects.equals(discovery.get("buildContextIdentity"),
+                        identity("spring-build-context", obj(descriptor.get("build"))))
+                : Objects.equals(discovery.get("build"), descriptor.get("build"));
+        if(!buildMatches
                 ||!Objects.equals(obj(plan.get("inventory")).get("analysis"),context.get("parentAnalysis")))return null;
         return text(discoveryInputs(plan).getFirst(),"key");
     }
 
-    static Map<String,Object> discovery(Map<String,Object> plan) {return obj(obj(plan.get("discovery")).get("canonical"));}
+    static Map<String,Object> discovery(Map<String,Object> plan) {
+        var disc = obj(plan.get("discovery"));
+        return isPagedPlan(plan) ? disc : obj(disc.get("canonical"));
+    }
+    static Map<String,Object> discoveryInputFields(Map<String,Object> plan) {
+        return isPagedPlan(plan) ? obj(plan.get("discovery")) : obj(discovery(plan).get("inputs"));
+    }
+    static Object discoveryLimits(Map<String,Object> plan) {
+        return isPagedPlan(plan)
+                ? obj(plan.get("discovery")).get("discoveryLimits")
+                : obj(discoveryInputFields(plan).get("eventDescriptors")).get("limits");
+    }
     static Map<String,Object> registration(Map<String,Object> plan) {return obj(obj(plan.get("binding")).get("registrationPlan"));}
     static List<Map<String,Object>> discoveryInputs(Map<String,Object> plan) {
-        return list(obj(discovery(plan).get("inputs")).get("containerHierarchy")).stream().map(EvolutionRows::obj).toList();
+        return list(discoveryInputFields(plan).get("containerHierarchy")).stream().map(EvolutionRows::obj).toList();
+    }
+    static List<Object> establishedOrderPrefix(EvolutionInput side, Map<String,Object> plan) throws IOException {
+        var reg = registration(plan);
+        if (!isPagedPlan(plan)) return list(reg.get("establishedOrderPrefix"));
+        var prefix = new ArrayList<Object>();
+        visitStringPages(side, reg.get("establishedOrderPrefixPages"), "spring.plan-reg-prefix-page", prefix::add);
+        if (prefix.size() != number(reg.get("establishedOrderPrefixCount"))) throw EvolutionInput.corrupt();
+        return List.copyOf(prefix);
+    }
+    static Map<String,String> registrationStepEvents(EvolutionInput side, Map<String,Object> plan) throws IOException {
+        var reg = registration(plan);
+        var steps = new HashMap<String,String>();
+        if (!isPagedPlan(plan)) {
+            for (var item : list(reg.get("steps"))) {
+                var step = obj(item);
+                steps.put(text(step, "key"), text(step, "discoveryEvent"));
+            }
+            return steps;
+        }
+        long[] count = { 0L };
+        visitObjectPages(side, reg.get("stepPages"), "spring.plan-reg-step-page", "steps", item -> {
+            var step = obj(item);
+            steps.put(text(step, "key"), text(step, "discoveryEvent"));
+            count[0]++;
+        });
+        if (count[0] != number(reg.get("stepsCount"))) throw EvolutionInput.corrupt();
+        return steps;
     }
 
     static String planIdentity(Map<String,Object> plan) {
+        if (isPagedPlan(plan)) return text(plan, "planIdentity");
         return CanonicalJson.sha256(List.of(plan.get("inputIdentity"),obj(plan.get("inventory")).get("identity"),
                 CanonicalJson.sha256(plan.get("conditions")),bindingIdentity(plan),plan.get("gaps"),plan.get("methodSelections"))).value();
     }
 
     static ContentDigest bindingIdentity(Map<String,Object> plan) {
+        if (isPagedPlan(plan)) return new ContentDigest(text(obj(plan.get("binding")), "identity"));
         var binding=new TreeMap<>(obj(plan.get("binding")));
         binding.put("schema","spring-injection-binding-plan-v2");
         binding.put("registrationPlan",registrationIdentity(plan));
@@ -201,6 +309,7 @@ final class SpringOperands {
     }
 
     static String registrationIdentity(Map<String,Object> plan) {
+        if (isPagedPlan(plan)) return text(registration(plan), "identity");
         var registration=new TreeMap<>(registration(plan));
         var discovery=discovery(plan);
         var inputs=obj(discovery.get("inputs"));

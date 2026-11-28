@@ -112,13 +112,19 @@ final class EvolutionInput {
             }
             case "build.model" -> {
                 var counts=new int[2];
+                var seenFields=new HashSet<String>();
                 GraphJson.streamObject(new StringReader(evidence.canonicalJson()),
                         new GraphJson.StreamLimits(Math.max(1,evidence.canonicalJson().length()),128,Long.MAX_VALUE),
                         (field,member)->{
                             if(field.equals("issues")||field.equals("gaps")){
-                                counts[0]++;member.array(ignored->{EvolutionSnapshot.check(run.cancelled);counts[1]=1;});
+                                seenFields.add(field);
+                                member.array(ignored->{EvolutionSnapshot.check(run.cancelled);counts[1]=1;});
+                            } else if (field.equals("issuesCount") || field.equals("gapsCount")) {
+                                seenFields.add(field.equals("issuesCount") ? "issues" : "gaps");
+                                if (number(member.read()) > 0L) counts[1] = 1;
                             } else member.skip();
                         });
+                counts[0] = seenFields.size();
                 foundBuildModel=true;openBuildModel|=counts[0]!=2||counts[1]!=0;
             }
             case "ingestion.unit" -> {
@@ -159,6 +165,8 @@ final class EvolutionInput {
     private void frontendIndex(GraphEvidence evidence)throws IOException {
         // Index arrays may be much larger than a page; stream their members to the request's scratch space.
         var meta=new TreeMap<String,Object>();
+        var declaredCounts=new HashMap<String,Long>();
+        var observedCounts=new HashMap<String,Long>();
         String prefix=name+"|"+evidence.identity().value()+"|";
         long[] documents={0};boolean[] processed={true};
         GraphJson.streamObject(new StringReader(evidence.canonicalJson()),
@@ -166,15 +174,43 @@ final class EvolutionInput {
                 (field,member)->{
                     switch(field) {
                         case "analysis","frontend","state","coverage","indexSchema" -> meta.put(field,member.read());
+                        case "sourcesCount","typeDeclarationsCount","memberDeclarationsCount",
+                                "typesCount","declarationsCount","occurrencesCount","observationsCount",
+                                "derivedRelationshipsCount" -> declaredCounts.put(field, number(member.read()));
                         case "sources" -> member.array(raw->{
                             var source=obj(raw);String id=text(source,"document");
                             unique(run.index,"processed",prefix+id,source);
                             documents[0]++;processed[0]&="PROCESSED".equals(text(source,"state"));
                         });
+                        case "sourcePages" -> {
+                            long[] seen = { 0L };
+                            SpringOperands.visitObjectPages(this, member.read(),
+                                    "frontend.result-source-page", "sources", raw -> {
+                                var source = obj(raw);
+                                String id = text(source, "document");
+                                unique(run.index, "processed", prefix + id, source);
+                                documents[0]++;
+                                processed[0] &= "PROCESSED".equals(text(source, "state"));
+                                seen[0]++;
+                            });
+                            observedCounts.put("sourcesCount", seen[0]);
+                        }
                         case "typeDeclarations","memberDeclarations" -> member.array(raw->{
                             String id=GraphJson.string(raw);
                             unique(run.index,"context-shapes",prefix+id,row("evidence",id));
                         });
+                        case "typeDeclarationPages","memberDeclarationPages" -> {
+                            String leaf = field.equals("typeDeclarationPages")
+                                    ? "frontend.result-type-decl-page" : "frontend.result-member-decl-page";
+                            String countKey = field.equals("typeDeclarationPages")
+                                    ? "typeDeclarationsCount" : "memberDeclarationsCount";
+                            long[] seen = { 0L };
+                            SpringOperands.visitStringPages(this, member.read(), leaf, id -> {
+                                unique(run.index, "context-shapes", prefix + id, row("evidence", id));
+                                seen[0]++;
+                            });
+                            observedCounts.put(countKey, seen[0]);
+                        }
                         case "types","declarations","occurrences","observations","derivedRelationships" -> {
                             if (field.equals("types") && !run.request.selection().spring()) member.skip();
                             else member.array(raw->{
@@ -182,10 +218,43 @@ final class EvolutionInput {
                                 run.index.put("frontend-members",prefix+field+"|"+id,row("present",true));
                             });
                         }
+                        case "typePages","declarationPages","occurrencePages","observationPages","derivedRelationshipPages" -> {
+                            if (field.equals("typePages") && !run.request.selection().spring()) {
+                                member.skip();
+                            } else {
+                                String memberField = switch (field) {
+                                    case "typePages" -> "types";
+                                    case "declarationPages" -> "declarations";
+                                    case "occurrencePages" -> "occurrences";
+                                    case "observationPages" -> "observations";
+                                    default -> "derivedRelationships";
+                                };
+                                String leaf = switch (field) {
+                                    case "typePages" -> "frontend.result-type-page";
+                                    case "declarationPages" -> "frontend.result-declaration-page";
+                                    case "occurrencePages" -> "frontend.result-occurrence-page";
+                                    case "observationPages" -> "frontend.result-observation-page";
+                                    default -> "frontend.result-derived-page";
+                                };
+                                long[] seen = { 0L };
+                                SpringOperands.visitStringPages(this, member.read(), leaf, id -> {
+                                    run.index.put("frontend-members", prefix + memberField + "|" + id, row("present", true));
+                                    seen[0]++;
+                                });
+                                observedCounts.put(memberField + "Count", seen[0]);
+                            }
+                        }
                         case "annotations","diagnostics","constructorCandidates","httpClientCalls" -> member.skip();
                         default -> member.skip();
                     }
                 });
+        if ("frontend.result-index:m8.4-paged-v3".equals(meta.get("indexSchema"))) {
+            for (var entry : observedCounts.entrySet()) {
+                Long declared = declaredCounts.get(entry.getKey());
+                if (declared == null || !declared.equals(entry.getValue())) throw corrupt();
+            }
+            if (!observedCounts.containsKey("sourcesCount")) throw corrupt();
+        }
         var analysis=new AnalysisIdentity(text(meta,"analysis"));
         meta.put("evidence",evidence.identity());meta.put("sourceCount",documents[0]);meta.put("processed",processed[0]);
         var key=name+"|"+analysis.value();
@@ -367,7 +436,8 @@ final class EvolutionInput {
         var found=run.index.get("frontends",name+"|"+id).orElse(Map.of());
         var manifest=new ContentDigest(text(context,"evidence"));
         var evidenceId=maybe(found,"evidence");
-        boolean closed="frontend.result-index:m8.4-v2".equals(found.get("indexSchema"))&&"COMPLETED".equals(found.get("state"))
+        boolean closed=Set.of("frontend.result-index:m8.4-v2","frontend.result-index:m8.4-paged-v3").contains(found.get("indexSchema"))
+                &&"COMPLETED".equals(found.get("state"))
                 &&Boolean.TRUE.equals(found.get("processed"))&&context.get("sourcePlan")!=null
                 &&!FrontendRequest.SOURCE_RECOVERY.equals(context.get("resolutionMode"));
         if(closed&&!relationships.isEmpty())closed=categoryCoverage(list(found.get("coverage")),relationships);

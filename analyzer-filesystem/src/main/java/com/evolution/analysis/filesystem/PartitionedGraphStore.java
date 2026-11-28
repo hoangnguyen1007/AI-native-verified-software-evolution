@@ -675,8 +675,26 @@ public final class PartitionedGraphStore implements PartitionedGraphReader {
             Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution,
             boolean fastArchitecture, IncrementalGraphProjector projector)
             throws IOException {
+        return build(input, snapshots, cancelled, ledgers, contribution, fastArchitecture, projector,
+                (java.util.function.Function<String, ContentDigest>) null);
+    }
+
+    public Publication build(CanonicalGraphInput input, Path snapshots, BooleanSupplier cancelled,
+            Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution,
+            boolean fastArchitecture, IncrementalGraphProjector projector, ContentDigest polyglotProjectionDigest)
+            throws IOException {
+        return build(input, snapshots, cancelled, ledgers, contribution, fastArchitecture, projector,
+                polyglotProjectionDigest == null ? null : ignored -> polyglotProjectionDigest);
+    }
+
+    public Publication build(CanonicalGraphInput input, Path snapshots, BooleanSupplier cancelled,
+            Collection<com.evolution.analysis.evidence.EvidenceAcquisitionLedger> ledgers, Contribution contribution,
+            boolean fastArchitecture, IncrementalGraphProjector projector,
+            java.util.function.Function<String, ContentDigest> modulePolyglotDigest)
+            throws IOException {
         return assemble(input.repository().snapshot().identity(), snapshots, cancelled, workspace -> {
-            new CanonicalGraphBuilder().project(input, workspace, ledgers, fastArchitecture, projector);
+            new CanonicalGraphBuilder().project(input, workspace, ledgers, fastArchitecture, projector,
+                    modulePolyglotDigest);
             contribution.project(workspace);
         });
     }

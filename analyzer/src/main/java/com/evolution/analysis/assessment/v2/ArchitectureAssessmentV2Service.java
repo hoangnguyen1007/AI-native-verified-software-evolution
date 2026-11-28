@@ -1164,9 +1164,7 @@ public final class ArchitectureAssessmentV2Service {
             if (ev != null) {
                 String raw = ev.canonicalJson();
                 String sourcesSlice = extractTopLevelJsonSlice(raw, "sources");
-                if (sourcesSlice == null) {
-                    sourceIndexUnreadable = true;
-                } else {
+                if (sourcesSlice != null) {
                     try {
                         int maxChars = Math.max(2_000_000, sourcesSlice.length() + 1024);
                         int maxValues = Math.max(50_000, sourcesSlice.length() / 8 + 1024);
@@ -1186,6 +1184,21 @@ public final class ArchitectureAssessmentV2Service {
                         }
                     } catch (RuntimeException unreadable) {
                         sourceIndexUnreadable = true;
+                    }
+                } else {
+                    String sourcePagesSlice = extractTopLevelJsonSlice(raw, "sourcePages");
+                    if (sourcePagesSlice == null) {
+                        sourceIndexUnreadable = true;
+                    } else {
+                        try {
+                            long[] counts = { 0L, 0L };
+                            var pageRefs = GraphJson.array(GraphJson.read(sourcePagesSlice, READ_LIMITS));
+                            collectPagedSourceCounts(graph, pageRefs, counts, 0);
+                            totalSources = counts[0];
+                            processedSources = counts[1];
+                        } catch (RuntimeException unreadable) {
+                            sourceIndexUnreadable = true;
+                        }
                     }
                 }
             }
@@ -1578,6 +1591,30 @@ public final class ArchitectureAssessmentV2Service {
             if ("CAPABILITY_GAP".equals(n.kind()) || "PROVIDER_CONFLICT".equals(n.kind())) c++;
         }
         return c;
+    }
+
+    private static void collectPagedSourceCounts(KnowledgeGraph graph, List<Object> pageRefs, long[] counts, int depth) {
+        if (depth > 8) throw new IllegalArgumentException("Page depth limit");
+        for (Object refObj : pageRefs) {
+            var pageEv = graph.evidence(new ContentDigest(GraphJson.string(refObj)))
+                    .orElseThrow(() -> new IllegalArgumentException("Missing source page"));
+            var pageObj = GraphJson.object(GraphJson.read(pageEv.canonicalJson(), READ_LIMITS));
+            if ("frontend.result-source-page.dir".equals(pageEv.family())) {
+                collectPagedSourceCounts(graph, GraphJson.array(pageObj.get("pages")), counts, depth + 1);
+            } else if ("frontend.result-source-page".equals(pageEv.family())) {
+                for (Object s : GraphJson.array(pageObj.get("sources"))) {
+                    counts[0]++;
+                    if (s instanceof Map<?, ?> m) {
+                        Object st = m.get("state");
+                        if ("PROCESSED".equals(st) || "PARTIAL".equals(st)) {
+                            counts[1]++;
+                        }
+                    }
+                }
+            } else {
+                throw new IllegalArgumentException("Unexpected source page family: " + pageEv.family());
+            }
+        }
     }
 
     /**

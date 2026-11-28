@@ -530,15 +530,43 @@ public final class CapturedRepairVerification {
         for (var ev : graph.evidence()) {
             if (!ev.family().equals("frontend.result-index")) continue;
             try {
-                var row = GraphJson.object(GraphJson.read(ev.canonicalJson(), GraphJson.Limits.defaults()));
+                var limits = new GraphJson.Limits(
+                        Math.max(GraphJson.Limits.defaults().maxCharacters(), ev.canonicalJson().length() + 1024),
+                        128, Integer.MAX_VALUE - 8);
+                var row = GraphJson.object(GraphJson.read(ev.canonicalJson(), limits));
                 if (!context.equals(row.get("analysis"))) continue;
                 found = true;
-                for (var s : GraphJson.array(row.get("sources"))) {
-                    if (!"PROCESSED".equals(GraphJson.object(s).get("state"))) return false;
+                if (row.containsKey("sources")) {
+                    for (var s : GraphJson.array(row.get("sources"))) {
+                        if (!"PROCESSED".equals(GraphJson.object(s).get("state"))) return false;
+                    }
+                } else if (row.containsKey("sourcePages")) {
+                    if (!allPagedSourcesProcessed(graph, GraphJson.array(row.get("sourcePages")), 0)) return false;
+                } else {
+                    return false;
                 }
             } catch (RuntimeException invalid) { return false; }
         }
         return found;
+    }
+
+    private static boolean allPagedSourcesProcessed(KnowledgeGraph graph, List<Object> pageRefs, int depth) {
+        if (depth > 8) return false;
+        for (var refObj : pageRefs) {
+            var pageEv = graph.evidence(new ContentDigest(GraphJson.string(refObj))).orElse(null);
+            if (pageEv == null) return false;
+            var pageObj = GraphJson.object(GraphJson.read(pageEv.canonicalJson(), GraphJson.Limits.defaults()));
+            if ("frontend.result-source-page.dir".equals(pageEv.family())) {
+                if (!allPagedSourcesProcessed(graph, GraphJson.array(pageObj.get("pages")), depth + 1)) return false;
+            } else if ("frontend.result-source-page".equals(pageEv.family())) {
+                for (var s : GraphJson.array(pageObj.get("sources"))) {
+                    if (!"PROCESSED".equals(GraphJson.object(s).get("state"))) return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean routeExistsInBytecode(KnowledgeGraph baseline, CapturedRepair.Candidate candidate,
