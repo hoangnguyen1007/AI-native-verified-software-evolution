@@ -401,6 +401,7 @@ public final class EvoApp {
         }
         command.addSubcommand("score", new ScoreCommand(r, false));
         command.addSubcommand("arch-score", new ScoreCommand(r, true));
+        command.addSubcommand("ask", new Ask(r));
         command.addSubcommand("open", new Open(r));
         command.addSubcommand("use", new Use(r));
         command.addSubcommand("export", new Export(r));
@@ -1730,7 +1731,35 @@ public final class EvoApp {
         }
     }
 
-    @Command(name = "scan", mixinStandardHelpOptions = true, description = "Source, remote Git/GitHub, or authenticated captured-context repository analysis")
+    record ParsedScanMode(
+            com.evolution.backend.analysis.AnalysisMode analysisMode,
+            boolean syntaxFast,
+            String cliModeLabel) {}
+
+    static ParsedScanMode parseScanMode(String rawMode, boolean fastFlag, boolean explicitModeOption) {
+        String norm = rawMode == null ? "full" : rawMode.trim().toLowerCase(Locale.ROOT).replace('_', '-');
+        boolean syntaxFast = "syntax-fast".equals(norm) || "syntaxfast".equals(norm);
+        com.evolution.backend.analysis.AnalysisMode analysisMode;
+        if (syntaxFast) {
+            analysisMode = com.evolution.backend.analysis.AnalysisMode.FAST_ARCHITECTURE;
+        } else {
+            try {
+                analysisMode = com.evolution.backend.analysis.AnalysisMode.parse(rawMode);
+            } catch (IllegalArgumentException invalid) {
+                throw new InputFailure("INVALID_ANALYSIS_MODE");
+            }
+        }
+        if (fastFlag && explicitModeOption && !analysisMode.isFastArchitecture()) {
+            throw new InputFailure("ANALYSIS_MODE_CONFLICT");
+        }
+        if (fastFlag && !syntaxFast) {
+            analysisMode = com.evolution.backend.analysis.AnalysisMode.FAST_ARCHITECTURE;
+        }
+        String label = syntaxFast ? "syntax-fast" : (analysisMode.isFastArchitecture() ? "fast" : "full");
+        return new ParsedScanMode(analysisMode, syntaxFast, label);
+    }
+
+    @Command(name = "scan", aliases = { "analyze" }, mixinStandardHelpOptions = true, description = "Source, remote Git/GitHub, or authenticated captured-context repository analysis")
     private final class Scan implements Callable<Integer> {
         final Root r;
 
@@ -1780,7 +1809,7 @@ public final class EvoApp {
         String buildMode;
         @Option(names = "--build-profile", defaultValue = "default", paramLabel = "NAME", description = "Operator-registered Hyper-V build profile")
         String buildProfile;
-        @Option(names = "--mode", defaultValue = "full", paramLabel = "full|fast", description = "Analysis profile: full deep evidence or fast architecture / Chế độ phân tích")
+        @Option(names = "--mode", defaultValue = "full", paramLabel = "full|fast|syntax-fast", description = "Analysis profile: full deep evidence, fast architecture, or syntax-fast / Chế độ phân tích")
         String mode = "full";
         @Option(names = "--fast", description = "Fast architecture profile (shorthand for --mode fast) / Chế độ kiến trúc nhanh")
         boolean fastFlag;
@@ -1812,17 +1841,10 @@ public final class EvoApp {
                 resolvedProfile = com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.DFD_EXPORT;
             else
                 throw new InputFailure("INVALID_PROJECTION_PROFILE");
-            com.evolution.backend.analysis.AnalysisMode analysisMode;
-            try {
-                analysisMode = com.evolution.backend.analysis.AnalysisMode.parse(mode);
-            } catch (IllegalArgumentException invalid) {
-                throw new InputFailure("INVALID_ANALYSIS_MODE");
-            }
-            if (fastFlag && matched(r, "--mode") && !analysisMode.isFastArchitecture())
-                throw new InputFailure("ANALYSIS_MODE_CONFLICT");
-            if (fastFlag)
-                analysisMode = com.evolution.backend.analysis.AnalysisMode.FAST_ARCHITECTURE;
+            ParsedScanMode parsedMode = parseScanMode(mode, fastFlag, matched(r, "--mode"));
+            com.evolution.backend.analysis.AnalysisMode analysisMode = parsedMode.analysisMode();
             boolean fast = analysisMode.isFastArchitecture();
+            boolean syntaxFast = parsedMode.syntaxFast();
             if (offline && !artifactRepositories.isEmpty())
                 throw new InputFailure("OFFLINE_REPOSITORY_CONFLICT");
             if (prepareDependencies && (javaCapture != null || semanticStore != null || buildMode.equals("required")))
@@ -1969,7 +1991,7 @@ public final class EvoApp {
                                     : com.evolution.backend.analysis.GradleScan.discoverAndroidSdk();
                             ContentDigest currentFp = scanFastPathFingerprint(repo, sourcePath, currentSnapshotId,
                                     manifestObj.inventory(), revision, dirty, includeTests, allFiles, excluded,
-                                    analysisMode, fast, springSat, release, offline, buildMode, buildProfile, fpJdk,
+                                    analysisMode, fast, syntaxFast, springSat, release, offline, buildMode, buildProfile, fpJdk,
                                     fpCache, fpAndroid, repositories, semanticStore, semanticPlan, semanticPolicy,
                                     semanticAuthority, resolvedProfile);
                             Path fpFile = r.storage().root.resolve("last-scan-fastpath.json");
@@ -2219,10 +2241,12 @@ public final class EvoApp {
                 var polyglotFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                     try (var attached = artifactSession.attach();
                             var roIntake = new RepositoryIntake(r.storage().root.resolve("acquisition"), true)) {
+                        // WP3.1 hook: pass `effectiveSyntaxFast` into PolyglotScan/StaticPolyglotScan once merged
+                        final boolean effectiveSyntaxFast = syntaxFast;
                         return new PolyglotScan().run(intakeRevision, roIntake, readiness, polyglotContext,
                                 finalLanguageEvidence, r.storage().root.resolve("semantic-work"), polyglotCancel,
-                                verifiedPolyglotBytes::get, fast,
-                                fast ? roIntake.installedNodeDependencies(intakeRevision) : path -> false,
+                                verifiedPolyglotBytes::get, fast || effectiveSyntaxFast,
+                                (fast || effectiveSyntaxFast) ? roIntake.installedNodeDependencies(intakeRevision) : path -> false,
                                 incrementalDisabled ? Optional.empty()
                                         : Optional.of(r.storage().root.resolve("incremental-cache")));
                     } catch (Exception failure) {
@@ -2300,7 +2324,11 @@ public final class EvoApp {
                         com.evolution.analysis.spring.truth.TruthRegionEvaluation.Limits.conservative())
                         .withReadiness(readiness.identity())
                         .withPrecomputedBuild(mavenInputs.externalPoms().isEmpty() ? gradleModel.orElse(null) : null);
-                if (fast)
+                if (syntaxFast)
+                    policy = policy.withAnalysisOptions(Map.of(
+                            "analysis.profile", "SYNTAX_FAST",
+                            "polyglot.syntaxFast", "true"));
+                else if (fast)
                     policy = policy.withAnalysisOptions(Map.of("analysis.profile", "FAST_ARCHITECTURE"));
                 if (springSat)
                     policy = policy
@@ -2350,8 +2378,12 @@ public final class EvoApp {
                     data.put("status", detailed.report().status());
                     data.put("reportIdentity", detailed.report().identity());
                     data.put("gaps", detailed.report().gaps());
-                    if (fast)
+                    if (syntaxFast) {
+                        data.put("analysisMode", "SYNTAX_FAST");
+                        data.put("syntaxFast", true);
+                    } else if (fast) {
                         data.put("analysisMode", "FAST_ARCHITECTURE");
+                    }
                     if (springSat)
                         data.put("springSatMode", "AUTO_MULTI_CONFIG_SAT");
                     if (resolvedProfile != com.evolution.analysis.polyglot.ServiceArchitectureProjection.ProjectionProfile.STRICT)
@@ -2581,7 +2613,7 @@ public final class EvoApp {
                                     fullInventory);
                             ContentDigest fp = scanFastPathFingerprint(repo, sourcePath, fullSnapId.value(),
                                     fullInventory, revision, dirty, includeTests, allFiles, excluded, analysisMode,
-                                    fast, springSat, release, offline, buildMode, buildProfile, safeJdk, cachePath,
+                                    fast, syntaxFast, springSat, release, offline, buildMode, buildProfile, safeJdk, cachePath,
                                     resolvedAndroidSdk, repositories, semanticStore, semanticPlan, semanticPolicy,
                                     semanticAuthority, resolvedProfile);
                             var cachePayload = new TreeMap<String, Object>();
@@ -2648,6 +2680,196 @@ public final class EvoApp {
             data.put("next",
                     "scan with --offline and the same --maven-cache; passive recovery retains effective Gradle context obligations");
             return emit(r, "scan", envelope(data), prepared ? 0 : 3);
+        }
+    }
+
+    @Command(name = "ask", mixinStandardHelpOptions = true, description = "Read-only BENCHMARK_QA architecture Q&A with verified [E#] citations and PreEditConfigGate (single question or JSONL --batch)")
+    private final class Ask implements Callable<Integer> {
+        final Root r;
+
+        Ask(Root r) {
+            this.r = r;
+        }
+
+        @Option(names = "--store", paramLabel = "DIR", description = "Graph store directory for digest-addressed --graph sha256:... lookups")
+        Path storeDir;
+        @Option(names = "--batch", paramLabel = "JSONL", description = "Input JSONL file of questions ({id, question, context?, focus?, citedPaths?})")
+        Path batchFile;
+        @Option(names = "--out", paramLabel = "JSONL", description = "Output JSONL path for deterministic verified answers")
+        Path outFile;
+        @Option(names = "--mode", defaultValue = "BENCHMARK_QA", paramLabel = "BENCHMARK_QA|EXPLORE|REPAIR", description = "QA execution profile (default BENCHMARK_QA)")
+        String qaMode = ArchitectureAgent.MODE_BENCHMARK_QA;
+        @Option(names = "--no-source", description = "Disable redacted captured-source span reads")
+        boolean noSource;
+        @Option(names = "--single-query-per-round", defaultValue = "true", negatable = true, description = "Enforce single focused query per round discipline")
+        boolean singleQueryPerRound = true;
+        @Option(names = "--max-rounds", defaultValue = "6", paramLabel = "1..18", description = "Maximum focused query rounds per question")
+        int maxRounds = 6;
+        @Option(names = "--llm-endpoint", paramLabel = "URI", description = "Optional OpenAI-compatible chat endpoint for LLM-backed BENCHMARK_QA")
+        String llmEndpoint;
+        @Option(names = "--llm-model", paramLabel = "NAME", description = "Optional model identifier when --llm-endpoint is specified")
+        String llmModel;
+        @Option(names = "--allow-remote", description = "Allow non-loopback --llm-endpoint")
+        boolean allowRemote;
+        @Parameters(arity = "0..1", paramLabel = "QUESTION", description = "Single architecture question (when --batch is omitted)")
+        String question;
+
+        @Override
+        public Integer call() throws Exception {
+            r.validate();
+            if (maxRounds < 1 || maxRounds > 18) {
+                throw new InputFailure("INVALID_MAX_ROUNDS");
+            }
+            boolean hasBatch = batchFile != null;
+            boolean hasQuestion = question != null && !question.isBlank();
+            if (hasBatch == hasQuestion) {
+                throw new InputFailure("ASK_INPUT_REQUIRED");
+            }
+            String normalizedMode = qaMode == null ? ArchitectureAgent.MODE_BENCHMARK_QA
+                    : qaMode.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+            if (!Set.of("BENCHMARK_QA", "EXPLORE", "REPAIR").contains(normalizedMode)) {
+                throw new InputFailure("INVALID_QA_MODE");
+            }
+
+            var graph = loadForScore(r, storeDir);
+            String defaultContext = r.context != null
+                    ? findContext(graph, r.context)
+                    : autoContext(graph).orElse(graph.snapshot().value());
+            var queries = new ArchitectureMetricsService(graph).queries();
+            var reports = new PublishedReports();
+
+            Optional<ArchitectureChatModel> modelOpt = Optional.empty();
+            if (llmEndpoint != null && !llmEndpoint.isBlank()) {
+                String modelName = (llmModel == null || llmModel.isBlank()) ? "evo-benchmark-qa" : llmModel.strip();
+                String apiKey = environment.getOrDefault("EVO_LLM_API_KEY", "");
+                var adapter = com.evolution.backend.query.llm.LlmConfigRegistry.createAdapter(
+                        com.evolution.backend.query.llm.LlmProviderAdapter.ProviderKind.infer(java.net.URI.create(llmEndpoint.strip())),
+                        java.net.URI.create(llmEndpoint.strip()),
+                        modelName,
+                        apiKey.isBlank() ? null : apiKey,
+                        allowRemote,
+                        131_072,
+                        4_096,
+                        "max_tokens",
+                        false,
+                        java.time.Duration.ofSeconds(120));
+                modelOpt = Optional.of(ArchitectureChatModel.fromAdapter(adapter));
+            }
+
+            if (hasBatch) {
+                Path inPath = Workspace.safe(resolve(batchFile));
+                String rawJsonl = Workspace.utf8(Workspace.read(inPath, 32_000_000));
+                var answerLines = new ArrayList<String>();
+                int configOnlyCount = 0;
+                int verifiedCitations = 0;
+                int unverifiedCitations = 0;
+                int lineNumber = 0;
+
+                for (String rawLine : rawJsonl.split("\\R")) {
+                    lineNumber++;
+                    String trimmed = rawLine.strip();
+                    if (trimmed.isEmpty()) continue;
+                    var item = GraphJson.object(GraphJson.read(trimmed, new GraphJson.Limits(1_048_576, 32, 16_384)));
+                    String qId = firstTextField(item, "id", "question_id");
+                    if (qId.isBlank()) qId = "q-" + lineNumber;
+                    String qText = firstTextField(item, "question", "prompt", "query");
+                    if (qText.isBlank()) {
+                        throw new InputFailure("INVALID_BATCH_QUESTION");
+                    }
+                    String qCtx = item.get("context") instanceof String cs && !cs.isBlank()
+                            ? findContext(graph, cs.strip())
+                            : defaultContext;
+                    Optional<String> qFocus = item.get("focus") instanceof String fs && !fs.isBlank()
+                            ? Optional.of(fs.strip())
+                            : Optional.empty();
+                    var qCited = new ArrayList<String>();
+                    if (item.get("citedPaths") instanceof List<?> cl) {
+                        for (Object o : cl) {
+                            if (o instanceof String s && !s.isBlank()) qCited.add(s.strip());
+                        }
+                    }
+                    var qaReq = new ArchitectureAgent.BenchmarkQaRequest(
+                            qCtx, qText, qFocus, qCited, !noSource, singleQueryPerRound, maxRounds);
+                    var outcome = ArchitectureAgent.runBenchmarkQa(
+                            graph, queries, reports, modelOpt, qaReq,
+                            () -> Thread.currentThread().isInterrupted() ? StopReason.CANCELLED : StopReason.NONE);
+
+                    if ("CONFIG_ONLY_RESOLUTION".equals(outcome.status())) configOnlyCount++;
+                    if (outcome.citationVerification() != null) {
+                        verifiedCitations += outcome.citationVerification().verifiedCount();
+                        unverifiedCitations += outcome.citationVerification().unverifiedCount();
+                    }
+
+                    var row = new LinkedHashMap<String, Object>();
+                    row.put("schema", "evo.ask-answer:v1");
+                    row.put("id", qId);
+                    row.putAll(outcome.toView());
+                    answerLines.add(CanonicalJson.write(row));
+                }
+
+                String jsonlBody = answerLines.isEmpty() ? "" : (String.join("\n", answerLines) + "\n");
+                if (outFile != null) {
+                    Path target = resolve(outFile);
+                    writeAtomicUtf8(target, jsonlBody);
+                    var summary = new LinkedHashMap<String, Object>();
+                    summary.put("schema", "evo.ask-batch-summary:v1");
+                    summary.put("graph", graph.identity().value());
+                    summary.put("context", defaultContext);
+                    summary.put("mode", normalizedMode);
+                    summary.put("out", target.toString());
+                    summary.put("totalQuestions", answerLines.size());
+                    summary.put("configOnlyResolutionCount", configOnlyCount);
+                    summary.put("verifiedCitationCount", verifiedCitations);
+                    summary.put("unverifiedCitationCount", unverifiedCitations);
+                    summary.put("allCitationsVerified", unverifiedCitations == 0 && verifiedCitations > 0);
+                    summary.put("hostTargetExecution", false);
+                    if (r.json) {
+                        return emit(r, "ask", envelope(summary), 0);
+                    }
+                    out.println("evo ask batch complete: " + answerLines.size() + " question(s) -> " + target
+                            + " | configOnly=" + configOnlyCount
+                            + " | verifiedCitations=" + verifiedCitations
+                            + " | unverifiedCitations=" + unverifiedCitations);
+                    out.flush();
+                    return 0;
+                }
+                for (String line : answerLines) {
+                    out.println(line);
+                }
+                out.flush();
+                return 0;
+            }
+
+            var qaReq = new ArchitectureAgent.BenchmarkQaRequest(
+                    defaultContext, question.strip(), Optional.empty(), List.of(), !noSource, singleQueryPerRound, maxRounds);
+            var outcome = ArchitectureAgent.runBenchmarkQa(
+                    graph, queries, reports, modelOpt, qaReq,
+                    () -> Thread.currentThread().isInterrupted() ? StopReason.CANCELLED : StopReason.NONE);
+            var row = new LinkedHashMap<String, Object>();
+            row.put("schema", "evo.ask-answer:v1");
+            row.put("id", "q-1");
+            row.putAll(outcome.toView());
+            if (outFile != null) {
+                writeAtomicUtf8(resolve(outFile), CanonicalJson.write(row) + "\n");
+            }
+            if (r.json) {
+                return emit(r, "ask", envelope(row), 0);
+            }
+            out.println("[" + outcome.status() + "] " + outcome.answer());
+            if (outcome.citationVerification() != null) {
+                out.println("Citations verified: " + outcome.citationVerification().verifiedCount() + "/"
+                        + outcome.citationVerification().totalCitationsChecked()
+                        + " | PreEditConfigGate: " + outcome.preEditConfigGate().decision().name());
+            }
+            out.flush();
+            return 0;
+        }
+
+        private static String firstTextField(Map<String, Object> obj, String... keys) {
+            for (String k : keys) {
+                if (obj.get(k) instanceof String s && !s.isBlank()) return s.strip();
+            }
+            return "";
         }
     }
 
@@ -3269,7 +3491,7 @@ public final class EvoApp {
     private ContentDigest scanFastPathFingerprint(RepositoryIdentity repo, Path sourcePath, String snapshotId,
             ContentDigest inventoryDigest,
             String revision, boolean dirty, boolean includeTests, boolean allFiles, Set<String> excluded,
-            com.evolution.backend.analysis.AnalysisMode analysisMode, boolean fast, boolean springSat, int release,
+            com.evolution.backend.analysis.AnalysisMode analysisMode, boolean fast, boolean syntaxFast, boolean springSat, int release,
             boolean offline,
             String buildMode, String buildProfile, Path jdkPath, Path mavenCachePath, Optional<Path> androidSdkPath,
             List<java.net.URI> repositories, Path semanticStore, String semanticPlan, String semanticPolicy,
@@ -3288,8 +3510,9 @@ public final class EvoApp {
         fp.put("includeTests", includeTests);
         fp.put("allFiles", allFiles);
         fp.put("excluded", List.copyOf(excluded));
-        fp.put("analysisMode", analysisMode.name());
+        fp.put("analysisMode", syntaxFast ? "SYNTAX_FAST" : analysisMode.name());
         fp.put("fast", fast);
+        fp.put("syntaxFast", syntaxFast);
         fp.put("springSat", springSat);
         fp.put("projectionProfile", projectionProfile.name());
         fp.put("release", release);

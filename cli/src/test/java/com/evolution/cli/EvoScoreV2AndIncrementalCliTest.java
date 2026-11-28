@@ -415,6 +415,144 @@ class EvoScoreV2AndIncrementalCliTest {
         assertEquals(data1.get("identity"), second.data().get("identity"));
     }
 
+    @Test void askBatchJsonlEmitsVerifiedCitationsAndConfigOnlyResolutionWithoutHostExecution(@TempDir Path temp) throws Exception {
+        var repo = RepositoryIdentity.fromCanonicalCoordinate("https://example.test/cli-ask.git");
+        var snap = SnapshotIdentity.from(repo, ContentDigest.sha256Utf8("cli-ask-snap"));
+        var analysis = AnalysisIdentity.fromCanonicalManifestInputs("cli-ask-mod");
+        String ctx = analysis.value();
+        var mod = ModuleIdentity.from(repo, ".");
+
+        String appYml = "app:\n  cache:\n    enabled: false\n";
+        String svcJava = "package com.acme.orders;\npublic class OrderService {\n    public void submit() {}\n}\n";
+        byte[] ymlBytes = appYml.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] javaBytes = svcJava.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        var snapEv = GraphEvidence.capture("repository.snapshot", Map.of("snapshot", snap));
+        var manEv = GraphEvidence.capture("analysis.manifest", Map.of("modules", List.of(Map.of("identity", mod, "path", "."))));
+        var modEv = GraphEvidence.capture("module.descriptor", Map.of("identity", mod, "path", "."));
+        var ymlEv = GraphEvidence.capture("source.bytes", Map.of(
+                "document", Map.of("path", "src/main/resources/application.yml", "contentDigest", ContentDigest.sha256(ymlBytes).value()),
+                "size", ymlBytes.length,
+                "bytesBase64", Base64.getEncoder().encodeToString(ymlBytes)));
+        var javaEv = GraphEvidence.capture("source.bytes", Map.of(
+                "document", Map.of("path", "src/main/java/com/acme/orders/OrderService.java", "contentDigest", ContentDigest.sha256(javaBytes).value()),
+                "size", javaBytes.length,
+                "bytesBase64", Base64.getEncoder().encodeToString(javaBytes)));
+        String ymlDocId = KnowledgeGraph.derivedIdentity("source-doc", List.of("src/main/resources/application.yml"));
+        String javaDocId = KnowledgeGraph.derivedIdentity("source-doc", List.of("src/main/java/com/acme/orders/OrderService.java"));
+
+        var orderEnt = Entity.create(EntityOrigin.PROJECT, EntityScope.project(mod), EntityKind.TYPE,
+                JavaSymbolName.topLevelType("com.acme.orders", "OrderService").canonicalName(), Optional.empty());
+        var orderDecl = GraphEvidence.capture("java.declaration", Map.of(
+                "entity", Map.of(
+                        "identity", orderEnt.identity().value(),
+                        "origin", "PROJECT",
+                        "kind", "TYPE",
+                        "canonicalName", orderEnt.canonicalName(),
+                        "qualifiedName", "com.acme.orders.OrderService",
+                        "declaration", Map.of("document", javaDocId, "startLine", 2, "endLine", 4)),
+                "spelling", "OrderService",
+                "status", "RESOLVED"));
+
+        var graph = new KnowledgeGraph(snap, List.of(
+                new KnowledgeGraph.Context(snap.value(), snap, Optional.empty(), snapEv.identity()),
+                new KnowledgeGraph.Context(ctx, snap, Optional.of(analysis), manEv.identity())),
+                List.of(
+                        new KnowledgeGraph.Node(mod.value(), ctx, "MODULE", List.of(modEv.identity())),
+                        new KnowledgeGraph.Node(ymlDocId, snap.value(), "SOURCE_DOCUMENT", List.of(ymlEv.identity())),
+                        new KnowledgeGraph.Node(javaDocId, snap.value(), "SOURCE_DOCUMENT", List.of(javaEv.identity())),
+                        new KnowledgeGraph.Node(orderEnt.identity().value(), ctx, "TYPE", List.of(orderDecl.identity()))),
+                List.of(),
+                List.of(snapEv, manEv, modEv, ymlEv, javaEv, orderDecl));
+
+        var storeDir = Files.createDirectory(temp.resolve("ask-store"));
+        new FileGraphStore(storeDir, 16_000_000L, new GraphJson.StreamLimits(16_000_000L, 128, 16_000_000L)).save(graph);
+
+        Path questionsFile = temp.resolve("questions.jsonl");
+        Files.writeString(questionsFile, String.join("\n",
+                "{\"id\":\"q-config\",\"question\":\"Enable app.cache.enabled without changing code\"}",
+                "{\"id\":\"q-symbol\",\"question\":\"Where is `OrderService` declared?\"}") + "\n");
+        Path outFile1 = temp.resolve("answers-1.jsonl");
+        Path outFile2 = temp.resolve("answers-2.jsonl");
+
+        var first = run(temp, "ask", "--store", storeDir.toString(), "--graph", graph.identity().value(),
+                "--batch", questionsFile.toString(), "--out", outFile1.toString(), "--json");
+        assertEquals(0, first.code(), first::err);
+        var summary = first.data();
+        assertEquals(2, ((Number) summary.get("totalQuestions")).intValue());
+        assertEquals(1, ((Number) summary.get("configOnlyResolutionCount")).intValue());
+        assertEquals(Boolean.TRUE, summary.get("allCitationsVerified"));
+        assertEquals(Boolean.FALSE, summary.get("hostTargetExecution"));
+
+        var lines = Files.readAllLines(outFile1);
+        assertEquals(2, lines.size());
+        var row0 = GraphJson.object(GraphJson.read(lines.get(0), GraphJson.Limits.defaults()));
+        var row1 = GraphJson.object(GraphJson.read(lines.get(1), GraphJson.Limits.defaults()));
+        assertEquals("q-config", row0.get("id"));
+        assertEquals("CONFIG_ONLY_RESOLUTION", row0.get("status"));
+        assertEquals(Boolean.TRUE, GraphJson.object(row0.get("citationVerification")).get("allVerified"));
+        assertEquals("CONFIG_ONLY_RESOLUTION", GraphJson.object(row0.get("preEditConfigGate")).get("decision"));
+        assertEquals("q-symbol", row1.get("id"));
+        assertEquals("ANSWERED", row1.get("status"));
+        assertEquals(Boolean.TRUE, GraphJson.object(row1.get("citationVerification")).get("allVerified"));
+
+        // Second identical run produces bit-for-bit identical JSONL output (I2 determinism)
+        var second = run(temp, "ask", "--store", storeDir.toString(), "--graph", graph.identity().value(),
+                "--batch", questionsFile.toString(), "--out", outFile2.toString(), "--json");
+        assertEquals(0, second.code(), second::err);
+        assertEquals(Files.readString(outFile1), Files.readString(outFile2));
+    }
+
+    @Test void scanAndAnalyzeSupportSyntaxFastModeFlagAndCacheInvalidation(@TempDir Path temp) throws Exception {
+        var parsedSyntaxFast = EvoApp.parseScanMode("syntax-fast", false, true);
+        assertTrue(parsedSyntaxFast.syntaxFast());
+        assertTrue(parsedSyntaxFast.analysisMode().isFastArchitecture());
+        assertEquals("syntax-fast", parsedSyntaxFast.cliModeLabel());
+
+        var parsedFull = EvoApp.parseScanMode("full", false, true);
+        assertFalse(parsedFull.syntaxFast());
+        assertFalse(parsedFull.analysisMode().isFastArchitecture());
+
+        Path repo = Files.createDirectory(temp.resolve("sf-repo"));
+        Path ws = Files.createDirectory(temp.resolve("sf-ws"));
+        Path cache = Files.createDirectory(temp.resolve("sf-m2"));
+        Files.writeString(repo.resolve("pom.xml"), """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>cli-sf</artifactId>
+                  <version>1.0.0</version>
+                  <properties>
+                    <maven.compiler.release>21</maven.compiler.release>
+                    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  </properties>
+                </project>
+                """);
+        Path src = Files.createDirectories(repo.resolve("src/main/java/demo"));
+        Files.writeString(src.resolve("Entry.java"), "package demo;\npublic class Entry { public int v() { return 1; } }\n");
+
+        var fastRun = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off",
+                "--mode=fast", "--json");
+        assertTrue(fastRun.code() == 0 || fastRun.code() == 3, fastRun::err);
+        assertEquals("FAST_ARCHITECTURE", fastRun.data().get("analysisMode"));
+        assertFalse(fastRun.data().containsKey("syntaxFast"));
+
+        var syntaxFastScan = run(ws, "scan", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off",
+                "--mode=syntax-fast", "--json");
+        assertTrue(syntaxFastScan.code() == 0 || syntaxFastScan.code() == 3, syntaxFastScan::err);
+        assertEquals("SYNTAX_FAST", syntaxFastScan.data().get("analysisMode"));
+        assertEquals(Boolean.TRUE, syntaxFastScan.data().get("syntaxFast"));
+
+        // `evo analyze --mode=syntax-fast` alias matches `evo scan --mode=syntax-fast`
+        var syntaxFastAnalyze = run(ws, "analyze", repo.toString(), "-w", ws.toString(),
+                "--maven-cache", cache.toString(), "--offline", "--build", "off",
+                "--mode=syntax-fast", "--json");
+        assertEquals(syntaxFastScan.code(), syntaxFastAnalyze.code(), syntaxFastAnalyze::err);
+        assertEquals(syntaxFastScan.out(), syntaxFastAnalyze.out());
+    }
+
     private static byte[] buildStarterAutoConfigBytecode() {
         var cw = new org.objectweb.asm.ClassWriter(0);
         cw.visit(org.objectweb.asm.Opcodes.V21, org.objectweb.asm.Opcodes.ACC_PUBLIC,

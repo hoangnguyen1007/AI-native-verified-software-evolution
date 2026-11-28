@@ -114,6 +114,8 @@ public final class RepairContextPlanner {
         }
     }
 
+    public static final String ADVISORY_TACIT_PREFIX = "[ADVISORY_TACIT — UNVERIFIED]";
+
     public record Plan(
             List<PlannedFile> files,
             List<String> allowedCreateDirectories,
@@ -121,21 +123,32 @@ public final class RepairContextPlanner {
             List<LinkedDocSection> linkedDocs,
             List<AdvisoryContextBadge> advisoryBadges,
             List<LeidenContextBadge> leidenBadges,
-            CompressedContext compressedContext) {
+            CompressedContext compressedContext,
+            PreEditConfigGate.GateResult preEditConfigGate,
+            List<String> advisoryTacitNotes) {
         public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols) {
-            this(files, allowedCreateDirectories, callerSymbols, List.of(), List.of(), List.of(), CompressedContext.EMPTY);
+            this(files, allowedCreateDirectories, callerSymbols, List.of(), List.of(), List.of(),
+                    CompressedContext.EMPTY, PreEditConfigGate.GateResult.ALLOW, List.of());
         }
 
         public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols,
                     List<LinkedDocSection> linkedDocs) {
-            this(files, allowedCreateDirectories, callerSymbols, linkedDocs, List.of(), List.of(), CompressedContext.EMPTY);
+            this(files, allowedCreateDirectories, callerSymbols, linkedDocs, List.of(), List.of(),
+                    CompressedContext.EMPTY, PreEditConfigGate.GateResult.ALLOW, List.of());
         }
 
         public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols,
                     List<LinkedDocSection> linkedDocs, List<AdvisoryContextBadge> advisoryBadges,
                     List<LeidenContextBadge> leidenBadges) {
             this(files, allowedCreateDirectories, callerSymbols, linkedDocs, advisoryBadges, leidenBadges,
-                    CompressedContext.EMPTY);
+                    CompressedContext.EMPTY, PreEditConfigGate.GateResult.ALLOW, List.of());
+        }
+
+        public Plan(List<PlannedFile> files, List<String> allowedCreateDirectories, List<String> callerSymbols,
+                    List<LinkedDocSection> linkedDocs, List<AdvisoryContextBadge> advisoryBadges,
+                    List<LeidenContextBadge> leidenBadges, CompressedContext compressedContext) {
+            this(files, allowedCreateDirectories, callerSymbols, linkedDocs, advisoryBadges, leidenBadges,
+                    compressedContext, PreEditConfigGate.GateResult.ALLOW, List.of());
         }
 
         public Plan {
@@ -146,6 +159,12 @@ public final class RepairContextPlanner {
             advisoryBadges = List.copyOf(advisoryBadges == null ? List.of() : advisoryBadges);
             leidenBadges = List.copyOf(leidenBadges == null ? List.of() : leidenBadges);
             compressedContext = compressedContext == null ? CompressedContext.EMPTY : compressedContext;
+            preEditConfigGate = preEditConfigGate == null ? PreEditConfigGate.GateResult.ALLOW : preEditConfigGate;
+            advisoryTacitNotes = List.copyOf(advisoryTacitNotes == null ? List.of() : advisoryTacitNotes);
+        }
+
+        public boolean isConfigOnlyResolution() {
+            return preEditConfigGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION;
         }
     }
 
@@ -159,7 +178,38 @@ public final class RepairContextPlanner {
             List<String> bundlePath,
             String targetEntityId,
             Supplier<StopReason> stop) {
-        return plan(graph, primaryContext, secondaryContext, citedPaths, bundlePath, targetEntityId, stop, null);
+        return plan(graph, primaryContext, secondaryContext, citedPaths, bundlePath, targetEntityId, stop, null, null, List.of());
+    }
+
+    /**
+     * Convenience overload accepting optional {@code advisoryTacitNotes} (quarantined Eq. 8 tacit memory notes)
+     * so downstream integrators can wire {@code TacitMemoryStore} without changing existing call sites.
+     */
+    public static Plan plan(
+            KnowledgeGraph graph,
+            String primaryContext,
+            String secondaryContext,
+            List<String> citedPaths,
+            List<String> bundlePath,
+            String targetEntityId,
+            Supplier<StopReason> stop,
+            CapturedSearchIndex searchIndex,
+            List<String> advisoryTacitNotes) {
+        return plan(graph, primaryContext, secondaryContext, citedPaths, bundlePath, targetEntityId, stop,
+                searchIndex, null, advisoryTacitNotes);
+    }
+
+    /**
+     * Formats quarantined {@code advisoryTacitNotes} into an explicit {@value #ADVISORY_TACIT_PREFIX} block.
+     */
+    public static String formatAdvisoryTacitBlock(List<String> advisoryTacitNotes) {
+        if (advisoryTacitNotes == null || advisoryTacitNotes.isEmpty()) return "";
+        var sb = new StringBuilder(ADVISORY_TACIT_PREFIX).append('\n');
+        for (String note : advisoryTacitNotes) {
+            if (note == null || note.isBlank()) continue;
+            sb.append("- ").append(note).append('\n');
+        }
+        return sb.toString().stripTrailing();
     }
 
     /**
@@ -201,19 +251,52 @@ public final class RepairContextPlanner {
             String targetEntityId,
             Supplier<StopReason> stop,
             CapturedSearchIndex searchIndex) {
+        return plan(graph, primaryContext, secondaryContext, citedPaths, bundlePath, targetEntityId,
+                stop, searchIndex, null, List.of());
+    }
+
+    public static Plan plan(
+            KnowledgeGraph graph,
+            String primaryContext,
+            String secondaryContext,
+            List<String> citedPaths,
+            List<String> bundlePath,
+            String targetEntityId,
+            Supplier<StopReason> stop,
+            CapturedSearchIndex searchIndex,
+            String taskPrompt,
+            List<String> advisoryTacitNotes) {
+        var sanitizedTacitNotes = sanitizeTacitNotes(advisoryTacitNotes);
+        var configGate = (taskPrompt != null && !taskPrompt.isBlank())
+                ? PreEditConfigGate.evaluate(graph, primaryContext, taskPrompt, citedPaths, targetEntityId, stop)
+                : PreEditConfigGate.GateResult.ALLOW;
+
         var planned = new LinkedHashMap<String, PlannedFile>();
         var dirs = new LinkedHashSet<String>();
         var callerSymbols = new LinkedHashSet<String>();
 
-        for (String p : citedPaths) {
-            if (p != null && !p.isBlank()) {
-                String norm = CapturedFileIndex.normalizePath(p);
-                planned.putIfAbsent(norm, new PlannedFile(norm, FileRole.CITED, "Cited by finding diagnosis"));
-                addParentDir(dirs, norm);
+        if (citedPaths != null) {
+            for (String p : citedPaths) {
+                if (p != null && !p.isBlank()) {
+                    String norm = CapturedFileIndex.normalizePath(p);
+                    planned.putIfAbsent(norm, new PlannedFile(norm, FileRole.CITED, "Cited by finding diagnosis"));
+                    addParentDir(dirs, norm);
+                }
+            }
+        }
+        if (configGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION) {
+            for (var match : configGate.matches()) {
+                if (!match.filePath().isBlank()) {
+                    planned.putIfAbsent(match.filePath(), new PlannedFile(
+                            match.filePath(),
+                            FileRole.LINKED_DOC,
+                            "PreEditConfigGate CONFIG_ONLY_RESOLUTION: " + match.configKey() + " @ " + match.fileLine()));
+                }
             }
         }
         if (stop != null && stop.get() != StopReason.NONE) {
-            return new Plan(List.copyOf(planned.values()), List.copyOf(dirs), List.of());
+            return new Plan(List.copyOf(planned.values()), List.copyOf(dirs), List.of(),
+                    List.of(), List.of(), List.of(), CompressedContext.EMPTY, configGate, sanitizedTacitNotes);
         }
 
         // Build docId -> path map from snapshot
@@ -368,7 +451,23 @@ public final class RepairContextPlanner {
                 graph, primaryContext, secondaryContext, directEditPaths, directEntities, candidateSourcePaths, stop);
 
         return new Plan(List.copyOf(planned.values()), List.copyOf(dirs), List.copyOf(callerSymbols),
-                linkedDocs, advisoryBadges, leidenBadges, compressed);
+                linkedDocs, advisoryBadges, leidenBadges, compressed, configGate, sanitizedTacitNotes);
+    }
+
+    private static List<String> sanitizeTacitNotes(List<String> rawNotes) {
+        if (rawNotes == null || rawNotes.isEmpty()) return List.of();
+        var cleaned = new ArrayList<String>(rawNotes.size());
+        for (String note : rawNotes) {
+            if (note == null || note.isBlank()) continue;
+            String safe = LlmTransport.neutralizeInjectionSentinels(
+                    LlmTransport.redactSecrets(note.replace('\r', ' ').replace('\n', ' ')).text()).strip();
+            if (safe.isEmpty()) continue;
+            if (!safe.startsWith(ADVISORY_TACIT_PREFIX)) {
+                safe = ADVISORY_TACIT_PREFIX + " " + safe;
+            }
+            cleaned.add(safe);
+        }
+        return List.copyOf(cleaned);
     }
 
     // -------------------------------------------------------------------------

@@ -15,7 +15,9 @@ import com.evolution.analysis.query.ArchitectureQueryService;
 import com.evolution.analysis.query.trace.MethodSliceResult;
 import com.evolution.analysis.query.trace.VerticalTraceEngine;
 import com.evolution.backend.query.advisory.AdvisoryOverlayService;
+import com.evolution.backend.query.llm.LlmProviderAdapter;
 import com.evolution.backend.query.llm.LlmTransport;
+import com.evolution.backend.query.repair.PreEditConfigGate;
 import com.evolution.backend.query.repair.RepairContextPlanner;
 import com.evolution.backend.query.search.CapturedSearchIndex;
 import com.evolution.backend.query.trace.FullStackVerticalTraceService;
@@ -32,7 +34,9 @@ import java.util.function.Supplier;
  * Executes bounded tool calls against ArchitectureQueryService, CapturedFileIndex, RepoMapBuilder, and
  * PublishedReports, recording every observation as a citable evidence item (E#) with deterministic provenance.
  */
-final class ArchitectureAgent {
+public final class ArchitectureAgent {
+    public static final String GRAPH_COMPOSE_AST_SCHEMA = "evo.graph-compose-query:v1";
+    public static final String MODE_BENCHMARK_QA = "BENCHMARK_QA";
     static final int MAX_ROUNDS = 18;
     static final int MAX_TOOL_JSON_BYTES = 48_000;
     private static final int COMPACT_PROTECTED_RECENT_MESSAGES = 6;
@@ -2360,6 +2364,790 @@ final class ArchitectureAgent {
             return Collections.unmodifiableList(out);
         }
         return value;
+    }
+
+    // -------------------------------------------------------------------------
+    // BENCHMARK_QA Mode, Single-Query-Per-Round Planner & Citation Verification
+    // -------------------------------------------------------------------------
+
+    /**
+     * Single focused query step planned under CodexGraph {@code singleQueryPerRound} discipline,
+     * carrying a typed {@code GraphComposeQuery} JSON-AST ready for dispatch against the SKG.
+     */
+    public record SingleQueryStep(
+            int round,
+            String toolName,
+            Map<String, Object> arguments,
+            String queryAstKind,
+            Map<String, Object> graphComposeAst,
+            String rationale) {
+        public SingleQueryStep {
+            toolName = toolName == null ? "" : toolName;
+            arguments = arguments == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(arguments));
+            queryAstKind = queryAstKind == null ? "GRAPH_COMPOSE_QUERY" : queryAstKind;
+            graphComposeAst = graphComposeAst == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(graphComposeAst));
+            rationale = rationale == null ? "" : rationale;
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("round", round);
+            map.put("toolName", toolName);
+            map.put("arguments", arguments);
+            map.put("queryAstKind", queryAstKind);
+            map.put("graphComposeAst", graphComposeAst);
+            map.put("rationale", rationale);
+            return Collections.unmodifiableMap(map);
+        }
+    }
+
+    public record BenchmarkQaRequest(
+            String context,
+            String question,
+            Optional<String> focus,
+            List<String> citedPaths,
+            boolean includeSource,
+            boolean singleQueryPerRound,
+            int maxRounds) {
+        public BenchmarkQaRequest {
+            context = context == null ? "" : context.strip();
+            question = Objects.requireNonNull(question, "question").strip();
+            if (question.isEmpty()) {
+                throw new IllegalArgumentException("Question must not be blank");
+            }
+            focus = focus == null ? Optional.empty() : focus.map(String::strip).filter(s -> !s.isEmpty());
+            citedPaths = List.copyOf(citedPaths == null ? List.of() : citedPaths);
+            maxRounds = maxRounds <= 0 ? 6 : Math.min(MAX_ROUNDS, maxRounds);
+        }
+
+        public static BenchmarkQaRequest defaults(String context, String question) {
+            return new BenchmarkQaRequest(context, question, Optional.empty(), List.of(), true, true, 6);
+        }
+    }
+
+    public record BenchmarkQaOutcome(
+            String mode,
+            String status,
+            String graphDigest,
+            String context,
+            String question,
+            String answer,
+            List<String> citations,
+            ArchitectureChatModel.CitationVerificationReport citationVerification,
+            PreEditConfigGate.GateResult preEditConfigGate,
+            List<SingleQueryStep> singleQueryPlan,
+            List<ArchitectureChatModel.EvidenceAnchor> evidenceAnchors,
+            List<String> limitations,
+            boolean hostTargetExecution) {
+        public BenchmarkQaOutcome {
+            mode = (mode == null || mode.isBlank()) ? MODE_BENCHMARK_QA : mode;
+            status = (status == null || status.isBlank()) ? "ANSWERED" : status;
+            graphDigest = graphDigest == null ? "" : graphDigest;
+            context = context == null ? "" : context;
+            question = question == null ? "" : question;
+            answer = answer == null ? "" : answer;
+            citations = List.copyOf(citations == null ? List.of() : citations);
+            preEditConfigGate = preEditConfigGate == null ? PreEditConfigGate.GateResult.ALLOW : preEditConfigGate;
+            singleQueryPlan = List.copyOf(singleQueryPlan == null ? List.of() : singleQueryPlan);
+            evidenceAnchors = List.copyOf(evidenceAnchors == null ? List.of() : evidenceAnchors);
+            limitations = List.copyOf(limitations == null ? List.of() : limitations);
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("mode", mode);
+            map.put("status", status);
+            map.put("graph", graphDigest);
+            map.put("context", context);
+            map.put("question", question);
+            map.put("answer", answer);
+            map.put("citations", citations);
+            map.put("citationVerification", citationVerification == null ? Map.of() : citationVerification.toView());
+            map.put("preEditConfigGate", preEditConfigGate.toView());
+            map.put("singleQueryPlan", singleQueryPlan.stream().map(SingleQueryStep::toView).toList());
+            map.put("evidenceCount", evidenceAnchors.size());
+            map.put("evidenceAnchors", evidenceAnchors.stream().map(ArchitectureChatModel.EvidenceAnchor::toView).toList());
+            map.put("limitations", limitations);
+            map.put("hostTargetExecution", hostTargetExecution);
+            return Collections.unmodifiableMap(map);
+        }
+    }
+
+    /**
+     * Builds a typed {@code GraphComposeQuery}-compatible JSON-AST descriptor ({@code matchNodes},
+     * {@code matchEdges}, {@code filters}, {@code returnFields}, {@code limit}) ready to dispatch
+     * directly to {@code GraphComposeQuery.fromMap(...)} once merged with WP3.2.
+     */
+    public static Map<String, Object> buildGraphComposeAst(
+            String operation,
+            String seed,
+            List<String> edgeKinds,
+            int maxDepth,
+            int limit) {
+        String safeSeed = seed == null ? "" : seed.strip();
+        int hops = Math.max(1, Math.min(4, maxDepth));
+        int cap = Math.max(1, Math.min(50, limit));
+        var matchNodes = new ArrayList<Map<String, Object>>();
+        matchNodes.add(Map.of("alias", "n0", "kinds", List.of("TYPE", "BEAN_DEFINITION_CANDIDATE", "ENDPOINT")));
+        var matchEdges = new ArrayList<Map<String, Object>>();
+        if (edgeKinds != null && !edgeKinds.isEmpty()) {
+            matchNodes.add(Map.of("alias", "n1", "kinds", List.of("TYPE", "METHOD", "BEAN_DEFINITION_CANDIDATE")));
+            matchEdges.add(Map.of(
+                    "from", "n0",
+                    "to", "n1",
+                    "kinds", List.copyOf(edgeKinds),
+                    "minHops", 1,
+                    "maxHops", hops));
+        }
+        var filters = new ArrayList<Map<String, Object>>();
+        if (!safeSeed.isEmpty()) {
+            filters.add(Map.of("alias", "n0", "field", "fqn", "op", "CONTAINS", "value", safeSeed));
+        }
+        var ast = new LinkedHashMap<String, Object>();
+        ast.put("schema", GRAPH_COMPOSE_AST_SCHEMA);
+        ast.put("operation", operation == null ? "FIND_SYMBOLS" : operation);
+        ast.put("seed", safeSeed);
+        ast.put("matchNodes", List.copyOf(matchNodes));
+        ast.put("matchEdges", List.copyOf(matchEdges));
+        ast.put("filters", List.copyOf(filters));
+        ast.put("returnFields", List.of("id", "fqn", "kind", "trustTier", "span", "pointerRef"));
+        ast.put("limit", cap);
+        return Collections.unmodifiableMap(ast);
+    }
+
+    /**
+     * Deterministically plans exactly ONE focused query for the given round under CodexGraph
+     * {@code singleQueryPerRound} discipline.
+     */
+    public static SingleQueryStep planSingleQueryStep(
+            int round,
+            String question,
+            List<String> completedTools,
+            List<String> seedSymbols,
+            PreEditConfigGate.GateResult configGate) {
+        var done = completedTools == null ? Set.<String>of() : Set.copyOf(completedTools);
+        var seeds = seedSymbols == null ? List.<String>of() : seedSymbols;
+        String primarySeed = seeds.isEmpty() ? "" : seeds.getFirst();
+        int effectiveRound = Math.max(1, round);
+
+        if (configGate != null
+                && configGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION
+                && !configGate.matches().isEmpty()
+                && !done.contains("read_captured_source")) {
+            var m = configGate.matches().getFirst();
+            int start = Math.max(1, m.startLine() - 5);
+            int end = m.endLine() + 10;
+            var args = new LinkedHashMap<String, Object>();
+            args.put("path", m.filePath());
+            args.put("startLine", start);
+            args.put("endLine", end);
+            return new SingleQueryStep(
+                    effectiveRound,
+                    "read_captured_source",
+                    args,
+                    "INSPECT_CONFIG_SPAN",
+                    buildGraphComposeAst("INSPECT_CONFIG_SPAN", m.configKey(), List.of("spring.config-data"), 1, 10),
+                    "Verify exact configuration property span before considering any code edit.");
+        }
+
+        if (!primarySeed.isEmpty() && !done.contains("search_symbols")) {
+            var args = Map.<String, Object>of("query", primarySeed, "scope", "TYPE");
+            return new SingleQueryStep(
+                    effectiveRound,
+                    "search_symbols",
+                    args,
+                    "FIND_SYMBOLS",
+                    buildGraphComposeAst("FIND_SYMBOLS", primarySeed, List.of("graph.depends-on"), 1, 20),
+                    "Locate canonical SKG symbol identity for primary mention '" + primarySeed + "'.");
+        }
+
+        if (!primarySeed.isEmpty() && !done.contains("vertical_trace")) {
+            var args = Map.<String, Object>of("seed", primarySeed, "maxDepth", 4, "maxHops", 24, "includeAdvisory", true);
+            return new SingleQueryStep(
+                    effectiveRound,
+                    "vertical_trace",
+                    args,
+                    "GRAPH_COMPOSE_VERTICAL_TRAVERSE",
+                    buildGraphComposeAst("GRAPH_COMPOSE_VERTICAL_TRAVERSE", primarySeed,
+                            List.of("graph.depends-on", "java.calls", "spring.selected-binding"), 4, 24),
+                    "Trace cross-layer dependencies and Spring DI hops from '" + primarySeed + "'.");
+        }
+
+        if (!primarySeed.isEmpty() && !done.contains("inspect_symbol_details")) {
+            var args = Map.<String, Object>of("identity", primarySeed);
+            return new SingleQueryStep(
+                    effectiveRound,
+                    "inspect_symbol_details",
+                    args,
+                    "GRAPH_COMPOSE_EGO_EXPAND",
+                    buildGraphComposeAst("GRAPH_COMPOSE_EGO_EXPAND", primarySeed,
+                            List.of("graph.depends-on", "java.calls", "java.implements", "java.extends"), 1, 25),
+                    "Inspect k=1 ego-graph, declaring span, and gap status for '" + primarySeed + "'.");
+        }
+
+        if (!done.contains("architecture_brief")) {
+            return new SingleQueryStep(
+                    effectiveRound,
+                    "architecture_brief",
+                    Map.of(),
+                    "GRAPH_COMPOSE_SUMMARY",
+                    buildGraphComposeAst("GRAPH_COMPOSE_SUMMARY", primarySeed, List.of("graph.depends-on"), 1, 15),
+                    "Collect repository-level architectural structure and score summary.");
+        }
+
+        String searchSeed = !primarySeed.isEmpty() ? primarySeed : firstDistinctiveWord(question);
+        var args = Map.<String, Object>of("query", searchSeed, "maxMatches", 10);
+        return new SingleQueryStep(
+                effectiveRound,
+                "search_captured_source",
+                args,
+                "VERIFY_SOURCE_SPAN",
+                buildGraphComposeAst("VERIFY_SOURCE_SPAN", searchSeed, List.of(), 1, 10),
+                "Verify exact captured-source lines backing the answer.");
+    }
+
+    /**
+     * Enforces single-focused-query-per-round discipline: when enabled, keeps only the first tool call per round.
+     */
+    static List<LlmProviderAdapter.ToolCall> enforceSingleQueryPerRound(
+            List<LlmProviderAdapter.ToolCall> toolCalls,
+            boolean singleQueryPerRound) {
+        if (toolCalls == null || toolCalls.isEmpty()) return List.of();
+        if (!singleQueryPerRound || toolCalls.size() == 1) return List.copyOf(toolCalls);
+        return List.of(toolCalls.getFirst());
+    }
+
+    /**
+     * Executes offline deterministic {@code BENCHMARK_QA} over {@code graph} with zero LLM network calls
+     * and zero host target execution ({@code I1}).
+     */
+    public static BenchmarkQaOutcome runBenchmarkQa(
+            KnowledgeGraph graph,
+            BenchmarkQaRequest request,
+            Supplier<StopReason> stop) {
+        Objects.requireNonNull(graph, "graph");
+        var queries = new ArchitectureQueryService(graph, () -> stop == null ? StopReason.NONE : stop.get(), Optional.empty());
+        return runBenchmarkQa(graph, queries, new PublishedReports(), Optional.empty(), request, stop);
+    }
+
+    /**
+     * Executes {@code BENCHMARK_QA} mode with:
+     * <ol>
+     *   <li>Pre-edit Anti-Edit-Bias {@link PreEditConfigGate} evaluation,</li>
+     *   <li>{@code singleQueryPerRound} focused query execution (LLM-backed when {@code model} is present,
+     *       or deterministic offline SKG synthesis when empty),</li>
+     *   <li>Automated {@code [E#]} &amp; {@code path:line} machine verification against {@link KnowledgeGraph}.</li>
+     * </ol>
+     */
+    public static BenchmarkQaOutcome runBenchmarkQa(
+            KnowledgeGraph graph,
+            ArchitectureQueryService queries,
+            PublishedReports reports,
+            Optional<ArchitectureChatModel> model,
+            BenchmarkQaRequest request,
+            Supplier<StopReason> stop) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(queries, "queries");
+        Objects.requireNonNull(request, "request");
+        Supplier<StopReason> effectiveStop = stop == null ? () -> StopReason.NONE : stop;
+
+        String effectiveContext = resolveBenchmarkContext(graph, request.context());
+        var configGate = PreEditConfigGate.evaluate(
+                graph, effectiveContext, request.question(), request.citedPaths(),
+                request.focus().orElse(null), effectiveStop);
+
+        if (model != null && model.isPresent()) {
+            return runLlmBenchmarkQa(graph, queries, reports == null ? new PublishedReports() : reports,
+                    model.orElseThrow(), request, effectiveContext, configGate, effectiveStop);
+        }
+        return runOfflineBenchmarkQa(graph, queries, request, effectiveContext, configGate, effectiveStop);
+    }
+
+    private static BenchmarkQaOutcome runLlmBenchmarkQa(
+            KnowledgeGraph graph,
+            ArchitectureQueryService queries,
+            PublishedReports reports,
+            ArchitectureChatModel model,
+            BenchmarkQaRequest request,
+            String effectiveContext,
+            PreEditConfigGate.GateResult configGate,
+            Supplier<StopReason> stop) {
+        var partition = graph.contexts().stream()
+                .filter(c -> c.identity().equals(effectiveContext))
+                .findFirst()
+                .orElseGet(() -> graph.contexts().getFirst());
+        var chatInput = new ArchitectureChat.Input(
+                effectiveContext,
+                ArchitectureChat.Mode.EXPLORE,
+                List.of(new ArchitectureChat.Message("user", request.question())),
+                request.focus(),
+                Optional.empty(),
+                model.provider().remote(),
+                false,
+                request.includeSource(),
+                Optional.empty(),
+                false,
+                true);
+        var initialContext = ArchitectureChat.retrieve(chatInput, partition, queries, Optional.empty());
+        var evidence = new ArrayList<>(initialContext.evidence());
+        var limitations = new ArrayList<>(initialContext.limitations());
+        var sources = new ArrayList<>(initialContext.sources());
+        var toolSources = new LinkedHashMap<String, ArchitectureChatModel.SourceUse>();
+        var singleQueryPlan = new ArrayList<SingleQueryStep>();
+
+        if (configGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION) {
+            var gateData = new LinkedHashMap<String, Object>(configGate.toView());
+            if (!configGate.matches().isEmpty()) {
+                var m0 = configGate.matches().getFirst();
+                gateData.put("path", m0.filePath());
+                gateData.put("startLine", m0.startLine());
+                gateData.put("endLine", m0.endLine());
+            }
+            ArchitectureChat.addEvidence(evidence, ArchitectureChat.Kind.STRUCTURE,
+                    "Pre-Edit Config Gate (CONFIG_ONLY_RESOLUTION)", effectiveContext, Collections.unmodifiableMap(gateData));
+        }
+
+        var seededContext = new ArchitectureChat.Context(initialContext.pin(), List.copyOf(evidence), List.copyOf(limitations), sources);
+        var initLimits = new ArrayList<String>();
+        try {
+            var initPacket = model.buildPacket(chatInput, seededContext, graph, initLimits, stop);
+            var offeredFiles = initPacket.files().stream().map(ModelSources.Selection::file).toList();
+            var userPrompt = model.buildUserPrompt(chatInput, seededContext, initPacket.files(), stop);
+            var messages = new ArrayList<Map<String, Object>>();
+            messages.add(Map.of("role", "system", "content", model.instructions(false, true, true, true)));
+            messages.add(Map.of("role", "user", "content", userPrompt));
+
+            var tools = toolSchemas(request.includeSource());
+            var seenCalls = new HashMap<String, Integer>();
+            var graphIndex = GraphLookupIndex.build(graph);
+            int compactionBudget = Math.max(24_000, (model.settings().requestBytes() * 3) / 4);
+            int stepCounter = 0;
+
+            ArchitectureChatModel.Completion completion = null;
+            for (int round = 0; round < request.maxRounds(); round++) {
+                if (stop.get() != StopReason.NONE) {
+                    throw new ArchitectureChatModel.Rejected(ArchitectureChatModel.Failure.CHAT_RESOURCE_LIMIT);
+                }
+                compactToolMessages(messages, compactionBudget);
+                var roundResult = model.sendToolRoundWithAdapter(messages, tools, stop);
+                var adapterResp = roundResult.response();
+                var rawCalls = adapterResp.toolCalls();
+                if (rawCalls.isEmpty()) {
+                    String content = adapterResp.content();
+                    if (content != null && !content.isBlank()) {
+                        var currentContext = new ArchitectureChat.Context(seededContext.pin(), List.copyOf(evidence), List.copyOf(limitations), sources);
+                        completion = model.decodeAdapterResponse(currentContext, initPacket, adapterResp, initLimits,
+                                false, true, List.copyOf(toolSources.values()), null);
+                    }
+                    break;
+                }
+                boolean droppedExtraCalls = request.singleQueryPerRound() && rawCalls.size() > 1;
+                var effectiveCalls = enforceSingleQueryPerRound(rawCalls, request.singleQueryPerRound());
+                messages.add(buildAssistantToolMessage(adapterResp.content(), effectiveCalls));
+
+                for (var call : effectiveCalls) {
+                    String callId = (call.id() == null || call.id().isBlank()) ? ("call_" + (++stepCounter)) : call.id();
+                    String toolName = call.name() == null ? "" : call.name();
+                    var parsedArgs = parseArgsWithDiagnostics(call.argumentsJson());
+                    ToolOutcome outcome;
+                    if (parsedArgs.error() != null) {
+                        outcome = new ToolOutcome("Invalid tool arguments (" + toolName + ")", List.of(),
+                                CanonicalJson.write(Map.of("error", parsedArgs.error())));
+                    } else {
+                        String dedupeKey = toolName + "|" + CanonicalJson.write(parsedArgs.args());
+                        int repeats = seenCalls.merge(dedupeKey, 1, Integer::sum);
+                        if (repeats > 2) {
+                            outcome = new ToolOutcome("Duplicate tool call suppressed (" + toolName + ")", List.of(),
+                                    CanonicalJson.write(Map.of("duplicate", true)));
+                        } else {
+                            outcome = executeTool(toolName, parsedArgs.args(), chatInput, seededContext.pin(),
+                                    queries, reports, Optional.empty(), Optional.empty(),
+                                    evidence, toolSources, graphIndex, stop);
+                        }
+                    }
+                    String seedArg = stringArg(parsedArgs.args(), "query",
+                            stringArg(parsedArgs.args(), "seed",
+                                    stringArg(parsedArgs.args(), "identity",
+                                            stringArg(parsedArgs.args(), "path", ""))));
+                    singleQueryPlan.add(new SingleQueryStep(
+                            round + 1,
+                            toolName,
+                            parsedArgs.args(),
+                            toolToAstOperation(toolName),
+                            buildGraphComposeAst(toolToAstOperation(toolName), seedArg, List.of("graph.depends-on"), 2, 20),
+                            droppedExtraCalls
+                                    ? "Enforced singleQueryPerRound: executed 1 focused query and deferred extra calls."
+                                    : "Executed focused BENCHMARK_QA query round " + (round + 1) + "."));
+
+                    String toolContent = outcome.toolOutputJson();
+                    if (droppedExtraCalls) {
+                        limitations.add("singleQueryPerRound enforced on round " + (round + 1) + ": deferred "
+                                + (rawCalls.size() - 1) + " concurrent tool call(s).");
+                    }
+                    messages.add(Map.of("role", "tool", "tool_call_id", callId, "content", toolContent));
+                }
+            }
+
+            if (completion == null) {
+                compactToolMessages(messages, compactionBudget);
+                var finalContext = new ArchitectureChat.Context(seededContext.pin(), List.copyOf(evidence), List.copyOf(limitations), sources);
+                completion = model.completeMessages(finalContext, messages, offeredFiles, initLimits,
+                        false, true, List.copyOf(toolSources.values()), stop, null);
+            }
+
+            var verification = ArchitectureChatModel.verifyCitationsForChat(graph, evidence, completion.answer());
+            limitations.addAll(completion.limitations());
+            if (!verification.unverifiedCitations().isEmpty()) {
+                limitations.add("BENCHMARK_QA citation verifier flagged " + verification.unverifiedCount()
+                        + " unverified/hallucinated citation(s).");
+            }
+            var anchors = toEvidenceAnchors(evidence);
+            String finalStatus = configGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION
+                    ? PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION.name()
+                    : completion.status();
+            return new BenchmarkQaOutcome(
+                    MODE_BENCHMARK_QA,
+                    finalStatus,
+                    graph.identity().value(),
+                    effectiveContext,
+                    request.question(),
+                    completion.answer(),
+                    completion.citations(),
+                    verification,
+                    configGate,
+                    singleQueryPlan,
+                    anchors,
+                    List.copyOf(new LinkedHashSet<>(limitations)),
+                    false);
+        } finally {
+            model.clearRunTelemetry();
+        }
+    }
+
+    private static BenchmarkQaOutcome runOfflineBenchmarkQa(
+            KnowledgeGraph graph,
+            ArchitectureQueryService queries,
+            BenchmarkQaRequest request,
+            String effectiveContext,
+            PreEditConfigGate.GateResult configGate,
+            Supplier<StopReason> stop) {
+        var anchors = new ArrayList<ArchitectureChatModel.EvidenceAnchor>();
+        var singleQueryPlan = new ArrayList<SingleQueryStep>();
+        var completedTools = new ArrayList<String>();
+        var limitations = new ArrayList<String>();
+        var answerLines = new ArrayList<String>();
+        var fileIndex = CapturedFileIndex.forGraph(graph);
+        var docPaths = indexDocumentPathsForQa(graph);
+
+        var seeds = new LinkedHashSet<String>();
+        request.focus().ifPresent(seeds::add);
+        seeds.addAll(ArchitectureChat.extractMentionCandidates(request.question()));
+        var seedList = List.copyOf(seeds);
+
+        // Round 1: If PreEditConfigGate detected CONFIG_ONLY_RESOLUTION, verify exact config span first
+        if (configGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION
+                && !configGate.matches().isEmpty()) {
+            var step1 = planSingleQueryStep(1, request.question(), completedTools, seedList, configGate);
+            singleQueryPlan.add(step1);
+            completedTools.add(step1.toolName());
+
+            var primary = configGate.matches().getFirst();
+            Optional<String> fileSha = fileIndex.findExact(primary.filePath())
+                    .flatMap(CapturedFileIndex.Entry::digest)
+                    .map(ContentDigest::value);
+            String eid = "E" + (anchors.size() + 1);
+            anchors.add(new ArchitectureChatModel.EvidenceAnchor(
+                    eid,
+                    "CONFIG",
+                    "Config match " + primary.configKey(),
+                    primary.filePath().isBlank() ? Optional.empty() : Optional.of(primary.filePath()),
+                    OptionalInt.of(primary.startLine()),
+                    OptionalInt.of(primary.endLine()),
+                    List.of(),
+                    fileSha,
+                    primary.trustTier()));
+            answerLines.add("CONFIG_ONLY_RESOLUTION: " + configGate.recommendedAction()
+                    + " Verified configuration evidence at " + primary.fileLine() + " [" + eid + "].");
+            if (configGate.matches().size() > 1) {
+                var second = configGate.matches().get(1);
+                String eid2 = "E" + (anchors.size() + 1);
+                Optional<String> sha2 = fileIndex.findExact(second.filePath())
+                        .flatMap(CapturedFileIndex.Entry::digest)
+                        .map(ContentDigest::value);
+                anchors.add(new ArchitectureChatModel.EvidenceAnchor(
+                        eid2,
+                        "CONFIG",
+                        "Related config " + second.configKey(),
+                        second.filePath().isBlank() ? Optional.empty() : Optional.of(second.filePath()),
+                        OptionalInt.of(second.startLine()),
+                        OptionalInt.of(second.endLine()),
+                        List.of(),
+                        sha2,
+                        second.trustTier()));
+                answerLines.add("Additional matching configuration evidence: `" + second.configKey()
+                        + "` at " + second.fileLine() + " [" + eid2 + "].");
+            }
+        }
+
+        // Round 2: Focused symbol lookup + 1-hop dependencies for mentioned seeds
+        if (!seedList.isEmpty() && (stop == null || stop.get() == StopReason.NONE)) {
+            var step = planSingleQueryStep(singleQueryPlan.size() + 1, request.question(), completedTools, seedList, PreEditConfigGate.GateResult.ALLOW);
+            singleQueryPlan.add(step);
+            completedTools.add(step.toolName());
+
+            var matchedEntities = new ArrayList<EntityView>();
+            var seenIds = new HashSet<String>();
+            var contextsToSearch = benchmarkSearchContexts(graph, effectiveContext);
+            for (String seed : seedList.stream().limit(3).toList()) {
+                for (String ctx : contextsToSearch) {
+                    var req = new Request(graph.identity(), ctx, Scope.ENTITY, Projection.BOUNDED_UNION,
+                            Direction.OUTGOING, Set.of("graph.depends-on", "java.calls", "java.implements", "java.extends"),
+                            Population.all(), false, Optional.empty(), Limits.defaults());
+                    var res = queries.entities(req, seed, new Page(10, Optional.empty()));
+                    for (var item : res.items()) {
+                        if (matchedEntities.size() >= 3) break;
+                        String lbl = item.qualifiedName().or(item::canonicalName).or(item::spelling).orElse(item.identity());
+                        String simple = lbl.contains(".") ? lbl.substring(lbl.lastIndexOf('.') + 1) : lbl;
+                        if ((lbl.equalsIgnoreCase(seed) || simple.equalsIgnoreCase(seed) || lbl.toLowerCase(Locale.ROOT).contains(seed.toLowerCase(Locale.ROOT)))
+                                && seenIds.add(item.identity())) {
+                            matchedEntities.add(item);
+                        }
+                    }
+                }
+            }
+
+            for (var ent : matchedEntities) {
+                String lbl = ent.qualifiedName().or(ent::canonicalName).or(ent::spelling).orElse(ent.identity());
+                String eid = "E" + (anchors.size() + 1);
+                var declLoc = findNodeDeclLocation(graph, ent.context(), ent.identity(), docPaths);
+                Optional<String> declPath = declLoc != null ? Optional.of(declLoc.path()) : Optional.empty();
+                OptionalInt declStart = declLoc != null && declLoc.line() > 0 ? OptionalInt.of(declLoc.line()) : OptionalInt.empty();
+                Optional<String> fileSha = declPath.flatMap(fileIndex::findExact)
+                        .flatMap(CapturedFileIndex.Entry::digest)
+                        .map(ContentDigest::value);
+                anchors.add(new ArchitectureChatModel.EvidenceAnchor(
+                        eid,
+                        "SYMBOLS",
+                        lbl,
+                        declPath,
+                        declStart,
+                        declStart,
+                        List.of(ent.identity()),
+                        fileSha,
+                        "COMPILER"));
+
+                var outReq = new Request(graph.identity(), ent.context(), Scope.ENTITY, Projection.BOUNDED_UNION,
+                        Direction.OUTGOING, Set.of("graph.depends-on", "java.calls", "java.implements", "java.extends"),
+                        Population.all(), false, Optional.empty(), Limits.defaults());
+                var outNeighbors = summarizeNeighborhood(queries.expand(outReq, ent.identity()));
+                var inReq = new Request(graph.identity(), ent.context(), Scope.ENTITY, Projection.BOUNDED_UNION,
+                        Direction.INCOMING, Set.of("graph.depends-on", "java.calls", "java.implements", "java.extends"),
+                        Population.all(), false, Optional.empty(), Limits.defaults());
+                var inNeighbors = summarizeNeighborhood(queries.expand(inReq, ent.identity()));
+
+                String locSuffix = (declPath.isPresent() && declStart.isPresent())
+                        ? (" at " + declPath.orElseThrow() + ":" + declStart.getAsInt())
+                        : "";
+                answerLines.add("Verified symbol `" + lbl + "` (" + ent.kind() + ")" + locSuffix
+                        + " has " + outNeighbors.size() + " outgoing and " + inNeighbors.size()
+                        + " incoming graph relationship(s) [" + eid + "].");
+            }
+
+            // Round 3: VerticalTraceEngine single focused trace when a primary seed exists
+            if (!seedList.isEmpty() && singleQueryPlan.size() < request.maxRounds()) {
+                var traceStep = planSingleQueryStep(singleQueryPlan.size() + 1, request.question(), completedTools, seedList, PreEditConfigGate.GateResult.ALLOW);
+                singleQueryPlan.add(traceStep);
+                completedTools.add(traceStep.toolName());
+                try {
+                    var traceRes = VerticalTraceEngine.trace(graph,
+                            new VerticalTraceEngine.TraceRequest(effectiveContext, seedList.getFirst(),
+                                    Optional.empty(), Optional.empty(), 4, 24));
+                    if (traceRes.totalHops() > 0) {
+                        var hop0 = traceRes.hops().getFirst();
+                        String eid = "E" + (anchors.size() + 1);
+                        anchors.add(new ArchitectureChatModel.EvidenceAnchor(
+                                eid,
+                                "STRUCTURE",
+                                "Vertical trace for " + seedList.getFirst(),
+                                hop0.sourcePath(),
+                                hop0.startLine(),
+                                hop0.endLine(),
+                                List.of(hop0.nodeId()),
+                                hop0.contentSha256(),
+                                hop0.trustTier().name()));
+                        answerLines.add("Vertical trace across layers " + traceRes.layers()
+                                + " resolved " + traceRes.totalHops() + " hop(s) starting from `" + hop0.label()
+                                + "` [" + eid + "].");
+                    }
+                } catch (RuntimeException ignored) {
+                    // Opportunistic vertical trace in offline QA.
+                }
+            }
+        }
+
+        // Fallback summary anchor if neither config gate nor symbol match produced grounded evidence
+        if (answerLines.isEmpty()) {
+            var sumStep = planSingleQueryStep(singleQueryPlan.size() + 1, request.question(), completedTools, List.of(), PreEditConfigGate.GateResult.ALLOW);
+            singleQueryPlan.add(sumStep);
+            completedTools.add(sumStep.toolName());
+            var summary = queries.summary(Request.dependencies(graph.identity(), effectiveContext));
+            String eid = "E" + (anchors.size() + 1);
+            anchors.add(new ArchitectureChatModel.EvidenceAnchor(
+                    eid,
+                    "SUMMARY",
+                    "Captured graph summary (" + effectiveContext + ")",
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    OptionalInt.empty(),
+                    List.of(),
+                    Optional.empty(),
+                    "COMPILER"));
+            long totalNodes = summary.items().stream()
+                    .flatMap(s -> s.nodeCounts().values().stream())
+                    .mapToLong(Long::longValue).sum();
+            long totalEdges = summary.items().stream()
+                    .flatMap(s -> s.edgeCounts().values().stream())
+                    .mapToLong(Long::longValue).sum();
+            answerLines.add("Captured snapshot context `" + effectiveContext + "` contains " + totalNodes
+                    + " node(s), " + totalEdges + " edge(s), and " + fileIndex.entries().size()
+                    + " captured file(s) [" + eid + "]. No direct symbol or configuration match was found for this question; answer remains UNKNOWN beyond captured summary.");
+            limitations.add("Offline SKG BENCHMARK_QA found no specific symbol or configuration match for the prompt.");
+        }
+
+        String finalAnswer = String.join("\n", answerLines);
+        var citedIds = ArchitectureChatModel.extractEvidenceIds(finalAnswer);
+        var verification = ArchitectureChatModel.verifyCitations(graph, anchors, finalAnswer);
+        if (!verification.unverifiedCitations().isEmpty()) {
+            limitations.add("BENCHMARK_QA citation verifier flagged " + verification.unverifiedCount()
+                    + " unverified citation(s).");
+        }
+        String status = configGate.decision() == PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION
+                ? PreEditConfigGate.GateDecision.CONFIG_ONLY_RESOLUTION.name()
+                : "ANSWERED";
+        return new BenchmarkQaOutcome(
+                MODE_BENCHMARK_QA,
+                status,
+                graph.identity().value(),
+                effectiveContext,
+                request.question(),
+                finalAnswer,
+                citedIds,
+                verification,
+                configGate,
+                singleQueryPlan,
+                anchors,
+                List.copyOf(new LinkedHashSet<>(limitations)),
+                false);
+    }
+
+    private static List<ArchitectureChatModel.EvidenceAnchor> toEvidenceAnchors(List<ArchitectureChat.Evidence> evidence) {
+        var resolved = ArchitectureChat.resolveCitations(evidence);
+        var out = new ArrayList<ArchitectureChatModel.EvidenceAnchor>(resolved.size());
+        for (var rc : resolved) {
+            out.add(new ArchitectureChatModel.EvidenceAnchor(
+                    rc.id(), rc.kind(), rc.label(), rc.path(), rc.startLine(), rc.endLine(),
+                    rc.nodeIds(), Optional.empty(), rc.trustTier()));
+        }
+        return List.copyOf(out);
+    }
+
+    private static String resolveBenchmarkContext(KnowledgeGraph graph, String requested) {
+        if (requested != null && !requested.isBlank()) {
+            boolean exists = graph.contexts().stream().anyMatch(c -> c.identity().equals(requested));
+            if (exists) return requested;
+        }
+        var analysis = graph.contexts().stream().filter(c -> c.analysis().isPresent()).toList();
+        if (analysis.size() == 1) return analysis.getFirst().identity();
+        if (!analysis.isEmpty()) {
+            return analysis.stream()
+                    .max(Comparator.comparingInt(c -> graph.nodes(c.identity()).size()))
+                    .map(KnowledgeGraph.Context::identity)
+                    .orElse(graph.snapshot().value());
+        }
+        return graph.snapshot().value();
+    }
+
+    private static List<String> benchmarkSearchContexts(KnowledgeGraph graph, String primaryContext) {
+        var out = new LinkedHashSet<String>();
+        out.add(primaryContext);
+        for (var c : graph.contexts()) {
+            if (c.analysis().isPresent()) out.add(c.identity());
+        }
+        out.add(graph.snapshot().value());
+        return List.copyOf(out);
+    }
+
+    private static Map<String, String> indexDocumentPathsForQa(KnowledgeGraph graph) {
+        var map = new HashMap<String, String>();
+        for (var n : graph.nodes(graph.snapshot().value())) {
+            if (!"SOURCE_DOCUMENT".equals(n.kind())) continue;
+            for (var ref : n.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null) continue;
+                var obj = readSmallEvidence(ev);
+                if ("source.document".equals(ev.family()) && obj.get("path") instanceof String p) {
+                    map.putIfAbsent(n.identity(), CapturedFileIndex.normalizePath(p));
+                    break;
+                }
+                if ("source.bytes".equals(ev.family()) && obj.get("document") instanceof Map<?, ?> d
+                        && d.get("path") instanceof String p) {
+                    map.putIfAbsent(n.identity(), CapturedFileIndex.normalizePath(p));
+                    break;
+                }
+            }
+        }
+        return map;
+    }
+
+    private record NodeDeclLoc(String path, int line) {}
+
+    private static NodeDeclLoc findNodeDeclLocation(
+            KnowledgeGraph graph, String context, String nodeId, Map<String, String> docPaths) {
+        for (var node : graph.nodes(context)) {
+            if (!node.identity().equals(nodeId)) continue;
+            for (var ref : node.evidence()) {
+                var ev = graph.evidence(ref).orElse(null);
+                if (ev == null) continue;
+                var obj = readSmallEvidence(ev);
+                if ("java.declaration".equals(ev.family()) && obj.get("entity") instanceof Map<?, ?> ent
+                        && ent.get("declaration") instanceof Map<?, ?> sp
+                        && sp.get("document") instanceof String docId) {
+                    String p = docPaths.get(docId);
+                    if (p != null) {
+                        int line = sp.get("startLine") instanceof Number num ? Math.max(1, num.intValue()) : 1;
+                        return new NodeDeclLoc(p, line);
+                    }
+                }
+                if ("polyglot.source-syntax".equals(ev.family())) {
+                    Map<?, ?> fields = obj.get("fields") instanceof Map<?, ?> f ? f : obj;
+                    if (fields.get("path") instanceof String p && !p.isBlank()) {
+                        int line = fields.get("startLine") instanceof Number num ? Math.max(1, num.intValue()) : 1;
+                        return new NodeDeclLoc(CapturedFileIndex.normalizePath(p), line);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String toolToAstOperation(String toolName) {
+        return switch (toolName) {
+            case "search_symbols" -> "FIND_SYMBOLS";
+            case "inspect_symbol", "inspect_symbol_details" -> "GRAPH_COMPOSE_EGO_EXPAND";
+            case "trace_path" -> "GRAPH_COMPOSE_SHORTEST_PATH";
+            case "analyze_impact" -> "GRAPH_COMPOSE_IMPACT_REVERSE";
+            case "vertical_trace" -> "GRAPH_COMPOSE_VERTICAL_TRAVERSE";
+            case "read_captured_source", "search_captured_source" -> "VERIFY_SOURCE_SPAN";
+            default -> "GRAPH_COMPOSE_SUMMARY";
+        };
+    }
+
+    private static String firstDistinctiveWord(String question) {
+        if (question == null) return "";
+        for (String tok : question.split("[^A-Za-z0-9_.-]+")) {
+            if (tok.length() >= 4) return tok;
+        }
+        return question.strip();
     }
 
     private static Map<String, Object> fn(String name, String description, Map<String, Object> properties, List<String> required) {

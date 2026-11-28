@@ -9,6 +9,8 @@ import com.evolution.backend.query.llm.LlmConfigRegistry;
 import com.evolution.backend.query.llm.LlmProviderAdapter;
 import com.evolution.backend.query.llm.LlmTransport;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -26,9 +28,150 @@ public final class ArchitectureChatModel {
     private static final int ANSWER_CHARACTERS = 32_000;
     private static final Pattern BRACKET_GROUP = Pattern.compile("\\[([^\\[\\]]{2,120})\\]");
     private static final Pattern CITATION_TOKEN = Pattern.compile("^E(\\d{1,4})(?:\\s*[-–]\\s*E?(\\d{1,4}))?$");
+    private static final Pattern PATH_LINE_CITATION = Pattern.compile(
+            "(?<![A-Za-z0-9_./:-])([A-Za-z0-9_./-]*\\.env(?:\\.[A-Za-z0-9_-]+)?|[A-Za-z0-9_./-]+\\.(?:java|kt|kts|py|ts|tsx|js|jsx|go|rs|cs|php|rb|yml|yaml|properties|json|xml|md|mdx|sql|tf|proto|gradle|toml))(?::|#L)(\\d{1,6})(?:(?:-|\\.\\.|#L|-L)(\\d{1,6}))?(?![A-Za-z0-9_])",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern TITLE_TAG = Pattern.compile("<conversation_title>([^\\r\\n<]*)</conversation_title>", Pattern.CASE_INSENSITIVE);
     private static final Pattern OPEN_TITLE_TAG = Pattern.compile("(?im)^\\s*<conversation_title>[^\\r\\n]*\\r?\\n?");
     private static final GraphJson.Limits JSON = new GraphJson.Limits(ChatCompletions.RESPONSE_BYTES, 24, 16_384);
+
+    public enum QueryMode {
+        STANDARD,
+        BENCHMARK_QA
+    }
+
+    public enum CitationStatus {
+        VERIFIED_SPAN,
+        VERIFIED_GRAPH_ENTITY,
+        VERIFIED_EVIDENCE_RECORD,
+        UNOFFERED_EVIDENCE_ID,
+        MISSING_CAPTURED_FILE,
+        LINE_OUT_OF_BOUNDS,
+        MISSING_GRAPH_NODE,
+        HALLUCINATED_PATH
+    }
+
+    public record EvidenceAnchor(
+            String id,
+            String kind,
+            String label,
+            Optional<String> path,
+            OptionalInt startLine,
+            OptionalInt endLine,
+            List<String> nodeIds,
+            Optional<String> contentSha256,
+            String trustTier) {
+        public EvidenceAnchor {
+            id = Objects.requireNonNull(id, "id").strip();
+            kind = kind == null ? "STRUCTURE" : kind;
+            label = label == null ? "" : label;
+            path = path == null ? Optional.empty() : path.map(CapturedFileIndex::normalizePath).filter(s -> !s.isEmpty());
+            startLine = startLine == null ? OptionalInt.empty() : startLine;
+            endLine = endLine == null ? OptionalInt.empty() : endLine;
+            nodeIds = List.copyOf(nodeIds == null ? List.of() : nodeIds);
+            contentSha256 = contentSha256 == null ? Optional.empty() : contentSha256.filter(s -> !s.isBlank());
+            trustTier = (trustTier == null || trustTier.isBlank()) ? "COMPILER" : trustTier;
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("id", id);
+            map.put("kind", kind);
+            map.put("label", label);
+            path.ifPresent(p -> map.put("path", p));
+            if (startLine.isPresent()) map.put("startLine", startLine.getAsInt());
+            if (endLine.isPresent()) map.put("endLine", endLine.getAsInt());
+            if (!nodeIds.isEmpty()) map.put("nodeIds", nodeIds);
+            contentSha256.ifPresent(s -> map.put("contentSha256", s));
+            map.put("trustTier", trustTier);
+            return Collections.unmodifiableMap(map);
+        }
+    }
+
+    public record VerifiedCitationSpan(
+            String citationRef,
+            String sourceKind,
+            String path,
+            int startLine,
+            int endLine,
+            int totalLines,
+            Optional<String> contentSha256,
+            String trustTier,
+            CitationStatus status) {
+        public VerifiedCitationSpan {
+            citationRef = citationRef == null ? "" : citationRef;
+            sourceKind = sourceKind == null ? "EVIDENCE_ID" : sourceKind;
+            path = path == null ? "" : path;
+            contentSha256 = contentSha256 == null ? Optional.empty() : contentSha256;
+            trustTier = (trustTier == null || trustTier.isBlank()) ? "COMPILER" : trustTier;
+            status = status == null ? CitationStatus.VERIFIED_SPAN : status;
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("citationRef", citationRef);
+            map.put("sourceKind", sourceKind);
+            if (!path.isEmpty()) map.put("path", path);
+            if (startLine > 0) map.put("startLine", startLine);
+            if (endLine > 0) map.put("endLine", endLine);
+            if (totalLines > 0) map.put("totalLines", totalLines);
+            contentSha256.ifPresent(s -> map.put("contentSha256", s));
+            map.put("trustTier", trustTier);
+            map.put("status", status.name());
+            return Collections.unmodifiableMap(map);
+        }
+    }
+
+    public record UnverifiedCitation(
+            String citationRef,
+            String reason,
+            CitationStatus status,
+            String detail) {
+        public UnverifiedCitation {
+            citationRef = citationRef == null ? "" : citationRef;
+            reason = reason == null ? "" : reason;
+            status = status == null ? CitationStatus.UNOFFERED_EVIDENCE_ID : status;
+            detail = detail == null ? "" : detail;
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("citationRef", citationRef);
+            map.put("reason", reason);
+            map.put("status", status.name());
+            map.put("detail", detail);
+            return Collections.unmodifiableMap(map);
+        }
+    }
+
+    public record CitationVerificationReport(
+            int totalCitationsChecked,
+            int verifiedCount,
+            int unverifiedCount,
+            double citationValidityRate,
+            boolean allVerified,
+            boolean hasUncitedClaims,
+            List<VerifiedCitationSpan> verifiedSpans,
+            List<UnverifiedCitation> unverifiedCitations) {
+        public CitationVerificationReport {
+            verifiedSpans = List.copyOf(verifiedSpans == null ? List.of() : verifiedSpans);
+            unverifiedCitations = List.copyOf(unverifiedCitations == null ? List.of() : unverifiedCitations);
+        }
+
+        public Map<String, Object> toView() {
+            var map = new LinkedHashMap<String, Object>();
+            map.put("totalCitationsChecked", totalCitationsChecked);
+            map.put("verifiedCount", verifiedCount);
+            map.put("unverifiedCount", unverifiedCount);
+            map.put("citationValidityRate", BigDecimal.valueOf(Double.isFinite(citationValidityRate) ? citationValidityRate : 0.0)
+                    .setScale(4, RoundingMode.HALF_UP));
+            map.put("allVerified", allVerified);
+            map.put("hasUncitedClaims", hasUncitedClaims);
+            map.put("verifiedSpans", verifiedSpans.stream().map(VerifiedCitationSpan::toView).toList());
+            map.put("unverifiedCitations", unverifiedCitations.stream().map(UnverifiedCitation::toView).toList());
+            return Collections.unmodifiableMap(map);
+        }
+    }
 
     private static final String INSTRUCTIONS = """
             You are Evo, a Principal Software Architect and Verified Software Evolution Engineer. Reply in the language of the latest question.
@@ -187,12 +330,17 @@ public final class ArchitectureChatModel {
     private final ThreadLocal<RunTelemetry> runTelemetry = new ThreadLocal<>();
 
     String instructions(boolean reviewer, boolean agentic) {
-        return instructions(reviewer, agentic, false);
+        return instructions(reviewer, agentic, false, false);
     }
 
     String instructions(boolean reviewer, boolean agentic, boolean strictQaMode) {
+        return instructions(reviewer, agentic, strictQaMode, false);
+    }
+
+    public String instructions(boolean reviewer, boolean agentic, boolean strictQaMode, boolean benchmarkQaMode) {
         return INSTRUCTIONS + (agentic ? AGENT_INSTRUCTIONS : "") + (reviewer ? REVIEWER_INSTRUCTIONS : "")
                 + (strictQaMode ? ANTI_EDIT_BIAS_INSTRUCTIONS : "")
+                + (benchmarkQaMode ? BENCHMARK_QA_INSTRUCTIONS : "")
                 + (settings.jsonMode() ? JSON_INSTRUCTIONS : TEXT_INSTRUCTIONS);
     }
 
@@ -200,6 +348,13 @@ public final class ArchitectureChatModel {
             STRICT QA MODE (anti-Edit-Bias): Answer architectural comprehension questions directly using verified repository facts.
             Do NOT fabricate patches, speculative code edits, unverified refactoring plans, or ungrounded symbol names.
             Cite concrete [E#] evidence IDs, file paths, and line spans for every factual claim, and state UNKNOWN cleanly whenever evidence is absent.
+            """;
+
+    private static final String BENCHMARK_QA_INSTRUCTIONS = """
+            BENCHMARK_QA DISCIPLINE:
+            1. Single-query-per-round discipline: issue AT MOST ONE focused graph or captured-source tool query per round, observe the returned evidence, and only then decide the next focused query or synthesize.
+            2. Mandatory verifiable citations: attach exact [E#] evidence IDs and captured `path:line` spans for EVERY factual assertion. Every [E#] and `path:line` citation is machine-verified against captured snapshot files and line bounds; unverified or out-of-bounds references are flagged as hallucinated.
+            3. Anti-Edit-Bias config gate: when an existing configuration property, Spring profile, feature flag, or environment variable resolves the question, state CONFIG_ONLY_RESOLUTION with exact `file:line` evidence instead of proposing code edits.
             """;
 
     ArchitectureChatModel(URI endpoint, String model, String key, boolean allowRemote) {
@@ -658,6 +813,280 @@ public final class ArchitectureChatModel {
         } catch (IllegalArgumentException invalid) {
             throw new Rejected(Failure.CHAT_INVALID_MODEL_OUTPUT);
         }
+    }
+
+    public static List<String> extractEvidenceIds(String text) {
+        return text == null ? List.of() : List.copyOf(extractInlineCitations(text));
+    }
+
+    /**
+     * Machine-verifies every inline {@code [E#]} citation and explicit {@code path:line} span in
+     * {@code answerText} against captured {@link KnowledgeGraph} files, line bounds, and graph nodes.
+     */
+    public static CitationVerificationReport verifyCitations(
+            KnowledgeGraph graph,
+            List<EvidenceAnchor> offeredEvidence,
+            String answerText) {
+        String text = answerText == null ? "" : answerText;
+        var offeredById = new LinkedHashMap<String, EvidenceAnchor>();
+        if (offeredEvidence != null) {
+            for (var anchor : offeredEvidence) {
+                if (anchor != null && !anchor.id().isBlank()) {
+                    offeredById.putIfAbsent(anchor.id(), anchor);
+                }
+            }
+        }
+        var fileIndex = graph == null ? null : CapturedFileIndex.forGraph(graph);
+        var lineCountCache = new HashMap<String, Integer>();
+        var digestCache = new HashMap<String, Optional<String>>();
+        Set<String> graphNodeIds = null;
+
+        var verified = new ArrayList<VerifiedCitationSpan>();
+        var unverified = new ArrayList<UnverifiedCitation>();
+        var seenVerifiedKeys = new HashSet<String>();
+        var seenUnverifiedKeys = new HashSet<String>();
+
+        // 1. Verify every inline [E#] evidence citation
+        List<String> citedIds = extractInlineCitations(text);
+        for (String eid : citedIds) {
+            EvidenceAnchor anchor = offeredById.get(eid);
+            if (anchor == null) {
+                addUnverified(unverified, seenUnverifiedKeys, new UnverifiedCitation(
+                        "[" + eid + "]",
+                        "UNOFFERED_EVIDENCE_ID",
+                        CitationStatus.UNOFFERED_EVIDENCE_ID,
+                        "Citation [" + eid + "] does not exist in offered evidence."));
+                continue;
+            }
+            if (anchor.path().isPresent() && fileIndex != null) {
+                String rawPath = anchor.path().orElseThrow();
+                var resolved = resolveCapturedFileMeta(graph, fileIndex, rawPath, lineCountCache, digestCache);
+                if (!resolved.found()) {
+                    addUnverified(unverified, seenUnverifiedKeys, new UnverifiedCitation(
+                            "[" + eid + "] " + rawPath,
+                            "MISSING_CAPTURED_FILE",
+                            CitationStatus.MISSING_CAPTURED_FILE,
+                            "Cited file '" + rawPath + "' is absent from captured KnowledgeGraph files."));
+                    continue;
+                }
+                int start = anchor.startLine().orElse(1);
+                int end = anchor.endLine().orElse(start);
+                if (start < 1 || end < start || (resolved.totalLines() > 0 && end > resolved.totalLines())) {
+                    addUnverified(unverified, seenUnverifiedKeys, new UnverifiedCitation(
+                            "[" + eid + "] " + resolved.path() + ":" + start + (end != start ? "-" + end : ""),
+                            "LINE_OUT_OF_BOUNDS",
+                            CitationStatus.LINE_OUT_OF_BOUNDS,
+                            "Line span " + start + ".." + end + " exceeds captured file line count " + resolved.totalLines() + "."));
+                    continue;
+                }
+                addVerified(verified, seenVerifiedKeys, new VerifiedCitationSpan(
+                        "[" + eid + "]",
+                        "EVIDENCE_ID",
+                        resolved.path(),
+                        start,
+                        end,
+                        resolved.totalLines(),
+                        resolved.sha256().or(anchor::contentSha256),
+                        anchor.trustTier(),
+                        CitationStatus.VERIFIED_SPAN));
+            } else if (!anchor.nodeIds().isEmpty() && graph != null) {
+                if (graphNodeIds == null) {
+                    graphNodeIds = collectAllGraphNodeIds(graph);
+                }
+                var missingNodes = new ArrayList<String>();
+                for (String nid : anchor.nodeIds()) {
+                    if (!graphNodeIds.contains(nid)) missingNodes.add(nid);
+                }
+                if (!missingNodes.isEmpty()) {
+                    addUnverified(unverified, seenUnverifiedKeys, new UnverifiedCitation(
+                            "[" + eid + "]",
+                            "MISSING_GRAPH_NODE",
+                            CitationStatus.MISSING_GRAPH_NODE,
+                            "Referenced graph node(s) absent from KnowledgeGraph: " + missingNodes.stream().limit(3).toList()));
+                } else {
+                    addVerified(verified, seenVerifiedKeys, new VerifiedCitationSpan(
+                            "[" + eid + "]",
+                            "GRAPH_ENTITY",
+                            "",
+                            0,
+                            0,
+                            0,
+                            anchor.contentSha256(),
+                            anchor.trustTier(),
+                            CitationStatus.VERIFIED_GRAPH_ENTITY));
+                }
+            } else {
+                addVerified(verified, seenVerifiedKeys, new VerifiedCitationSpan(
+                        "[" + eid + "]",
+                        "EVIDENCE_RECORD",
+                        anchor.path().orElse(""),
+                        anchor.startLine().orElse(0),
+                        anchor.endLine().orElse(0),
+                        0,
+                        anchor.contentSha256(),
+                        anchor.trustTier(),
+                        CitationStatus.VERIFIED_EVIDENCE_RECORD));
+            }
+        }
+
+        // 2. Verify every explicit path:line / path:start-end / path#L12 reference in answerText
+        if (fileIndex != null) {
+            var pm = PATH_LINE_CITATION.matcher(text);
+            while (pm.find()) {
+                String rawPath = pm.group(1);
+                // Skip URLs or scheme-like matches (e.g. http://foo.com:8080)
+                int matchStart = pm.start();
+                if (matchStart >= 3 && text.regionMatches(matchStart - 3, "://", 0, 3)) {
+                    continue;
+                }
+                int startLine;
+                int endLine;
+                try {
+                    startLine = Integer.parseInt(pm.group(2));
+                    endLine = pm.group(3) != null ? Integer.parseInt(pm.group(3)) : startLine;
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
+                String ref = rawPath + ":" + startLine + (endLine != startLine ? "-" + endLine : "");
+                var resolved = resolveCapturedFileMeta(graph, fileIndex, rawPath, lineCountCache, digestCache);
+                if (!resolved.found()) {
+                    addUnverified(unverified, seenUnverifiedKeys, new UnverifiedCitation(
+                            ref,
+                            "HALLUCINATED_PATH",
+                            CitationStatus.HALLUCINATED_PATH,
+                            "File '" + rawPath + "' does not exist in captured KnowledgeGraph snapshot."));
+                } else if (startLine < 1 || endLine < startLine || (resolved.totalLines() > 0 && endLine > resolved.totalLines())) {
+                    addUnverified(unverified, seenUnverifiedKeys, new UnverifiedCitation(
+                            ref,
+                            "LINE_OUT_OF_BOUNDS",
+                            CitationStatus.LINE_OUT_OF_BOUNDS,
+                            "Line span " + startLine + ".." + endLine + " is out of bounds for '" + resolved.path()
+                                    + "' (totalLines=" + resolved.totalLines() + ")."));
+                } else {
+                    addVerified(verified, seenVerifiedKeys, new VerifiedCitationSpan(
+                            ref,
+                            "PATH_LINE",
+                            resolved.path(),
+                            startLine,
+                            endLine,
+                            resolved.totalLines(),
+                            resolved.sha256(),
+                            inferPathTrustTier(resolved.path()),
+                            CitationStatus.VERIFIED_SPAN));
+                }
+            }
+        }
+
+        verified.sort(Comparator.comparing(VerifiedCitationSpan::citationRef)
+                .thenComparing(VerifiedCitationSpan::path)
+                .thenComparingInt(VerifiedCitationSpan::startLine));
+        unverified.sort(Comparator.comparing(UnverifiedCitation::citationRef)
+                .thenComparing(UnverifiedCitation::reason));
+
+        int total = verified.size() + unverified.size();
+        double rate = total == 0 ? 0.0 : ((double) verified.size() / total);
+        boolean hasUncitedClaims = total == 0 && !text.isBlank();
+        boolean allVerified = unverified.isEmpty() && !verified.isEmpty();
+        return new CitationVerificationReport(
+                total, verified.size(), unverified.size(), rate, allVerified, hasUncitedClaims,
+                verified, unverified);
+    }
+
+    static CitationVerificationReport verifyCitationsForChat(
+            KnowledgeGraph graph,
+            List<ArchitectureChat.Evidence> evidence,
+            String answerText) {
+        var resolved = ArchitectureChat.resolveCitations(evidence);
+        var anchors = new ArrayList<EvidenceAnchor>(resolved.size());
+        for (var rc : resolved) {
+            anchors.add(new EvidenceAnchor(
+                    rc.id(),
+                    rc.kind(),
+                    rc.label(),
+                    rc.path(),
+                    rc.startLine(),
+                    rc.endLine(),
+                    rc.nodeIds(),
+                    Optional.empty(),
+                    rc.trustTier()));
+        }
+        return verifyCitations(graph, anchors, answerText);
+    }
+
+    private record CapturedFileMeta(boolean found, String path, int totalLines, Optional<String> sha256) {}
+
+    private static CapturedFileMeta resolveCapturedFileMeta(
+            KnowledgeGraph graph,
+            CapturedFileIndex fileIndex,
+            String rawPath,
+            Map<String, Integer> lineCountCache,
+            Map<String, Optional<String>> digestCache) {
+        String norm = CapturedFileIndex.normalizePath(rawPath);
+        if (norm.isEmpty()) return new CapturedFileMeta(false, "", 0, Optional.empty());
+        var entryOpt = fileIndex.findExact(norm);
+        CapturedFileIndex.Entry matched = entryOpt.orElse(null);
+        if (matched == null) {
+            String suffix = "/" + norm;
+            var suffixHits = new ArrayList<CapturedFileIndex.Entry>();
+            for (var e : fileIndex.entries()) {
+                if (e.path().equalsIgnoreCase(norm) || e.path().endsWith(suffix)) {
+                    suffixHits.add(e);
+                }
+            }
+            if (suffixHits.size() == 1) {
+                matched = suffixHits.getFirst();
+            }
+        }
+        if (matched == null) {
+            return new CapturedFileMeta(false, norm, 0, Optional.empty());
+        }
+        String resolvedPath = matched.path();
+        if (!lineCountCache.containsKey(resolvedPath)) {
+            var textOpt = fileIndex.readText(graph, matched);
+            int lines = textOpt.map(t -> t.isEmpty() ? 0 : t.split("\\R", -1).length).orElse(0);
+            lineCountCache.put(resolvedPath, lines);
+            digestCache.put(resolvedPath, matched.digest().map(ContentDigest::value));
+        }
+        return new CapturedFileMeta(
+                true,
+                resolvedPath,
+                lineCountCache.getOrDefault(resolvedPath, 0),
+                digestCache.getOrDefault(resolvedPath, Optional.empty()));
+    }
+
+    private static Set<String> collectAllGraphNodeIds(KnowledgeGraph graph) {
+        var ids = new HashSet<String>();
+        for (var ctx : graph.contexts()) {
+            for (var node : graph.nodes(ctx.identity())) {
+                ids.add(node.identity());
+            }
+        }
+        return ids;
+    }
+
+    private static String inferPathTrustTier(String path) {
+        String low = path.toLowerCase(Locale.ROOT);
+        if (low.endsWith(".md") || low.endsWith(".mdx") || low.endsWith(".sql") || low.endsWith(".tf")) {
+            return "ADVISORY_UNVERIFIED";
+        }
+        if (low.endsWith(".yml") || low.endsWith(".yaml") || low.endsWith(".properties")
+                || low.endsWith(".env") || low.contains(".env.")) {
+            return "DECLARATIVE_CONFIG";
+        }
+        if (low.endsWith(".java")) {
+            return "COMPILER";
+        }
+        return "SOURCE_SYNTAX";
+    }
+
+    private static void addVerified(List<VerifiedCitationSpan> out, Set<String> seen, VerifiedCitationSpan item) {
+        String k = item.citationRef() + "|" + item.path() + "|" + item.startLine() + "|" + item.endLine();
+        if (seen.add(k)) out.add(item);
+    }
+
+    private static void addUnverified(List<UnverifiedCitation> out, Set<String> seen, UnverifiedCitation item) {
+        String k = item.citationRef() + "|" + item.reason();
+        if (seen.add(k)) out.add(item);
     }
 
     static List<String> extractInlineCitations(String text) {
