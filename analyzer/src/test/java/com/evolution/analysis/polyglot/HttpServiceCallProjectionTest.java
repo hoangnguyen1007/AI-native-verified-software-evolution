@@ -210,5 +210,83 @@ class HttpServiceCallProjectionTest {
         assertTrue(edges.isEmpty());
         assertEquals(0, nodes.values().stream().filter(n -> n.kind().equals("CAPABILITY_GAP")).count());
     }
+
+    @Test void multiProfileFeignPlaceholderResolvesDistinctProfilesWithMayTruthRegionMetadata() throws Exception {
+        add("caller-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "checkout-app", "directory", "checkout-app")));
+        add("dev-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "orders-dev", "directory", "orders-dev")));
+        add("prod-mod", root, "BUILD_COMPONENT", GraphEvidence.capture("polyglot.build-component",
+                Map.of("id", "orders-prod", "directory", "orders-prod")));
+
+        add("dev-prop", root, "SOURCE_CONFIG_PROPERTY", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "checkout-app/src/main/resources/application-dev.yml",
+                        "fact", Map.of("nodeKind", "spring_http_property", "name", "clients.orders.url", "recovered", false,
+                                "attributes", Map.of("key", "clients.orders.url",
+                                        "value", "http://orders-dev:8080", "target", "orders-dev"))))));
+        add("prod-prop", root, "SOURCE_CONFIG_PROPERTY", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "checkout-app/src/main/resources/application-prod.yml",
+                        "fact", Map.of("nodeKind", "spring_http_property", "name", "clients.orders.url", "recovered", false,
+                                "attributes", Map.of("key", "clients.orders.url",
+                                        "value", "http://orders-prod:8080", "target", "orders-prod"))))));
+
+        String devEp = add("dev-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "orders-dev/src/main/java/OrderController.java",
+                        "fact", Map.of("name", "'/orders/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        String prodEp = add("prod-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "orders-prod/src/main/java/OrderController.java",
+                        "fact", Map.of("name", "'/orders/{id}'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+
+        add("feign-call", root, "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "checkout-app/src/main/java/OrdersClient.java",
+                        "fact", Map.of("name", "\"http://orders-default/orders/{id}\"", "recovered", false,
+                                "attributes", Map.of("method", "GET", "clientKind", "FEIGN_CLIENT",
+                                        "propertyKey", "clients.orders.url"))))));
+
+        HttpServiceCallProjection.project(nodes, edges, evidence, root, () -> false);
+
+        var joins = edges.values().stream().filter(e -> e.kind().equals("polyglot.service-call.candidate")).toList();
+        assertEquals(2, joins.size(), "Multi-profile Feign client must produce separate profile-scoped candidate edges");
+        assertTrue(joins.stream().anyMatch(j -> j.target().identities().equals(List.of(devEp))));
+        assertTrue(joins.stream().anyMatch(j -> j.target().identities().equals(List.of(prodEp))));
+
+        var matchEvidence = evidence.values().stream()
+                .filter(e -> e.family().equals("polyglot.http-uri-match")).toList();
+        assertTrue(matchEvidence.stream().anyMatch(e -> e.canonicalJson().contains("\"profile\":\"dev\"")
+                && e.canonicalJson().contains("\"truthRegion\":\"MAY\"")
+                && e.canonicalJson().contains("\"multiProfile\":true")));
+        assertTrue(matchEvidence.stream().anyMatch(e -> e.canonicalJson().contains("\"profile\":\"prod\"")
+                && e.canonicalJson().contains("\"truthRegion\":\"MAY\"")
+                && e.canonicalJson().contains("\"multiProfile\":true")));
+    }
+
+    @Test void spelDynamicUriOnFeignAndGatewayRouteEmitsSpelDynamicUriCapabilityGap() throws Exception {
+        add("target-ep", root, "ENDPOINT", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "orders-app/src/main/java/OrderController.java",
+                        "fact", Map.of("name", "'/orders'", "recovered", false,
+                                "attributes", Map.of("method", "GET"))))));
+        add("spel-feign", root, "SOURCE_HTTP_CALL_CANDIDATE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "checkout-app/src/main/java/DynamicFeign.java",
+                        "fact", Map.of("name", "\"\"", "recovered", false,
+                                "attributes", Map.of("method", "GET", "clientKind", "FEIGN_CLIENT",
+                                        "spelExpression", "true", "spelRaw", "#{@routeResolver.ordersUrl}"))))));
+        add("spel-gw", root, "SOURCE_GATEWAY_ROUTE", GraphEvidence.capture("polyglot.source-syntax",
+                Map.of("fields", Map.of("path", "gateway-app/src/main/java/GatewayConfig.java",
+                        "fact", Map.of("name", "dynamic-route", "recovered", false,
+                                "attributes", Map.of("pathPrefix", "/dyn/**", "uri", "#{@gatewayTarget.uri}",
+                                        "spelExpression", "true", "spelRaw", "#{@gatewayTarget.uri}"))))));
+
+        HttpServiceCallProjection.project(nodes, edges, evidence, root, () -> false);
+
+        assertTrue(edges.isEmpty(), "SpEL dynamic URIs must never emit speculative service-call edges");
+        var spelGaps = evidence.values().stream()
+                .filter(e -> e.family().equals("evidence.gap")
+                        && e.canonicalJson().contains("\"reasonCode\":\"SPEL_DYNAMIC_URI\""))
+                .toList();
+        assertEquals(2, spelGaps.size(), "Expected SPEL_DYNAMIC_URI gaps for both Feign and Gateway SpEL URIs");
+    }
+
     private String add(String name,String context,String kind,GraphEvidence proof){String id=ContentDigest.sha256Utf8(name).value();evidence.put(proof.identity().value(),proof);nodes.put(context+"|"+id,new KnowledgeGraph.Node(id,context,kind,List.of(proof.identity())));return id;}
 }

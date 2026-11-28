@@ -113,4 +113,65 @@ class HttpClientRecoveryTest {
         assertEquals(Set.of(List.of(8,125,9,113),List.of(8,153,9,112),
                 List.of(8,153,9,93),List.of(9,60,9,89)),spans);
     }
+
+    @Test void enumConstantMapAndBoundedKCallsiteWrapperFoldingResolveMultiHopHttpCallsWithoutCartesianMixing() throws Exception {
+        var result = analyze("""
+            import org.springframework.web.client.RestTemplate;
+
+            enum TargetSvc {
+              AUTH("auth-service"),
+              LEDGER("ledger-service");
+              private final String host;
+              TargetSvc(String host) { this.host = host; }
+              String getHost() { return this.host; }
+            }
+
+            class C {
+              private String lowLevel(RestTemplate rest, TargetSvc svc, String path) {
+                return rest.getForObject("http://" + svc.getHost() + path, String.class);
+              }
+              private String midLevel(RestTemplate rest, TargetSvc svc, String path) {
+                return lowLevel(rest, svc, path);
+              }
+              void run(RestTemplate rest) {
+                rest.getForObject("http://" + TargetSvc.AUTH.getHost() + "/direct", String.class);
+                midLevel(rest, TargetSvc.AUTH, "/tokens");
+                midLevel(rest, TargetSvc.LEDGER, "/entries");
+              }
+            }
+            """);
+        var uris = result.httpClientCalls().stream().map(HttpClientCallRecord::uri)
+                .filter(u -> !u.isEmpty()).collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of(
+                "http://auth-service/direct",
+                "http://auth-service/tokens",
+                "http://ledger-service/entries"), uris,
+                () -> "Expected exact enum + k=2 wrapper folded URIs with zero Cartesian cross-product: " + result.httpClientCalls());
+
+        // Direct unit verification of EnumConstantMap and SinkParamSummary hopDepth <= 4
+        var cu = com.github.javaparser.StaticJavaParser.parse("""
+            import org.springframework.web.client.RestTemplate;
+            enum Foo {
+              A("svc-a"), B("svc-b");
+              private final String host;
+              Foo(String host) { this.host = host; }
+              String host() { return host; }
+            }
+            class W {
+              RestTemplate rest;
+              void h1(Foo f, String p) { rest.getForObject("http://" + f.host() + p, String.class); }
+              void h2(Foo f, String p) { h1(f, p); }
+              void h3(Foo f, String p) { h2(f, p); }
+              void h4(Foo f, String p) { h3(f, p); }
+              void h5(Foo f, String p) { h4(f, p); }
+            }
+            """);
+        var idx = HttpClientConstants.WrapperFoldingIndex.fromUnits(Map.of("W.java", cu));
+        assertEquals(Optional.of("svc-a"), idx.enumConstants().lookupKey("Foo.A.field0"));
+        assertEquals(Optional.of("svc-b"), idx.enumConstants().lookup("Foo", "B", "host"));
+        var summaries = idx.summaries();
+        assertTrue(summaries.get("W#h1(2)").stream().anyMatch(s -> s.sinkKind() == HttpClientConstants.SinkKind.HTTP_HOST && s.paramIndex() == 0 && s.hopDepth() == 1));
+        assertTrue(summaries.get("W#h4(2)").stream().anyMatch(s -> s.sinkKind() == HttpClientConstants.SinkKind.HTTP_HOST && s.paramIndex() == 0 && s.hopDepth() == 4));
+        assertFalse(summaries.containsKey("W#h5(2)"), "Summaries must enforce strict hopDepth <= 4 bound");
+    }
 }

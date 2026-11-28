@@ -8,24 +8,40 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 import java.util.function.BooleanSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Source URI joins expose possible relationships, preserving endpoint contexts
- * and unresolved routing/activation. They cannot establish a deployed service call.
+ * Source URI joins expose possible relationships, preserving endpoint contexts,
+ * multi-profile conditional truth regions, and unresolved routing/activation.
+ * They cannot establish a deployed service call.
  */
 public final class HttpServiceCallProjection {
     public static final VersionedIdentifier PROVIDER = new VersionedIdentifier("polyglot.http-uri-candidates",
             "m8.4-spring-segments-v4");
 
+    private static final Pattern PROFILE_CONFIG_FILE = Pattern.compile(
+            "(?:^|/)(?:application|bootstrap)-([A-Za-z0-9_.-]+)\\.(?:ya?ml|properties)$",
+            Pattern.CASE_INSENSITIVE);
+
     private record Endpoint(KnowledgeGraph.Node node, String path, Set<String> methods, ContentDigest proof,
-            boolean recovered, boolean spring, String serviceName) {
+            boolean recovered, boolean spring, String serviceName, String profile, String truthRegion,
+            boolean multiProfile, List<String> allProfiles, boolean spelDynamic, String spelRaw) {
+        Endpoint(KnowledgeGraph.Node node, String path, Set<String> methods, ContentDigest proof,
+                boolean recovered, boolean spring, String serviceName) {
+            this(node, path, methods, proof, recovered, spring, serviceName, "", "", false, List.of(), false, "");
+        }
     }
 
     private record GatewayRoute(KnowledgeGraph.Node node, String targetService, String pathPrefix, int stripPrefix,
-            String rewriteFrom, String rewriteTo) {
+            String rewriteFrom, String rewriteTo, String profile, String truthRegion, ContentDigest proof,
+            boolean spelDynamic, String spelRaw) {
     }
 
-    private record ConfigProp(String key, String value, String target, String port) {
+    private record ConfigProp(String key, String value, String target, String port, String profile) {
+    }
+
+    private record PlaceholderSpec(String key, String defaultValue) {
     }
 
     private HttpServiceCallProjection() {
@@ -113,10 +129,10 @@ public final class HttpServiceCallProjection {
             }
         }
 
-        // Index CONFIG_PROPERTY facts for @Value("${prop.key}") resolution.
-        var dirConfigProps = new HashMap<String, Map<String, ConfigProp>>();
-        var repoFileConfigProps = new HashMap<String, Map<String, ConfigProp>>();
-        var globalConfigProps = new HashMap<String, List<ConfigProp>>();
+        // Index CONFIG_PROPERTY facts per profile for @Value / @FeignClient / Gateway ${key:default} resolution.
+        var dirConfigProps = new HashMap<String, Map<String, TreeMap<String, ConfigProp>>>();
+        var repoFileConfigProps = new HashMap<String, Map<String, TreeMap<String, ConfigProp>>>();
+        var globalConfigProps = new HashMap<String, TreeMap<String, List<ConfigProp>>>();
         for (var node : deferredProps) {
             check(cancelled);
             extractConfigProperty(node, evidence, sortedBuildDirs, dirConfigProps, repoFileConfigProps, globalConfigProps);
@@ -127,145 +143,227 @@ public final class HttpServiceCallProjection {
             check(cancelled);
             if (!node.kind().equals("SOURCE_GATEWAY_ROUTE"))
                 continue;
-            extractGatewayRoute(node, evidence).ifPresent(gateways::add);
+            for (GatewayRoute gw : extractGatewayRoutes(node, evidence, sortedBuildDirs, dirServiceNames,
+                    dirConfigProps, repoFileConfigProps, globalConfigProps)) {
+                if (gw.spelDynamic()) {
+                    emitSpelDynamicUriGap(root, node.identity(), gw.proof(), gw.spelRaw(), "gateway_route",
+                            evidence, additions);
+                } else {
+                    gateways.add(gw);
+                }
+            }
         }
+
         var providers = new TreeMap<String, List<Endpoint>>();
         // Only URI endpoint descriptors are retained, never the complete syntax population.
         for (var node : endpointCandidates) {
             check(cancelled);
             if (!Set.of("ENDPOINT", "ROUTE_CANDIDATE").contains(node.kind()))
                 continue;
-            var endpoint = descriptor(node, evidence, sortedBuildDirs, dirServiceNames, uniquePortToService,
-                    dirConfigProps, repoFileConfigProps, globalConfigProps);
-            if (endpoint.isEmpty())
-                continue;
-            var value = endpoint.orElseThrow();
-            providers.computeIfAbsent(bucket(value.path()), key -> new ArrayList<>()).add(value);
+            for (var value : descriptors(node, evidence, sortedBuildDirs, dirServiceNames, uniquePortToService,
+                    dirConfigProps, repoFileConfigProps, globalConfigProps)) {
+                providers.computeIfAbsent(bucket(value.path()), key -> new ArrayList<>()).add(value);
+            }
         }
+
         // Delay added nodes until iteration finishes (in-memory maps also remain valid).
         for (var node : callCandidates) {
             check(cancelled);
             if (!node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE"))
                 continue;
-            var source = descriptor(node, evidence, sortedBuildDirs, dirServiceNames, uniquePortToService,
+            var variants = descriptors(node, evidence, sortedBuildDirs, dirServiceNames, uniquePortToService,
                     dirConfigProps, repoFileConfigProps, globalConfigProps);
-            if (source.isEmpty())
+            if (variants.isEmpty())
                 continue;
-            var caller = source.orElseThrow();
-            String from = node.identity();
-            if (!node.context().equals(root)) {
-                from = KnowledgeGraph.derivedIdentity("http-call-reference", List.of(node.context(), node.identity()));
-                var reference = GraphEvidence.capture("polyglot.http-call-reference",
-                        Map.of("context", node.context(), "call", node.identity(), "callEvidence", caller.proof()));
-                evidence.putIfAbsent(reference.identity().value(), reference);
-                additions.put(root + "|" + from, new KnowledgeGraph.Node(from, root, "HTTP_CALL_REFERENCE",
-                        List.of(reference.identity(), caller.proof())));
+
+            for (var caller : variants) {
+                if (caller.spelDynamic()) {
+                    emitSpelDynamicUriGap(root, node.identity(), caller.proof(), caller.spelRaw(), "http_client",
+                            evidence, additions);
+                    continue;
+                }
+                projectCallerVariant(node, caller, gateways, providers, uniquePortToService,
+                        edges, evidence, additions, root, cancelled);
             }
-            var candidates = new TreeMap<String, Endpoint>();
-            long unsupportedPatterns = 0;
-            Optional<String> requestedHost = HttpUriPattern.host(caller.path());
-            if (requestedHost.isEmpty() && !caller.serviceName().isEmpty()) {
-                requestedHost = Optional.of(caller.serviceName());
-            }
-            if (requestedHost.isEmpty()) {
-                requestedHost = loopbackPort(caller.path())
-                        .map(uniquePortToService::get)
-                        .filter(s -> s != null && !s.isBlank());
-            }
-            String matchedGatewayRoute = "";
-            String rewrittenGatewayPath = "";
-            var path = HttpUriPattern.candidatePath(caller.path());
-            if (path.isPresent() && !caller.recovered()) {
-                matchEndpoints(path.orElseThrow(), requestedHost, caller, node, providers, candidates, false,
-                        cancelled);
-                // F3: Gateway StripPrefix / RewritePath matching when direct request hits gateway route
-                for (GatewayRoute gw : gateways) {
-                    Optional<String> rewritten = rewriteWithGateway(path.orElseThrow(), gw);
-                    if (rewritten.isPresent()) {
-                        Optional<String> gwHost = gw.targetService().isEmpty() ? Optional.empty()
-                                : Optional.of(normalizeSvc(gw.targetService()));
-                        int before = candidates.size();
-                        matchEndpoints(rewritten.orElseThrow(), gwHost, caller, node, providers, candidates, false,
-                                cancelled);
-                        if (candidates.size() > before) {
-                            matchedGatewayRoute = gw.targetService();
-                            rewrittenGatewayPath = rewritten.orElseThrow();
+        }
+        nodes.putAll(additions);
+    }
+
+    private static void projectCallerVariant(
+            KnowledgeGraph.Node node,
+            Endpoint caller,
+            List<GatewayRoute> gateways,
+            TreeMap<String, List<Endpoint>> providers,
+            Map<String, String> uniquePortToService,
+            Map<String, KnowledgeGraph.Edge> edges,
+            Map<String, GraphEvidence> evidence,
+            Map<String, KnowledgeGraph.Node> additions,
+            String root,
+            BooleanSupplier cancelled) throws IOException {
+        String from = node.identity();
+        if (!node.context().equals(root)) {
+            from = KnowledgeGraph.derivedIdentity("http-call-reference", List.of(node.context(), node.identity()));
+            var reference = GraphEvidence.capture("polyglot.http-call-reference",
+                    Map.of("context", node.context(), "call", node.identity(), "callEvidence", caller.proof()));
+            evidence.putIfAbsent(reference.identity().value(), reference);
+            additions.put(root + "|" + from, new KnowledgeGraph.Node(from, root, "HTTP_CALL_REFERENCE",
+                    List.of(reference.identity(), caller.proof())));
+        }
+        var candidates = new TreeMap<String, Endpoint>();
+        long unsupportedPatterns = 0;
+        Optional<String> requestedHost = HttpUriPattern.host(caller.path());
+        if (requestedHost.isEmpty() && !caller.serviceName().isEmpty()) {
+            requestedHost = Optional.of(caller.serviceName());
+        }
+        if (requestedHost.isEmpty()) {
+            requestedHost = loopbackPort(caller.path())
+                    .map(uniquePortToService::get)
+                    .filter(s -> s != null && !s.isBlank());
+        }
+        String matchedGatewayRoute = "";
+        String rewrittenGatewayPath = "";
+        String matchedGatewayProfile = "";
+        var path = HttpUriPattern.candidatePath(caller.path());
+        if (path.isPresent() && !caller.recovered()) {
+            matchEndpoints(path.orElseThrow(), requestedHost, caller, node, providers, candidates, false,
+                    cancelled);
+            // F3: Gateway StripPrefix / RewritePath matching when direct request hits gateway route
+            for (GatewayRoute gw : gateways) {
+                Optional<String> rewritten = rewriteWithGateway(path.orElseThrow(), gw);
+                if (rewritten.isPresent()) {
+                    Optional<String> gwHost = gw.targetService().isEmpty() ? Optional.empty()
+                            : Optional.of(normalizeSvc(gw.targetService()));
+                    int before = candidates.size();
+                    matchEndpoints(rewritten.orElseThrow(), gwHost, caller, node, providers, candidates, false,
+                            cancelled);
+                    if (candidates.size() > before) {
+                        matchedGatewayRoute = gw.targetService();
+                        rewrittenGatewayPath = rewritten.orElseThrow();
+                        if (!gw.profile().isEmpty()) {
+                            matchedGatewayProfile = gw.profile();
                         }
                     }
                 }
-                if (candidates.isEmpty()) {
-                    // Check for unsupported patterns accurately for diagnostics
-                    unsupportedPatterns = matchEndpoints(path.orElseThrow(), requestedHost, caller, node, providers,
-                            candidates, true, cancelled);
-                }
             }
-            var targets = new ArrayList<String>();
-            var supports = new TreeSet<ContentDigest>();
-            supports.add(caller.proof());
-            for (var target : candidates.values()) {
-                String id = target.node().identity();
-                if (!target.node().context().equals(root)) {
-                    id = KnowledgeGraph.derivedIdentity("http-endpoint-reference",
-                            List.of(target.node().context(), id));
-                    var reference = GraphEvidence.capture("polyglot.http-endpoint-reference",
-                            Map.of("context", target.node().context(), "endpoint", target.node().identity(),
-                                    "declarationEvidence", target.proof()));
-                    evidence.putIfAbsent(reference.identity().value(), reference);
-                    additions.put(root + "|" + id, new KnowledgeGraph.Node(id, root, "ENDPOINT_REFERENCE",
-                            List.of(reference.identity(), target.proof())));
-                }
-                targets.add(id);
-                supports.add(target.proof());
+            if (candidates.isEmpty()) {
+                // Check for unsupported patterns accurately for diagnostics
+                unsupportedPatterns = matchEndpoints(path.orElseThrow(), requestedHost, caller, node, providers,
+                        candidates, true, cancelled);
             }
-            String reason = path.isEmpty() || caller.recovered() ? "HTTP_URI_UNSUPPORTED"
-                    : unsupportedPatterns > 0 ? "HTTP_ROUTE_PATTERN_UNSUPPORTED"
-                            : targets.isEmpty() ? "HTTP_URI_NO_CANDIDATE" : "HTTP_ROUTING_EVIDENCE_MISSING";
-            var proofEntries = new LinkedHashMap<String, Object>();
-            proofEntries.put("provider", PROVIDER);
-            proofEntries.put("source", caller.node().identity());
-            proofEntries.put("sourceContext", caller.node().context());
-            proofEntries.put("path", caller.path());
-            proofEntries.put("methods", new TreeSet<>(caller.methods()));
-            proofEntries.put("candidates", List.copyOf(candidates.keySet()));
-            proofEntries.put("sourceEvidence", List.copyOf(supports));
-            proofEntries.put("certainty", "CANDIDATE");
-            proofEntries.put("runtimeObserved", false);
-            proofEntries.put("routingEstablished", false);
-            proofEntries.put("unsupportedProviderPatterns", unsupportedPatterns);
-            proofEntries.put("outcome", reason);
-            if (!matchedGatewayRoute.isEmpty()) {
-                proofEntries.put("gatewayRoute", matchedGatewayRoute);
-                proofEntries.put("rewrittenPath", rewrittenGatewayPath);
-            }
-            var proof = GraphEvidence.capture("polyglot.http-uri-match", proofEntries);
-            evidence.putIfAbsent(proof.identity().value(), proof);
-            supports.add(proof.identity());
-            if (!targets.isEmpty()) {
-                var target = new KnowledgeGraph.Target(targets.size() == 1 ? KnowledgeGraph.TargetState.RESOLVED
-                        : KnowledgeGraph.TargetState.CANDIDATES, targets, Optional.empty());
-                String id = KnowledgeGraph.derivedIdentity("http-service-call-candidate",
-                        List.of(PROVIDER, root, node.identity(), target, proof.identity()));
-                edges.put(root + "|" + id, new KnowledgeGraph.Edge(id, root, "polyglot.service-call.candidate", from,
-                        target, List.copyOf(supports), Optional.empty()));
-            }
-            var subject = new EvidenceSubject(EvidenceSubject.Kind.OBSERVATION, proof.identity().value());
-            var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION, "polyglot.http-routing",
-                    List.of(subject), EvidenceRequirement.AuthorizationClass.PASSIVE,
-                    List.of("Acquire exact host/base URL, context path, gateway rewrite, route predicates and activation before establishing a service-call binding."));
-            var gap = CapabilityGapRecord.create(EvidenceContext.forSnapshot(new SnapshotIdentity(root)), PROVIDER,
-                    "polyglot.service-call", reason, subject, List.of(),
-                    List.of(ProviderObservationReference.create(PROVIDER, "polyglot.http-uri-match", caller.proof(),
-                            proof.identity())),
-                    List.of(requirement), List.of(),
-                    List.of(new AffectedOutput(AffectedOutput.Kind.ANALYSIS_COVERAGE, "polyglot.service-call")),
-                    List.of(), List.of(),
-                    List.of("URI matches enumerate candidates; absence is not proof that a service is unreachable."));
-            var gapProof = GraphEvidence.capture("evidence.gap", gap);
-            evidence.putIfAbsent(gapProof.identity().value(), gapProof);
-            additions.put(root + "|" + gap.gapIdentity().value(), new KnowledgeGraph.Node(gap.gapIdentity().value(),
-                    root, "CAPABILITY_GAP", List.of(gapProof.identity())));
         }
-        nodes.putAll(additions);
+        var targets = new ArrayList<String>();
+        var supports = new TreeSet<ContentDigest>();
+        supports.add(caller.proof());
+        for (var target : candidates.values()) {
+            String id = target.node().identity();
+            if (!target.node().context().equals(root)) {
+                id = KnowledgeGraph.derivedIdentity("http-endpoint-reference",
+                        List.of(target.node().context(), id));
+                var reference = GraphEvidence.capture("polyglot.http-endpoint-reference",
+                        Map.of("context", target.node().context(), "endpoint", target.node().identity(),
+                                "declarationEvidence", target.proof()));
+                evidence.putIfAbsent(reference.identity().value(), reference);
+                additions.put(root + "|" + id, new KnowledgeGraph.Node(id, root, "ENDPOINT_REFERENCE",
+                        List.of(reference.identity(), target.proof())));
+            }
+            targets.add(id);
+            supports.add(target.proof());
+        }
+        String reason = path.isEmpty() || caller.recovered() ? "HTTP_URI_UNSUPPORTED"
+                : unsupportedPatterns > 0 ? "HTTP_ROUTE_PATTERN_UNSUPPORTED"
+                        : targets.isEmpty() ? "HTTP_URI_NO_CANDIDATE" : "HTTP_ROUTING_EVIDENCE_MISSING";
+        var proofEntries = new LinkedHashMap<String, Object>();
+        proofEntries.put("provider", PROVIDER);
+        proofEntries.put("source", caller.node().identity());
+        proofEntries.put("sourceContext", caller.node().context());
+        proofEntries.put("path", caller.path());
+        proofEntries.put("methods", new TreeSet<>(caller.methods()));
+        proofEntries.put("candidates", List.copyOf(candidates.keySet()));
+        proofEntries.put("sourceEvidence", List.copyOf(supports));
+        proofEntries.put("certainty", "CANDIDATE");
+        proofEntries.put("runtimeObserved", false);
+        proofEntries.put("routingEstablished", false);
+        proofEntries.put("unsupportedProviderPatterns", unsupportedPatterns);
+        proofEntries.put("outcome", reason);
+        if (!matchedGatewayRoute.isEmpty()) {
+            proofEntries.put("gatewayRoute", matchedGatewayRoute);
+            proofEntries.put("rewrittenPath", rewrittenGatewayPath);
+            if (!matchedGatewayProfile.isEmpty()) {
+                proofEntries.put("gatewayProfile", matchedGatewayProfile);
+            }
+        }
+        if (!caller.profile().isEmpty()) {
+            proofEntries.put("profile", caller.profile());
+        }
+        if (!caller.truthRegion().isEmpty()) {
+            proofEntries.put("truthRegion", caller.truthRegion());
+        }
+        if (caller.multiProfile()) {
+            proofEntries.put("multiProfile", true);
+            proofEntries.put("allProfiles", caller.allProfiles());
+        }
+        var proof = GraphEvidence.capture("polyglot.http-uri-match", proofEntries);
+        evidence.putIfAbsent(proof.identity().value(), proof);
+        supports.add(proof.identity());
+        if (!targets.isEmpty()) {
+            var target = new KnowledgeGraph.Target(targets.size() == 1 ? KnowledgeGraph.TargetState.RESOLVED
+                    : KnowledgeGraph.TargetState.CANDIDATES, targets, Optional.empty());
+            String id = KnowledgeGraph.derivedIdentity("http-service-call-candidate",
+                    List.of(PROVIDER, root, node.identity(), target, proof.identity()));
+            edges.put(root + "|" + id, new KnowledgeGraph.Edge(id, root, "polyglot.service-call.candidate", from,
+                    target, List.copyOf(supports), Optional.empty()));
+        }
+        var subject = new EvidenceSubject(EvidenceSubject.Kind.OBSERVATION, proof.identity().value());
+        var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION, "polyglot.http-routing",
+                List.of(subject), EvidenceRequirement.AuthorizationClass.PASSIVE,
+                List.of("Acquire exact host/base URL, context path, gateway rewrite, route predicates and activation before establishing a service-call binding."));
+        var gap = CapabilityGapRecord.create(EvidenceContext.forSnapshot(new SnapshotIdentity(root)), PROVIDER,
+                "polyglot.service-call", reason, subject, List.of(),
+                List.of(ProviderObservationReference.create(PROVIDER, "polyglot.http-uri-match", caller.proof(),
+                        proof.identity())),
+                List.of(requirement), List.of(),
+                List.of(new AffectedOutput(AffectedOutput.Kind.ANALYSIS_COVERAGE, "polyglot.service-call")),
+                List.of(), List.of(),
+                List.of("URI matches enumerate candidates; absence is not proof that a service is unreachable."));
+        var gapProof = GraphEvidence.capture("evidence.gap", gap);
+        evidence.putIfAbsent(gapProof.identity().value(), gapProof);
+        additions.put(root + "|" + gap.gapIdentity().value(), new KnowledgeGraph.Node(gap.gapIdentity().value(),
+                root, "CAPABILITY_GAP", List.of(gapProof.identity())));
+    }
+
+    private static void emitSpelDynamicUriGap(
+            String root,
+            String sourceNodeId,
+            ContentDigest sourceProof,
+            String spelRaw,
+            String siteKind,
+            Map<String, GraphEvidence> evidence,
+            Map<String, KnowledgeGraph.Node> additions) {
+        var obsEntries = new LinkedHashMap<String, Object>();
+        obsEntries.put("provider", PROVIDER);
+        obsEntries.put("source", sourceNodeId);
+        obsEntries.put("siteKind", siteKind);
+        obsEntries.put("spelExpression", spelRaw == null ? "" : spelRaw);
+        obsEntries.put("outcome", "SPEL_DYNAMIC_URI");
+        var obsProof = GraphEvidence.capture("polyglot.http-spel-uri", obsEntries);
+        evidence.putIfAbsent(obsProof.identity().value(), obsProof);
+
+        var subject = new EvidenceSubject(EvidenceSubject.Kind.OBSERVATION, obsProof.identity().value());
+        var requirement = new EvidenceRequirement(EvidenceRequirement.Kind.CONFIGURATION, "polyglot.http-routing",
+                List.of(subject), EvidenceRequirement.AuthorizationClass.PASSIVE,
+                List.of("Evaluate Spring Expression Language (SpEL) dynamic URI against runtime bean/environment state."));
+        var gap = CapabilityGapRecord.create(EvidenceContext.forSnapshot(new SnapshotIdentity(root)), PROVIDER,
+                "polyglot.service-call", "SPEL_DYNAMIC_URI", subject, List.of(),
+                List.of(ProviderObservationReference.create(PROVIDER, "polyglot.http-spel-uri", sourceProof,
+                        obsProof.identity())),
+                List.of(requirement), List.of(),
+                List.of(new AffectedOutput(AffectedOutput.Kind.ANALYSIS_COVERAGE, "polyglot.service-call")),
+                List.of(), List.of(),
+                List.of("SpEL #{...} dynamic URI expressions are never speculatively evaluated under passive analysis."));
+        var gapProof = GraphEvidence.capture("evidence.gap", gap);
+        evidence.putIfAbsent(gapProof.identity().value(), gapProof);
+        additions.put(root + "|" + gap.gapIdentity().value(), new KnowledgeGraph.Node(gap.gapIdentity().value(),
+                root, "CAPABILITY_GAP", List.of(gapProof.identity())));
     }
 
     private static long matchEndpoints(String path, Optional<String> requestedHost, Endpoint caller,
@@ -435,9 +533,10 @@ public final class HttpServiceCallProjection {
     }
 
     private static void extractConfigProperty(KnowledgeGraph.Node node, Map<String, GraphEvidence> evidence,
-            List<String> sortedBuildDirs, Map<String, Map<String, ConfigProp>> dirConfigProps,
-            Map<String, Map<String, ConfigProp>> repoFileConfigProps,
-            Map<String, List<ConfigProp>> globalConfigProps) {
+            List<String> sortedBuildDirs,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> dirConfigProps,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> repoFileConfigProps,
+            Map<String, TreeMap<String, List<ConfigProp>>> globalConfigProps) {
         for (var id : node.evidence()) {
             var proof = evidence.get(id.value());
             if (proof == null || !proof.family().equals("polyglot.source-syntax"))
@@ -455,23 +554,39 @@ public final class HttpServiceCallProjection {
             String port = str(attrs.get("port"));
             if (key.isEmpty() || (value.isEmpty() && target.isEmpty()))
                 continue;
-            var cp = new ConfigProp(key, value, target, port);
+            String profile = extractProfile(attrs, path);
+            var cp = new ConfigProp(key, value, target, port, profile);
             String configRepoFile = str(attrs.get("configRepoFile"));
             if (!configRepoFile.isEmpty()) {
-                repoFileConfigProps.computeIfAbsent(normalizeSvc(configRepoFile), k -> new TreeMap<>())
-                        .putIfAbsent(key, cp);
+                repoFileConfigProps
+                        .computeIfAbsent(normalizeSvc(configRepoFile), k -> new TreeMap<>())
+                        .computeIfAbsent(key, k -> new TreeMap<>())
+                        .putIfAbsent(profile, cp);
             } else {
                 String dir = resolveServiceDir(path, sortedBuildDirs);
                 if (!dir.isEmpty()) {
-                    dirConfigProps.computeIfAbsent(dir, k -> new TreeMap<>()).putIfAbsent(key, cp);
+                    dirConfigProps
+                            .computeIfAbsent(dir, k -> new TreeMap<>())
+                            .computeIfAbsent(key, k -> new TreeMap<>())
+                            .putIfAbsent(profile, cp);
                 }
             }
-            globalConfigProps.computeIfAbsent(key, k -> new ArrayList<>()).add(cp);
+            globalConfigProps
+                    .computeIfAbsent(key, k -> new TreeMap<>())
+                    .computeIfAbsent(profile, k -> new ArrayList<>())
+                    .add(cp);
         }
     }
 
-    private static Optional<GatewayRoute> extractGatewayRoute(KnowledgeGraph.Node node,
-            Map<String, GraphEvidence> evidence) {
+    private static List<GatewayRoute> extractGatewayRoutes(
+            KnowledgeGraph.Node node,
+            Map<String, GraphEvidence> evidence,
+            List<String> sortedBuildDirs,
+            Map<String, String> dirServiceNames,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> dirConfigProps,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> repoFileConfigProps,
+            Map<String, TreeMap<String, List<ConfigProp>>> globalConfigProps) {
+        var out = new ArrayList<GatewayRoute>();
         for (var id : node.evidence()) {
             var proof = evidence.get(id.value());
             if (proof == null || !proof.family().equals("polyglot.source-syntax"))
@@ -485,6 +600,15 @@ public final class HttpServiceCallProjection {
             String path = decodePath(fields.get("path"));
             if (isTestSource(attrs, path))
                 continue;
+            String uriAttr = str(attrs.get("uri"));
+            String spelRaw = str(attrs.get("spelRaw"));
+            boolean isSpel = "true".equalsIgnoreCase(str(attrs.get("spelExpression")))
+                    || isSpelExpression(uriAttr) || isSpelExpression(spelRaw);
+            if (isSpel) {
+                out.add(new GatewayRoute(node, "", str(attrs.get("pathPrefix")), 0, "", "",
+                        "", "", id, true, spelRaw.isEmpty() ? uriAttr : spelRaw));
+                return out;
+            }
             String targetSvc = attrs.get("targetService") instanceof String s ? s : "";
             String pathPrefix = attrs.get("pathPrefix") instanceof String s ? s : "";
             int strip = 0;
@@ -496,19 +620,52 @@ public final class HttpServiceCallProjection {
             }
             String rewriteFrom = attrs.get("rewriteFrom") instanceof String s ? s : "";
             String rewriteTo = attrs.get("rewriteTo") instanceof String s ? s : "";
+            String propKey = str(attrs.get("propertyKey"));
+            String defaultVal = "";
+            if (propKey.isEmpty() && uriAttr.contains("${")) {
+                var ph = parsePlaceholder(uriAttr);
+                if (ph.isPresent()) {
+                    propKey = ph.orElseThrow().key();
+                    defaultVal = ph.orElseThrow().defaultValue();
+                }
+            }
+            if (!propKey.isEmpty()) {
+                String serviceDir = resolveServiceDir(path, sortedBuildDirs);
+                String callerSvc = dirServiceNames.getOrDefault(serviceDir, "");
+                var byProfile = resolveConfigPropertiesByProfile(propKey, serviceDir, callerSvc,
+                        dirConfigProps, repoFileConfigProps, globalConfigProps);
+                if (!byProfile.isEmpty()) {
+                    boolean multi = byProfile.size() > 1;
+                    for (var entry : byProfile.entrySet()) {
+                        ConfigProp cp = entry.getValue();
+                        String resolvedSvc = HttpUriPattern.host(cp.value())
+                                .orElse(!cp.target().isEmpty() ? cp.target() : targetSvc);
+                        if (!resolvedSvc.isEmpty() || !pathPrefix.isEmpty()) {
+                            out.add(new GatewayRoute(node, resolvedSvc, pathPrefix, strip, rewriteFrom, rewriteTo,
+                                    entry.getKey(), multi ? "MAY" : "", id, false, ""));
+                        }
+                    }
+                    return out;
+                }
+                if (targetSvc.isEmpty() && !defaultVal.isEmpty()) {
+                    targetSvc = HttpUriPattern.host(defaultVal).orElse(defaultVal);
+                }
+            }
             if (!targetSvc.isEmpty() || !pathPrefix.isEmpty()) {
-                return Optional.of(new GatewayRoute(node, targetSvc, pathPrefix, strip, rewriteFrom, rewriteTo));
+                out.add(new GatewayRoute(node, targetSvc, pathPrefix, strip, rewriteFrom, rewriteTo,
+                        "", "", id, false, ""));
+                return out;
             }
         }
-        return Optional.empty();
+        return out;
     }
 
-    private static Optional<Endpoint> descriptor(KnowledgeGraph.Node node, Map<String, GraphEvidence> evidence,
+    private static List<Endpoint> descriptors(KnowledgeGraph.Node node, Map<String, GraphEvidence> evidence,
             List<String> sortedBuildDirs, Map<String, String> dirServiceNames,
             Map<String, String> uniquePortToService,
-            Map<String, Map<String, ConfigProp>> dirConfigProps,
-            Map<String, Map<String, ConfigProp>> repoFileConfigProps,
-            Map<String, List<ConfigProp>> globalConfigProps) {
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> dirConfigProps,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> repoFileConfigProps,
+            Map<String, TreeMap<String, List<ConfigProp>>> globalConfigProps) {
         for (var support : node.evidence()) {
             var proof = evidence.get(support.value());
             if (proof == null)
@@ -518,8 +675,12 @@ public final class HttpServiceCallProjection {
                         .object(GraphJson.read(proof.canonicalJson(), GraphJson.Limits.defaults())).get("call"));
                 var methods = new TreeSet<String>();
                 GraphJson.array(call.get("methods")).forEach(m -> methods.add(GraphJson.string(m)));
-                return Optional
-                        .of(new Endpoint(node, GraphJson.string(call.get("uri")), methods, support, false, false, ""));
+                String callUri = GraphJson.string(call.get("uri"));
+                if (isSpelExpression(callUri)) {
+                    return List.of(new Endpoint(node, callUri, methods, support, false, false, "",
+                            "", "", false, List.of(), true, callUri));
+                }
+                return List.of(new Endpoint(node, callUri, methods, support, false, false, ""));
             }
             if (node.kind().equals("ENDPOINT")
                     && Set.of("spring.endpoint-declaration", "jaxrs.endpoint-declaration",
@@ -535,7 +696,7 @@ public final class HttpServiceCallProjection {
                     svcName = mod;
                 else if (raw.get("module") instanceof String topMod && !topMod.isBlank())
                     svcName = topMod;
-                return Optional.of(new Endpoint(node, GraphJson.string(route.get("path")), methods, support, false,
+                return List.of(new Endpoint(node, GraphJson.string(route.get("path")), methods, support, false,
                         true, svcName));
             }
             if (proof.family().equals("polyglot.source-syntax")) {
@@ -545,45 +706,85 @@ public final class HttpServiceCallProjection {
                 var attrs = fact.get("attributes") instanceof Map<?, ?> m ? GraphJson.object(m) : Map.<String, Object>of();
                 String normPath = decodePath(fields.get("path"));
                 if (isTestSource(attrs, normPath))
-                    return Optional.empty();
+                    return List.of();
                 String raw = GraphJson.string(fact.get("name"));
+                String urlExpr = str(attrs.get("urlExpr"));
+                String spelRaw = str(attrs.get("spelRaw"));
+                boolean isSpel = "true".equalsIgnoreCase(str(attrs.get("spelExpression")))
+                        || isSpelExpression(raw) || isSpelExpression(urlExpr) || isSpelExpression(spelRaw);
+                if (isSpel && node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE")) {
+                    String method = attrs.get("method") instanceof String text ? text : "UNKNOWN";
+                    String exprText = !spelRaw.isEmpty() ? spelRaw : (!urlExpr.isEmpty() ? urlExpr : raw);
+                    return List.of(new Endpoint(node, "", method.equals("UNKNOWN") ? Set.of() : Set.of(method),
+                            support, Boolean.TRUE.equals(fact.get("recovered")), false, "",
+                            "", "", false, List.of(), true, exprText));
+                }
                 if (raw.length() < 2 || raw.indexOf('\\') >= 0 || raw.charAt(raw.length() - 1) != raw.charAt(0)
                         || raw.charAt(0) != '\'' && raw.charAt(0) != '"' && raw.charAt(0) != '`')
                     continue;
-                String uri = raw.substring(1, raw.length() - 1);
+                String baseUri = raw.substring(1, raw.length() - 1);
                 String method = attrs.get("method") instanceof String text ? text : "UNKNOWN";
-                String svcName = attrs.get("targetService") instanceof String svc ? svc : "";
+                Set<String> methodSet = method.equals("UNKNOWN") ? Set.of() : Set.of(method);
+                String baseSvcName = attrs.get("targetService") instanceof String svc ? svc : "";
                 String propertyKey = str(attrs.get("propertyKey"));
+                String servicePropertyKey = str(attrs.get("servicePropertyKey"));
                 String serviceDir = resolveServiceDir(normPath, sortedBuildDirs);
-                if (node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE") && !propertyKey.isEmpty()) {
+                boolean recovered = Boolean.TRUE.equals(fact.get("recovered"));
+
+                if (node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE")
+                        && (!propertyKey.isEmpty() || !servicePropertyKey.isEmpty())) {
                     String callerSvc = dirServiceNames.getOrDefault(serviceDir, "");
-                    ConfigProp prop = resolveConfigProperty(propertyKey, serviceDir, callerSvc,
+                    String effectiveKey = !propertyKey.isEmpty() ? propertyKey : servicePropertyKey;
+                    boolean isServiceKeyOnly = propertyKey.isEmpty() && !servicePropertyKey.isEmpty();
+                    var byProfile = resolveConfigPropertiesByProfile(effectiveKey, serviceDir, callerSvc,
                             dirConfigProps, repoFileConfigProps, globalConfigProps);
-                    if (prop != null) {
-                        String propVal = prop.value().trim();
-                        if (!propVal.isEmpty()) {
-                            if (uri.isEmpty()) {
-                                uri = propVal;
-                            } else if (!hasUriScheme(uri)) {
-                                uri = joinBaseAndPath(propVal, uri);
-                            }
+                    if (!byProfile.isEmpty()) {
+                        var resolvedVariants = new LinkedHashMap<String, Endpoint>();
+                        var allProfiles = List.copyOf(byProfile.keySet());
+                        boolean multiRaw = byProfile.size() > 1;
+                        // Determine whether profiles yield distinct (uri, svc) targets
+                        var distinctTargets = new LinkedHashSet<String>();
+                        var tempResolved = new LinkedHashMap<String, String[]>();
+                        for (var entry : byProfile.entrySet()) {
+                            String[] pair = applyConfigProp(baseUri, baseSvcName, entry.getValue(),
+                                    isServiceKeyOnly, uniquePortToService);
+                            tempResolved.put(entry.getKey(), pair);
+                            distinctTargets.add(pair[0] + "|" + normalizeSvc(pair[1]));
                         }
-                        if (svcName.isEmpty()) {
-                            Optional<String> h = HttpUriPattern.host(uri);
-                            if (h.isPresent()) {
-                                svcName = h.orElseThrow();
-                            } else if (!prop.target().isEmpty() && !isLoopback(prop.target())) {
-                                svcName = prop.target();
-                            } else {
-                                String port = loopbackPort(uri).orElse(prop.port());
-                                if (!port.isEmpty()) {
-                                    String resolved = uniquePortToService.get(port);
-                                    if (resolved != null) svcName = resolved;
-                                }
-                            }
+                        if (distinctTargets.size() == 1) {
+                            var firstEntry = tempResolved.entrySet().iterator().next();
+                            String[] pair = firstEntry.getValue();
+                            String singleProfile = multiRaw ? "" : ("default".equals(firstEntry.getKey()) ? "" : firstEntry.getKey());
+                            String truthRegion = multiRaw ? "MUST" : (singleProfile.isEmpty() ? "" : "MAY");
+                            return List.of(new Endpoint(node, pair[0], methodSet, support, recovered, false, pair[1],
+                                    singleProfile, truthRegion, false, multiRaw ? allProfiles : List.of(), false, ""));
+                        }
+                        for (var entry : tempResolved.entrySet()) {
+                            String prof = entry.getKey();
+                            String[] pair = entry.getValue();
+                            resolvedVariants.put(prof, new Endpoint(node, pair[0], methodSet, support, recovered,
+                                    false, pair[1], prof, "MAY", true, allProfiles, false, ""));
+                        }
+                        return List.copyOf(resolvedVariants.values());
+                    }
+                    // No config file defines the property: preserve default value from ${key:default} if present
+                    String uri = baseUri;
+                    String svcName = baseSvcName;
+                    if (svcName.isEmpty()) {
+                        Optional<String> port = loopbackPort(uri);
+                        if (port.isPresent()) {
+                            String resolved = uniquePortToService.get(port.orElseThrow());
+                            if (resolved != null) svcName = resolved;
                         }
                     }
+                    boolean hasDefault = !uri.isEmpty() && (hasUriScheme(uri) || !svcName.isEmpty());
+                    return List.of(new Endpoint(node, uri, methodSet, support, recovered, false, svcName,
+                            hasDefault ? "default" : "", hasDefault ? "DEFAULT_FALLBACK" : "",
+                            false, List.of(), false, ""));
                 }
+
+                String uri = baseUri;
+                String svcName = baseSvcName;
                 if (svcName.isEmpty() && node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE")) {
                     Optional<String> port = loopbackPort(uri);
                     if (port.isPresent()) {
@@ -594,37 +795,128 @@ public final class HttpServiceCallProjection {
                 if (svcName.isEmpty() && !node.kind().equals("SOURCE_HTTP_CALL_CANDIDATE")) {
                     svcName = dirServiceNames.getOrDefault(serviceDir, "");
                 }
-                return Optional.of(new Endpoint(node, uri,
-                        method.equals("UNKNOWN") ? Set.of() : Set.of(method), support,
-                        Boolean.TRUE.equals(fact.get("recovered")), false, svcName));
+                return List.of(new Endpoint(node, uri, methodSet, support, recovered, false, svcName));
             }
         }
-        return Optional.empty();
+        return List.of();
     }
 
-    private static ConfigProp resolveConfigProperty(String propertyKey, String serviceDir, String callerSvc,
-            Map<String, Map<String, ConfigProp>> dirConfigProps,
-            Map<String, Map<String, ConfigProp>> repoFileConfigProps,
-            Map<String, List<ConfigProp>> globalConfigProps) {
-        if (!serviceDir.isEmpty()) {
-            ConfigProp local = dirConfigProps.getOrDefault(serviceDir, Map.of()).get(propertyKey);
-            if (local != null) return local;
-        }
-        if (!callerSvc.isEmpty()) {
-            ConfigProp fromSvcRepo = repoFileConfigProps.getOrDefault(normalizeSvc(callerSvc), Map.of()).get(propertyKey);
-            if (fromSvcRepo != null) return fromSvcRepo;
-        }
-        ConfigProp fromAppRepo = repoFileConfigProps.getOrDefault("application", Map.of()).get(propertyKey);
-        if (fromAppRepo != null) return fromAppRepo;
-        List<ConfigProp> all = globalConfigProps.getOrDefault(propertyKey, List.of());
-        if (all.size() == 1) return all.getFirst();
-        if (all.size() > 1) {
-            String firstVal = all.getFirst().value();
-            if (all.stream().allMatch(c -> c.value().equals(firstVal))) {
-                return all.getFirst();
+    private static String[] applyConfigProp(String baseUri, String baseSvcName, ConfigProp prop,
+            boolean isServiceKeyOnly, Map<String, String> uniquePortToService) {
+        String uri = baseUri;
+        String svcName = baseSvcName;
+        String propVal = prop.value().trim();
+        if (isServiceKeyOnly) {
+            if (!propVal.isEmpty()) {
+                String cleanHost = HttpUriPattern.host(propVal).orElse(propVal.replaceAll("^https?://", "").replaceAll("/.*$", ""));
+                svcName = cleanHost;
+                String pathPart = HttpUriPattern.candidatePath(uri).orElse(uri.startsWith("/") ? uri : "/" + uri);
+                uri = hasUriScheme(propVal) ? joinBaseAndPath(propVal, pathPart) : joinBaseAndPath("http://" + cleanHost, pathPart);
+            }
+        } else {
+            if (!propVal.isEmpty()) {
+                if (uri.isEmpty()) {
+                    uri = propVal;
+                } else if (!hasUriScheme(uri)) {
+                    uri = joinBaseAndPath(propVal, uri);
+                } else {
+                    // Replace default base host with profile-configured base URL while retaining endpoint path
+                    Optional<String> relPath = HttpUriPattern.candidatePath(uri);
+                    uri = relPath.isPresent() ? joinBaseAndPath(propVal, relPath.orElseThrow()) : propVal;
+                }
+            }
+            Optional<String> h = HttpUriPattern.host(uri);
+            if (h.isPresent()) {
+                svcName = h.orElseThrow();
+            } else if (!prop.target().isEmpty() && !isLoopback(prop.target())) {
+                svcName = prop.target();
+            } else {
+                String port = loopbackPort(uri).orElse(prop.port());
+                if (!port.isEmpty()) {
+                    String resolved = uniquePortToService.get(port);
+                    if (resolved != null) svcName = resolved;
+                }
             }
         }
-        return null;
+        return new String[] { uri, svcName };
+    }
+
+    private static TreeMap<String, ConfigProp> resolveConfigPropertiesByProfile(String propertyKey, String serviceDir,
+            String callerSvc,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> dirConfigProps,
+            Map<String, Map<String, TreeMap<String, ConfigProp>>> repoFileConfigProps,
+            Map<String, TreeMap<String, List<ConfigProp>>> globalConfigProps) {
+        var resolved = new TreeMap<String, ConfigProp>();
+        if (!serviceDir.isEmpty()) {
+            var local = dirConfigProps.getOrDefault(serviceDir, Map.of()).get(propertyKey);
+            if (local != null && !local.isEmpty()) {
+                resolved.putAll(local);
+                return resolved;
+            }
+        }
+        if (!callerSvc.isEmpty()) {
+            var fromSvcRepo = repoFileConfigProps.getOrDefault(normalizeSvc(callerSvc), Map.of()).get(propertyKey);
+            if (fromSvcRepo != null && !fromSvcRepo.isEmpty()) {
+                resolved.putAll(fromSvcRepo);
+                return resolved;
+            }
+        }
+        var fromAppRepo = repoFileConfigProps.getOrDefault("application", Map.of()).get(propertyKey);
+        if (fromAppRepo != null && !fromAppRepo.isEmpty()) {
+            resolved.putAll(fromAppRepo);
+            return resolved;
+        }
+        var globalByProfile = globalConfigProps.get(propertyKey);
+        if (globalByProfile != null) {
+            for (var entry : globalByProfile.entrySet()) {
+                List<ConfigProp> all = entry.getValue();
+                if (all.size() == 1) {
+                    resolved.put(entry.getKey(), all.getFirst());
+                } else if (all.size() > 1) {
+                    String firstVal = all.getFirst().value();
+                    if (all.stream().allMatch(c -> c.value().equals(firstVal))) {
+                        resolved.put(entry.getKey(), all.getFirst());
+                    }
+                }
+            }
+        }
+        return resolved;
+    }
+
+    private static String extractProfile(Map<String, Object> attrs, String normPath) {
+        String explicit = str(attrs.get("profile"));
+        if (!explicit.isEmpty()) {
+            return explicit.toLowerCase(Locale.ROOT);
+        }
+        if (normPath != null && !normPath.isEmpty()) {
+            Matcher m = PROFILE_CONFIG_FILE.matcher(normPath.replace('\\', '/'));
+            if (m.find()) {
+                return m.group(1).toLowerCase(Locale.ROOT);
+            }
+        }
+        return "default";
+    }
+
+    private static boolean isSpelExpression(String raw) {
+        if (raw == null || raw.isEmpty()) return false;
+        int start = raw.indexOf("#{");
+        if (start < 0) return false;
+        int end = raw.indexOf('}', start + 2);
+        return end > start + 1;
+    }
+
+    private static Optional<PlaceholderSpec> parsePlaceholder(String raw) {
+        if (raw == null) return Optional.empty();
+        int start = raw.indexOf("${");
+        if (start < 0) return Optional.empty();
+        int end = raw.indexOf('}', start + 2);
+        if (end < 0) return Optional.empty();
+        String inner = raw.substring(start + 2, end);
+        int colon = inner.indexOf(':');
+        String key = (colon >= 0 ? inner.substring(0, colon) : inner).trim();
+        if (key.isEmpty()) return Optional.empty();
+        String def = colon >= 0 ? inner.substring(colon + 1).trim() : "";
+        return Optional.of(new PlaceholderSpec(key, def));
     }
 
     private static Optional<String> loopbackPort(String rawUri) {

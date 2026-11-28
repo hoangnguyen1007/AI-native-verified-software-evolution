@@ -29,7 +29,7 @@ final class Extraction {
     private static final Set<String> HTTP_CLIENT_METHODS = Set.of(
             "getForObject", "getForEntity", "postForObject", "postForEntity", "postForLocation",
             "put", "patchForObject", "delete", "headForHeaders", "optionsForAllow", "exchange",
-            "uri", "baseUrl", "getInstances", "choose", "request");
+            "uri", "baseUrl", "getInstances", "choose", "request", "route", "http", "lb");
     private static final Set<String> WEB_CLIENT_VERB_METHODS = Set.of(
             "get", "post", "put", "patch", "delete", "head", "options");
     private static final Set<String> SPRING_BOUNDARY_METHODS = Set.of(
@@ -155,6 +155,8 @@ final class Extraction {
     private boolean reactorResolutionDegraded;
     final LombokExtraction lombok = new LombokExtraction(this);
     private final AndroidSyntheticDeclarations android = new AndroidSyntheticDeclarations();
+    private final HttpClientConstants.WrapperFoldingIndex.Builder wrapperIndexBuilder = HttpClientConstants.WrapperFoldingIndex.builder();
+    private HttpClientConstants.WrapperFoldingIndex wrapperIndex;
     private NativeMemberExtraction nativeMembers;
 
     private static final class Unit {
@@ -456,6 +458,7 @@ final class Extraction {
             worker.architecturalSimpleTypeNames.addAll(sharedArchSimpleNames);
             worker.lombok.setHasPotentialLombokInModule(finalAnyLombok);
             worker.unitRecoveryObservations.putAll(this.unitRecoveryObservations);
+            worker.wrapperIndex = this.wrapperIndex;
 
             var workerAndroidProject = new com.github.javaparser.symbolsolver.resolution.typesolvers.MemoryTypeSolver();
             var workerAndroidPlatform = new com.github.javaparser.symbolsolver.resolution.typesolvers.MemoryTypeSolver();
@@ -1854,81 +1857,138 @@ final class Extraction {
     }
 
     private List<HttpClientCallRecord> httpClientCalls(Unit unit) {
+        var activeWrapperIndex = wrapperIndex != null
+                ? wrapperIndex
+                : HttpClientConstants.WrapperFoldingIndex.fromUnits(Map.of(unit.input.document().path(), unit.ast));
+        var enumConstants = activeWrapperIndex.enumConstants();
+        var allCalls = unit.ast.findAll(MethodCallExpr.class);
         var candidates = new ArrayList<MethodCallExpr>();
-        for (var call : unit.ast.findAll(MethodCallExpr.class)) {
+        var callsByRange = new HashMap<String, MethodCallExpr>(allCalls.size() * 2 + 1);
+        for (var call : allCalls) {
             if (HTTP_CLIENT_METHODS.contains(call.getNameAsString())) {
                 candidates.add(call);
             }
+            call.getRange().ifPresent(r -> callsByRange.putIfAbsent(
+                    r.begin.line + ":" + r.begin.column + ":" + r.end.line + ":" + r.end.column, call));
         }
-        if (candidates.isEmpty())
-            return List.of();
         var bindings = resolvedCallsByDoc.getOrDefault(unit.input.document().identity(), Map.of());
-        if (bindings.isEmpty())
-            return List.of();
         var result = new ArrayList<HttpClientCallRecord>();
-        for (var call : candidates) {
-            String method = call.getNameAsString();
-            try {
-                var selected = call.resolve();
-                String type = selected.declaringType().getQualifiedName();
-                boolean rest = Set.of(
-                        "org.springframework.web.client.RestTemplate",
-                        "org.springframework.web.client.RestOperations",
-                        "org.springframework.security.oauth2.client.OAuth2RestTemplate",
-                        "org.springframework.security.oauth2.client.OAuth2RestOperations").contains(type);
-                boolean reactive=method.equals("uri")&&(type.startsWith("org.springframework.web.reactive.function.client.WebClient.")
-                        ||type.startsWith("org.springframework.web.client.RestClient."));
-                boolean jaxRsRequest = method.equals("request")
-                        && Set.of("javax.ws.rs.client.WebTarget", "jakarta.ws.rs.client.WebTarget").contains(type);
-                boolean discovery=(method.equals("getInstances")&&type.equals("org.springframework.cloud.client.discovery.DiscoveryClient"))
-                        ||(method.equals("choose")&&Set.of(
-                                "org.springframework.cloud.client.loadbalancer.LoadBalancerClient",
-                                "org.springframework.cloud.client.loadbalancer.ServiceInstanceChooser").contains(type));
-                if (!rest && !reactive && !discovery && !jaxRsRequest
-                        || typeEntity(selected.declaringType()).origin() != EntityOrigin.DEPENDENCY)
-                    continue;
-                var bound = callable(selected, call);
-                var span = source(call).span(call);
-                var caller = owner(call);
-                var binding = bindings.get(span);
-                if (binding == null || !(binding.relationship().target() instanceof RelationshipTarget.Resolved r)
-                        || !r.target().equals(bound.identity()))
-                    continue;
-                if (jaxRsRequest) {
-                    String jaxRsUri = resolveJaxRsWebTargetUri(call);
-                    String jaxRsVerb = jaxRsInvocationVerb(call);
-                    result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span,
-                            jaxRsUri, jaxRsVerb.isEmpty() ? List.of() : List.of(jaxRsVerb)));
-                    continue;
-                }
-                String rawArg = call.getArguments().isEmpty() ? "" : HttpClientConstants.uri(call.getArgument(0));
-                if (discovery) {
-                    String svc = rawArg.trim();
-                    if (!svc.isEmpty())
+        var emittedSpans = new HashSet<SourceSpan>();
+        if (!candidates.isEmpty() && !bindings.isEmpty()) {
+            for (var call : candidates) {
+                String method = call.getNameAsString();
+                try {
+                    var selected = call.resolve();
+                    String type = selected.declaringType().getQualifiedName();
+                    boolean rest = Set.of(
+                            "org.springframework.web.client.RestTemplate",
+                            "org.springframework.web.client.RestOperations",
+                            "org.springframework.security.oauth2.client.OAuth2RestTemplate",
+                            "org.springframework.security.oauth2.client.OAuth2RestOperations").contains(type);
+                    boolean reactive = method.equals("uri") && (type.startsWith("org.springframework.web.reactive.function.client.WebClient.")
+                            || type.startsWith("org.springframework.web.client.RestClient."));
+                    boolean jaxRsRequest = method.equals("request")
+                            && Set.of("javax.ws.rs.client.WebTarget", "jakarta.ws.rs.client.WebTarget").contains(type);
+                    boolean discovery = (method.equals("getInstances") && type.equals("org.springframework.cloud.client.discovery.DiscoveryClient"))
+                            || (method.equals("choose") && Set.of(
+                                    "org.springframework.cloud.client.loadbalancer.LoadBalancerClient",
+                                    "org.springframework.cloud.client.loadbalancer.ServiceInstanceChooser").contains(type));
+                    boolean gatewayUri = (method.equals("uri") && type.startsWith("org.springframework.cloud.gateway.route.builder."))
+                            || (method.equals("http") && type.equals("org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions"))
+                            || (method.equals("uri") && type.equals("org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions"))
+                            || (method.equals("lb") && type.equals("org.springframework.cloud.gateway.server.mvc.filter.LoadBalancerFilterFunctions"));
+                    if (!rest && !reactive && !discovery && !jaxRsRequest && !gatewayUri
+                            || typeEntity(selected.declaringType()).origin() != EntityOrigin.DEPENDENCY)
+                        continue;
+                    var bound = callable(selected, call);
+                    var span = source(call).span(call);
+                    var caller = owner(call);
+                    var binding = bindings.get(span);
+                    if (binding == null || !(binding.relationship().target() instanceof RelationshipTarget.Resolved r)
+                            || !r.target().equals(bound.identity()))
+                        continue;
+                    if (jaxRsRequest) {
+                        String jaxRsUri = resolveJaxRsWebTargetUri(call, enumConstants);
+                        String jaxRsVerb = jaxRsInvocationVerb(call, enumConstants);
                         result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span,
-                                "lb://" + svc + "/", List.of()));
+                                jaxRsUri, jaxRsVerb.isEmpty() ? List.of() : List.of(jaxRsVerb)));
+                        emittedSpans.add(span);
+                        continue;
+                    }
+                    String rawArg = call.getArguments().isEmpty() ? "" : HttpClientConstants.uri(call.getArgument(0), enumConstants);
+                    if (gatewayUri) {
+                        String gwUri = method.equals("lb") && !rawArg.isBlank() ? "lb://" + rawArg.trim() + "/" : rawArg.trim();
+                        if (gwUri.contains("#{") && gwUri.indexOf('}', gwUri.indexOf("#{")) > gwUri.indexOf("#{")) {
+                            unit.diagnostics.add(new Diagnostic(DiagnosticSeverity.WARNING, "java.spel-dynamic-uri",
+                                    "SpEL dynamic gateway URI requires runtime evaluation", Optional.of(span),
+                                    Map.of("reasonCode", "SPEL_DYNAMIC_URI", "expression", gwUri)));
+                        }
+                        result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span, gwUri, List.of()));
+                        emittedSpans.add(span);
+                        continue;
+                    }
+                    if (discovery) {
+                        String svc = rawArg.trim();
+                        if (!svc.isEmpty()) {
+                            result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span,
+                                    "lb://" + svc + "/", List.of()));
+                            emittedSpans.add(span);
+                        }
+                        continue;
+                    }
+                    String baseUrl = reactive ? fluentChainBaseUrl(call, enumConstants) : "";
+                    String uri = (!baseUrl.isEmpty() && rawArg.startsWith("/")) ? combineBaseUri(baseUrl, rawArg) : rawArg;
+                    String verb = method.startsWith("getFor") ? "GET"
+                            : method.startsWith("postFor") ? "POST"
+                                    : method.equals("put") ? "PUT"
+                                            : method.equals("patchForObject") ? "PATCH"
+                                                    : method.equals("delete") ? "DELETE"
+                                                            : method.equals("headForHeaders") ? "HEAD"
+                                                                    : method.equals("optionsForAllow") ? "OPTIONS" : "";
+                    if (reactive)
+                        verb = reactiveVerb(call, bindings);
+                    result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span, uri,
+                            verb.isEmpty() ? List.of() : List.of(verb)));
+                    emittedSpans.add(span);
+                } catch (RuntimeException | LinkageError | StackOverflowError unavailable) {
+                    /* The original attribution ledger retains unavailable bindings. */}
+            }
+        }
+        // Bounded k=2 callsite-sensitive wrapper folding (hopDepth <= 4, cap 16/slot)
+        for (var folded : activeWrapperIndex.foldCallSites(unit.input.document().path())) {
+                if (folded.dynamicUnresolved()
+                        || (folded.primaryKind() != HttpClientConstants.SinkKind.HTTP_URI
+                                && folded.primaryKind() != HttpClientConstants.SinkKind.HTTP_HOST)
+                        || folded.uri().isEmpty()) {
                     continue;
                 }
-                String baseUrl = reactive ? fluentChainBaseUrl(call) : "";
-                String uri = (!baseUrl.isEmpty() && rawArg.startsWith("/")) ? combineBaseUri(baseUrl, rawArg) : rawArg;
-                String verb = method.startsWith("getFor") ? "GET"
-                        : method.startsWith("postFor") ? "POST"
-                                : method.equals("put") ? "PUT"
-                                        : method.equals("patchForObject") ? "PATCH"
-                                                : method.equals("delete") ? "DELETE"
-                                                        : method.equals("headForHeaders") ? "HEAD"
-                                                                : method.equals("optionsForAllow") ? "OPTIONS" : "";
-                if (reactive)
-                    verb = reactiveVerb(call, bindings);
-                result.add(new HttpClientCallRecord(caller.identity(), bound.identity(), span, uri,
-                        verb.isEmpty() ? List.of() : List.of(verb)));
-            } catch (RuntimeException | LinkageError | StackOverflowError unavailable) {
-                /* The original attribution ledger retains unavailable bindings. */}
-        }
+                String rangeKey = folded.startLine() + ":" + folded.startColumn() + ":"
+                        + folded.endLine() + ":" + folded.endColumn();
+                MethodCallExpr call = callsByRange.get(rangeKey);
+                if (call == null) continue;
+                try {
+                    var span = source(call).span(call);
+                    if (!emittedSpans.add(span)) continue;
+                    var caller = owner(call);
+                    EntityIdentity targetId = null;
+                    var binding = bindings.get(span);
+                    if (binding != null && binding.relationship().target() instanceof RelationshipTarget.Resolved r) {
+                        targetId = r.target();
+                    } else {
+                        targetId = callable(call.resolve(), call).identity();
+                    }
+                    if (targetId != null) {
+                        List<String> verbs = folded.httpMethod().isEmpty() ? List.of() : List.of(folded.httpMethod());
+                        result.add(new HttpClientCallRecord(caller.identity(), targetId, span, folded.uri(), verbs));
+                    }
+                } catch (RuntimeException | LinkageError | StackOverflowError unavailable) {
+                    /* Wrapper callsite target could not be bound cleanly. */
+                }
+            }
         return result;
     }
 
-    private String resolveJaxRsWebTargetUri(MethodCallExpr requestCall) {
+    private String resolveJaxRsWebTargetUri(MethodCallExpr requestCall, HttpClientConstants.EnumConstantMap enumConstants) {
         var pathSegments = new ArrayList<String>();
         String baseUri = "";
         Expression cur = requestCall.getScope().orElse(null);
@@ -1938,13 +1998,13 @@ final class Extraction {
             if (cur instanceof MethodCallExpr mc) {
                 String name = mc.getNameAsString();
                 if (name.equals("path") && !mc.getArguments().isEmpty()) {
-                    String seg = HttpClientConstants.uri(mc.getArgument(0)).trim();
+                    String seg = HttpClientConstants.uri(mc.getArgument(0), enumConstants).trim();
                     pathSegments.addFirst(seg.isEmpty() ? "{param}" : seg);
                     cur = mc.getScope().orElse(null);
                     continue;
                 }
                 if (name.equals("target") && !mc.getArguments().isEmpty()) {
-                    baseUri = HttpClientConstants.uri(mc.getArgument(0)).trim();
+                    baseUri = HttpClientConstants.uri(mc.getArgument(0), enumConstants).trim();
                     break;
                 }
                 cur = mc.getScope().orElse(null);
@@ -1995,7 +2055,7 @@ final class Extraction {
         return Optional.empty();
     }
 
-    private static String jaxRsInvocationVerb(MethodCallExpr requestCall) {
+    private static String jaxRsInvocationVerb(MethodCallExpr requestCall, HttpClientConstants.EnumConstantMap enumConstants) {
         Node cur = requestCall;
         for (int depth = 0; depth < 6; depth++) {
             Node parent = cur.getParentNode().orElse(null);
@@ -2010,7 +2070,7 @@ final class Extraction {
                 return n.substring(5).toUpperCase(Locale.ROOT);
             }
             if (n.equals("method") && !parentCall.getArguments().isEmpty()) {
-                String v = HttpClientConstants.uri(parentCall.getArgument(0)).trim().toUpperCase(Locale.ROOT);
+                String v = HttpClientConstants.uri(parentCall.getArgument(0), enumConstants).trim().toUpperCase(Locale.ROOT);
                 if (Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS").contains(v)) {
                     return v;
                 }
@@ -2020,11 +2080,11 @@ final class Extraction {
         return "";
     }
 
-    private String fluentChainBaseUrl(MethodCallExpr uriCall) {
+    private String fluentChainBaseUrl(MethodCallExpr uriCall, HttpClientConstants.EnumConstantMap enumConstants) {
         Expression scope = uriCall.getScope().orElse(null);
         while (scope instanceof MethodCallExpr call) {
             if (call.getNameAsString().equals("baseUrl") && !call.getArguments().isEmpty()) {
-                String base = HttpClientConstants.uri(call.getArgument(0)).trim();
+                String base = HttpClientConstants.uri(call.getArgument(0), enumConstants).trim();
                 if (!base.isEmpty())
                     return base;
             }
@@ -2305,6 +2365,7 @@ final class Extraction {
                 var unit = new Unit(input, ast, raw.translated());
                 units.put(ast, unit);
                 android.observeUnit(unit.ast);
+                wrapperIndexBuilder.addUnit(input.document().path(), unit.ast);
                 if (request.sourceRecovery()) {
                     unitRecoveryObservations.put(input.document().identity(),
                             environment.explicitImports.observeUnitWithSummary(unit.ast, input.document().path()));
@@ -2392,6 +2453,7 @@ final class Extraction {
                 if (parsedOpt.isPresent()) {
                     var unit = parsedOpt.orElseThrow();
                     android.observeUnit(unit.ast);
+                    wrapperIndexBuilder.addUnit(input.document().path(), unit.ast);
                     if (request.sourceRecovery()) {
                         unitRecoveryObservations.put(input.document().identity(),
                                 environment.explicitImports.observeUnitWithSummary(unit.ast, input.document().path()));
@@ -2478,6 +2540,7 @@ final class Extraction {
                 }
             }
         }
+        wrapperIndex = wrapperIndexBuilder.build();
     }
 
     private void recordReactorAbi(SourceInput input, CompilationUnit skeletonAst) {

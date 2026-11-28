@@ -173,6 +173,110 @@
         "id": "shopizer-ecommerce/shopizer",
         "dir": "shopizer"
       }
+    ],
+    "micans_10_blind_holdout": [
+      {
+        "id": "micans-holdout/netdisk",
+        "dir": "netdisk",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/xmall",
+        "dir": "xmall",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/onemall",
+        "dir": "onemall",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/mogu",
+        "dir": "mogu",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/basemall",
+        "dir": "basemall",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/youlai",
+        "dir": "youlai",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/novel",
+        "dir": "novel",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/sduoj",
+        "dir": "sduoj",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/roncoo",
+        "dir": "roncoo",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "micans-holdout/mall4cloud",
+        "dir": "mall4cloud",
+        "source": "zenodo:15050505",
+        "stack": "java-spring-microservice",
+        "blind_holdout": true,
+        "metadata_only": true
+      }
+    ],
+    "deathstarbench_holdout": [
+      {
+        "id": "DeathStarBench/socialNetwork",
+        "dir": "socialNetwork",
+        "url": "https://github.com/delimitrou/DeathStarBench",
+        "stack": "polyglot-thrift-microservices",
+        "ground_truth_nodes": 21,
+        "ground_truth_edges": 25,
+        "blind_holdout": true,
+        "metadata_only": true
+      },
+      {
+        "id": "DeathStarBench/mediaMicroservices",
+        "dir": "mediaMicroservices",
+        "url": "https://github.com/delimitrou/DeathStarBench",
+        "stack": "polyglot-thrift-microservices",
+        "ground_truth_nodes": 29,
+        "ground_truth_edges": 34,
+        "blind_holdout": true,
+        "metadata_only": true
+      }
     ]
   }
 }

@@ -596,4 +596,310 @@ class JavaServiceSyntaxExtractorTest {
         assertTrue(facts.stream().noneMatch(f -> f.name().contains("VERY_LONG_QUEUE_IDENTIFIER") || f.name().equals("\"null\"") || f.name().equals("\"\"")),
                 () -> "Blank, null, and >128-char symbolic expressions must be excluded: " + facts);
     }
+
+    @Test
+    void extractsAmqpBeanQueuesExchangesAndBindingsViaDiParamMappingAndConstructor() throws Exception {
+        String source = """
+                package demo;
+                import org.springframework.amqp.core.Binding;
+                import org.springframework.amqp.core.BindingBuilder;
+                import org.springframework.amqp.core.DirectExchange;
+                import org.springframework.amqp.core.FanoutExchange;
+                import org.springframework.amqp.core.Queue;
+                import org.springframework.amqp.core.QueueBuilder;
+                import org.springframework.amqp.core.TopicExchange;
+                import org.springframework.amqp.rabbit.core.RabbitTemplate;
+                import org.springframework.beans.factory.annotation.Qualifier;
+                import org.springframework.context.annotation.Bean;
+                import org.springframework.context.annotation.Configuration;
+
+                @Configuration
+                class AmqpTopologyConfig {
+                    private static final String TOPIC_KEY = "order.*.created";
+
+                    @Bean("ordersCreatedQueue")
+                    Queue ordersCreatedQueue() {
+                        return QueueBuilder.durable("orders.created.q").build();
+                    }
+
+                    @Bean
+                    Queue billingQueue() {
+                        return new Queue("billing.paid.q", true);
+                    }
+
+                    @Bean
+                    Queue fanoutQueue() {
+                        return new Queue("notify.all.q");
+                    }
+
+                    @Bean
+                    TopicExchange ordersExchange() {
+                        return new TopicExchange("orders.topic.ex");
+                    }
+
+                    @Bean
+                    DirectExchange billingExchange() {
+                        return new DirectExchange("billing.direct.ex");
+                    }
+
+                    @Bean
+                    FanoutExchange notifyExchange() {
+                        return new FanoutExchange("notify.fanout.ex");
+                    }
+
+                    @Bean
+                    Binding topicBinding(@Qualifier("ordersCreatedQueue") Queue q, TopicExchange ex) {
+                        return BindingBuilder.bind(q).to(ex).with(TOPIC_KEY);
+                    }
+
+                    @Bean
+                    Binding directCtorBinding(Queue billingQueue, DirectExchange billingExchange) {
+                        return new Binding(billingQueue.getName(), Binding.DestinationType.QUEUE,
+                                billingExchange.getName(), "invoice.paid", null);
+                    }
+
+                    @Bean
+                    Binding fanoutBinding() {
+                        return BindingBuilder.bind(fanoutQueue()).to(notifyExchange());
+                    }
+
+                    @Bean
+                    Binding dynamicBinding(Queue billingQueue, TopicExchange ordersExchange, String runtimeKey) {
+                        return BindingBuilder.bind(billingQueue).to(ordersExchange).with(runtimeKey);
+                    }
+
+                    void publish(RabbitTemplate rabbit, String dynKey, Object payload) {
+                        rabbit.convertAndSend("orders.topic.ex", "order.us.created", payload);
+                        rabbit.convertAndSend("orders.topic.ex", dynKey, payload);
+                    }
+                }
+                """;
+        var facts = new ArrayList<JavaGrpcSourceFrontend.Fact>();
+        assertTrue(JavaServiceSyntaxExtractor.candidate(source.getBytes(StandardCharsets.UTF_8)));
+        new JavaServiceSyntaxExtractor().parse(source.getBytes(StandardCharsets.UTF_8), facts::add, () -> false);
+
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("AMQP_BINDING")
+                && "orders.topic.ex".equals(f.attributes().get("exchangeName"))
+                && "order.*.created".equals(f.attributes().get("routingKeyPattern"))
+                && "orders.created.q".equals(f.attributes().get("queueName"))
+                && "TOPIC".equals(f.attributes().get("exchangeType"))),
+                () -> "Missing fluent [DiInj-Param] topic binding: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("AMQP_BINDING")
+                && "billing.direct.ex".equals(f.attributes().get("exchangeName"))
+                && "invoice.paid".equals(f.attributes().get("routingKeyPattern"))
+                && "billing.paid.q".equals(f.attributes().get("queueName"))
+                && "DIRECT".equals(f.attributes().get("exchangeType"))),
+                () -> "Missing new Binding(...) direct binding: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("AMQP_BINDING")
+                && "notify.fanout.ex".equals(f.attributes().get("exchangeName"))
+                && "notify.all.q".equals(f.attributes().get("queueName"))
+                && "FANOUT".equals(f.attributes().get("exchangeType"))),
+                () -> "Missing fanout sibling-bean binding: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("AMQP_BINDING")
+                && "orders.topic.ex".equals(f.attributes().get("exchangeName"))
+                && "true".equals(f.attributes().get("dynamicRoutingKey"))),
+                () -> "Missing dynamic routing key flag on AMQP binding: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("EVENT_PRODUCER_CANDIDATE")
+                && "RABBITMQ".equals(f.attributes().get("protocol"))
+                && "orders.topic.ex".equals(f.attributes().get("exchange"))
+                && "order.us.created".equals(f.attributes().get("routingKey"))),
+                () -> "Missing exchange+routingKey on RabbitTemplate.convertAndSend: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("EVENT_PRODUCER_CANDIDATE")
+                && "RABBITMQ".equals(f.attributes().get("protocol"))
+                && "orders.topic.ex".equals(f.attributes().get("exchange"))
+                && "true".equals(f.attributes().get("dynamicRoutingKey"))),
+                () -> "Missing dynamicRoutingKey on dynamic RabbitTemplate.convertAndSend: " + facts);
+
+        // Negative anti-FP check: unimported local BindingBuilder/Queue must emit zero facts
+        String fakeAmqp = """
+                package fake;
+                @interface Bean {}
+                class Queue { Queue(String n) {} }
+                class TopicExchange { TopicExchange(String n) {} }
+                class Binding {}
+                class BindingBuilder {
+                    static BindingBuilder bind(Queue q) { return new BindingBuilder(); }
+                    BindingBuilder to(TopicExchange e) { return this; }
+                    Binding with(String k) { return new Binding(); }
+                }
+                class FakeAmqpConfig {
+                    @Bean Queue q() { return new Queue("fake.q"); }
+                    @Bean TopicExchange e() { return new TopicExchange("fake.ex"); }
+                    @Bean Binding b(Queue q, TopicExchange e) { return BindingBuilder.bind(q).to(e).with("a.*"); }
+                }
+                """;
+        var fakeFacts = new ArrayList<JavaGrpcSourceFrontend.Fact>();
+        new JavaServiceSyntaxExtractor().parse(fakeAmqp.getBytes(StandardCharsets.UTF_8), fakeFacts::add, () -> false);
+        assertTrue(fakeFacts.isEmpty(), () -> "Unimported custom AMQP types must not emit facts: " + fakeFacts);
+    }
+
+    @Test
+    void extractsSpringCloudGatewayJavaFluentDslAndGatewayRouterFunctionsAndSpelFeign() throws Exception {
+        String source = """
+                package demo;
+                import org.springframework.cloud.gateway.route.RouteLocator;
+                import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
+                import org.springframework.cloud.gateway.server.mvc.filter.FilterFunctions;
+                import org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions;
+                import org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions;
+                import org.springframework.cloud.openfeign.FeignClient;
+                import org.springframework.context.annotation.Bean;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.web.bind.annotation.GetMapping;
+
+                @Configuration
+                class GatewayRoutesConfig {
+                    @Bean
+                    RouteLocator routes(RouteLocatorBuilder builder) {
+                        return builder.routes()
+                                .route("orders-route", r -> r.path("/api/orders/**")
+                                        .filters(f -> f.stripPrefix(1))
+                                        .uri("lb://order-service"))
+                                .route("catalog-route", r -> r.path("/v1/catalog/**")
+                                        .filters(f -> f.rewritePath("/v1/catalog/(?<seg>.*)", "/catalog/${seg}"))
+                                        .uri("http://catalog-service:8080"))
+                                .route("dynamic-spel", r -> r.path("/dyn/**")
+                                        .uri("#{@routeResolver.uri}"))
+                                .build();
+                    }
+
+                    @Bean
+                    Object mvcRoute() {
+                        return GatewayRouterFunctions.route("mvc-billing")
+                                .GET("/api/billing/**", HandlerFunctions.http("http://billing-service:8081"))
+                                .filter(FilterFunctions.stripPrefix(1))
+                                .build();
+                    }
+                }
+
+                @FeignClient(name = "${inventory.svc:inventory-default}", url = "${inventory.url:http://inventory-default:8080}")
+                interface InventoryClient {
+                    @GetMapping("/stock")
+                    String stock();
+                }
+
+                @FeignClient(url = "#{@dynamicEndpoint.url}")
+                interface SpelClient {
+                    @GetMapping("/items")
+                    String items();
+                }
+                """;
+        var facts = new ArrayList<JavaGrpcSourceFrontend.Fact>();
+        assertTrue(JavaServiceSyntaxExtractor.candidate(source.getBytes(StandardCharsets.UTF_8)));
+        new JavaServiceSyntaxExtractor().parse(source.getBytes(StandardCharsets.UTF_8), facts::add, () -> false);
+
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("GATEWAY_ROUTE")
+                && f.nodeKind().equals("gateway_java_dsl")
+                && "order-service".equals(f.attributes().get("targetService"))
+                && "/api/orders/**".equals(f.attributes().get("pathPrefix"))
+                && "1".equals(f.attributes().get("stripPrefix"))
+                && "lb://order-service".equals(f.attributes().get("uri"))),
+                () -> "Missing RouteLocatorBuilder stripPrefix route: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("GATEWAY_ROUTE")
+                && f.nodeKind().equals("gateway_java_dsl")
+                && "catalog-service".equals(f.attributes().get("targetService"))
+                && "/v1/catalog/(?<seg>.*)".equals(f.attributes().get("rewriteFrom"))
+                && "/catalog/${seg}".equals(f.attributes().get("rewriteTo"))),
+                () -> "Missing RouteLocatorBuilder rewritePath route: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("GATEWAY_ROUTE")
+                && "true".equals(f.attributes().get("spelExpression"))
+                && "#{@routeResolver.uri}".equals(f.attributes().get("spelRaw"))),
+                () -> "Missing SpEL Gateway route detection: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("GATEWAY_ROUTE")
+                && f.nodeKind().equals("gateway_router_function")
+                && "billing-service".equals(f.attributes().get("targetService"))
+                && "/api/billing/**".equals(f.attributes().get("pathPrefix"))
+                && "1".equals(f.attributes().get("stripPrefix"))),
+                () -> "Missing GatewayRouterFunctions route: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("HTTP_CALL_CANDIDATE")
+                && "inventory.url".equals(f.attributes().get("propertyKey"))
+                && "inventory.svc".equals(f.attributes().get("servicePropertyKey"))
+                && "inventory-default".equals(f.attributes().get("targetService"))),
+                () -> "Missing multi-profile @FeignClient placeholder metadata: " + facts);
+        assertTrue(facts.stream().anyMatch(f -> f.category().equals("HTTP_CALL_CANDIDATE")
+                && "true".equals(f.attributes().get("spelExpression"))
+                && "#{@dynamicEndpoint.url}".equals(f.attributes().get("spelRaw"))),
+                () -> "Missing SpEL @FeignClient detection: " + facts);
+    }
+
+    @Test
+    void boundedKCallsiteWrapperFoldingWithEnumConstantsPreventsCartesianExplosion() throws Exception {
+        String source = """
+                package demo;
+                import org.springframework.amqp.rabbit.core.RabbitTemplate;
+                import org.springframework.web.client.RestTemplate;
+
+                enum BackendTarget {
+                    CATALOG("catalog-service"),
+                    BILLING("billing-service");
+                    private final String serviceHost;
+                    BackendTarget(String serviceHost) { this.serviceHost = serviceHost; }
+                    String getServiceHost() { return this.serviceHost; }
+                }
+
+                class WrapperClients {
+                    private final RestTemplate rest;
+                    private final RabbitTemplate rabbit;
+
+                    WrapperClients(RestTemplate rest, RabbitTemplate rabbit) {
+                        this.rest = rest;
+                        this.rabbit = rabbit;
+                    }
+
+                    private String invokeHttp(BackendTarget target, String path) {
+                        return rest.getForObject("http://" + target.getServiceHost() + path, String.class);
+                    }
+
+                    private String fetchViaFacade(BackendTarget target, String path) {
+                        return invokeHttp(target, path);
+                    }
+
+                    private void publishEvent(String exchange, String key, Object msg) {
+                        rabbit.convertAndSend(exchange, key, msg);
+                    }
+
+                    void orchestrate(String runtimeKey, Object msg) {
+                        fetchViaFacade(BackendTarget.CATALOG, "/items");
+                        fetchViaFacade(BackendTarget.BILLING, "/invoices");
+                        publishEvent("ex.alpha", "k.alpha", msg);
+                        publishEvent("ex.beta", "k.beta", msg);
+                        publishEvent("ex.gamma", runtimeKey, msg);
+                    }
+                }
+                """;
+        var facts = new ArrayList<JavaGrpcSourceFrontend.Fact>();
+        assertTrue(JavaServiceSyntaxExtractor.candidate(source.getBytes(StandardCharsets.UTF_8)));
+        new JavaServiceSyntaxExtractor().parse(source.getBytes(StandardCharsets.UTF_8), facts::add, () -> false);
+
+        var wrapperHttp = facts.stream()
+                .filter(f -> f.category().equals("HTTP_CALL_CANDIDATE")
+                        && "WRAPPER_FOLDED".equals(f.attributes().get("clientKind")))
+                .toList();
+        assertEquals(2, wrapperHttp.size(), () -> "Must fold exactly 2 callsite-scoped HTTP wrapper calls without Cartesian mix: " + wrapperHttp);
+        assertTrue(wrapperHttp.stream().anyMatch(f -> f.name().equals("\"http://catalog-service/items\"")
+                && "catalog-service".equals(f.attributes().get("targetService"))));
+        assertTrue(wrapperHttp.stream().anyMatch(f -> f.name().equals("\"http://billing-service/invoices\"")
+                && "billing-service".equals(f.attributes().get("targetService"))));
+        // Verify ZERO Cartesian cross-product (catalog-service/invoices or billing-service/items)
+        assertTrue(wrapperHttp.stream().noneMatch(f -> f.name().contains("catalog-service/invoices")
+                || f.name().contains("billing-service/items")));
+
+        var wrapperAmqp = facts.stream()
+                .filter(f -> f.category().equals("EVENT_PRODUCER_CANDIDATE")
+                        && "wrapper_call".equals(f.nodeKind())
+                        && "RABBITMQ".equals(f.attributes().get("protocol")))
+                .toList();
+        assertEquals(3, wrapperAmqp.size(), () -> "Expected 2 concrete AMQP wrapper pairs + 1 dynamic unresolved: " + wrapperAmqp);
+        assertTrue(wrapperAmqp.stream().anyMatch(f -> "ex.alpha".equals(f.attributes().get("exchange"))
+                && "k.alpha".equals(f.attributes().get("routingKey"))));
+        assertTrue(wrapperAmqp.stream().anyMatch(f -> "ex.beta".equals(f.attributes().get("exchange"))
+                && "k.beta".equals(f.attributes().get("routingKey"))));
+        // Strictly ZERO Cartesian mix between distinct callsites!
+        assertTrue(wrapperAmqp.stream().noneMatch(f -> ("ex.alpha".equals(f.attributes().get("exchange"))
+                        && "k.beta".equals(f.attributes().get("routingKey")))
+                || ("ex.beta".equals(f.attributes().get("exchange"))
+                        && "k.alpha".equals(f.attributes().get("routingKey")))));
+        assertTrue(wrapperAmqp.stream().anyMatch(f -> "ex.gamma".equals(f.attributes().get("exchange"))
+                && "true".equals(f.attributes().get("dynamicRoutingKey"))));
+    }
 }
