@@ -319,6 +319,22 @@ class Wp44MultiJdkAndJacocoTest(unittest.TestCase):
                 self.assertIn("set -f", script)
                 self.assertIn("set +f", script)
 
+    def test_class_dependency_census_compiles_under_java_8(self):
+        import os
+        import shutil
+        import subprocess
+        javac_bin = shutil.which("javac")
+        if not javac_bin and os.environ.get("JAVA_HOME"):
+            candidate = Path(os.environ["JAVA_HOME"]) / "bin" / ("javac.exe" if os.name == "nt" else "javac")
+            if candidate.is_file():
+                javac_bin = str(candidate)
+        if not javac_bin:
+            self.skipTest("javac unavailable on host")
+        census_java = REPO_ROOT / "analyzer-execution" / "src" / "main" / "resources" / "captured-repair" / "ClassDependencyCensus.java"
+        with tempfile.TemporaryDirectory() as tmp:
+            res = subprocess.run([javac_bin, "--release", "8", "-d", tmp, str(census_java)], capture_output=True, text=True)
+            self.assertEqual(0, res.returncode, f"ClassDependencyCensus must compile under JDK 8:\n{res.stderr}")
+
 
 if __name__ == "__main__":
     unittest.main()

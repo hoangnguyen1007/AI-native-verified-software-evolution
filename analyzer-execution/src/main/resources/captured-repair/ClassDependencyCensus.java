@@ -6,18 +6,37 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
- * Pure-JDK bytecode class & dependency census plus Surefire/Gradle XML aggregator and failing test
- * detail extractor for isolated repair builds.
+ * Pure-JDK (Java 8–21 compatible) bytecode class & dependency census plus Surefire/Gradle XML aggregator
+ * and failing test detail extractor for isolated repair builds.
  * Emits CanonicalJson-compatible classCensus JSON: {"classCount":...,"classes":{...},"dependencies":{...}}.
  */
 public final class ClassDependencyCensus {
-    private static final HexFormat HEX = HexFormat.of();
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
     private static final int MAX_FAILURES = 30;
     private static final int MAX_MSG_CHARS = 400;
 
-    private record TestFailure(String className, String methodName, String kind, String message) {}
+    private static final class TestFailure {
+        private final String className;
+        private final String methodName;
+        private final String kind;
+        private final String message;
+
+        TestFailure(String className, String methodName, String kind, String message) {
+            this.className = className;
+            this.methodName = methodName;
+            this.kind = kind;
+            this.message = message;
+        }
+
+        String className() { return className; }
+        String methodName() { return methodName; }
+        String kind() { return kind; }
+        String message() { return message; }
+    }
 
     public static void main(String[] args) throws Exception {
         if (args.length >= 1 && "--behavioral".equals(args[0])) {
@@ -28,21 +47,21 @@ public final class ClassDependencyCensus {
             System.err.println("Usage: ClassDependencyCensus <repo-root> <census-out.json> [<summary-out.env>] [<failures-out.json>] [<fail-ids-out.txt>]");
             System.exit(2);
         }
-        Path repoRoot = Path.of(args[0]).toAbsolutePath().normalize();
-        Path jsonOut = Path.of(args[1]).toAbsolutePath().normalize();
-        Path envOut = args.length >= 3 ? Path.of(args[2]).toAbsolutePath().normalize() : null;
-        Path failuresOut = args.length >= 4 ? Path.of(args[3]).toAbsolutePath().normalize() : null;
-        Path failIdsOut = args.length >= 5 ? Path.of(args[4]).toAbsolutePath().normalize() : null;
+        final Path repoRoot = Paths.get(args[0]).toAbsolutePath().normalize();
+        Path jsonOut = Paths.get(args[1]).toAbsolutePath().normalize();
+        Path envOut = args.length >= 3 ? Paths.get(args[2]).toAbsolutePath().normalize() : null;
+        Path failuresOut = args.length >= 4 ? Paths.get(args[3]).toAbsolutePath().normalize() : null;
+        Path failIdsOut = args.length >= 5 ? Paths.get(args[4]).toAbsolutePath().normalize() : null;
 
-        var classes = new TreeMap<String, String>();
-        var dependencies = new TreeMap<String, Set<String>>();
+        final Map<String, String> classes = new TreeMap<String, String>();
+        final Map<String, Set<String>> dependencies = new TreeMap<String, Set<String>>();
         int[] testCounts = new int[3]; // run, failed, errors
-        var failures = new ArrayList<TestFailure>();
-        var failingIds = new TreeSet<String>();
+        List<TestFailure> failures = new ArrayList<TestFailure>();
+        Set<String> failingIds = new TreeSet<String>();
 
-        var classDirs = new ArrayList<Path>();
-        var surefireDirs = new ArrayList<Path>();
-        Files.walkFileTree(repoRoot, new SimpleFileVisitor<>() {
+        final List<Path> classDirs = new ArrayList<Path>();
+        final List<Path> surefireDirs = new ArrayList<Path>();
+        Files.walkFileTree(repoRoot, new SimpleFileVisitor<Path>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 String name = dir.getFileName() == null ? "" : dir.getFileName().toString();
@@ -66,7 +85,7 @@ public final class ClassDependencyCensus {
         });
 
         for (Path classDir : classDirs) {
-            Files.walkFileTree(classDir, new SimpleFileVisitor<>() {
+            Files.walkFileTree(classDir, new SimpleFileVisitor<Path>() {
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                     String fname = file.getFileName().toString();
@@ -77,8 +96,12 @@ public final class ClassDependencyCensus {
                     ParsedClass parsed = parseClassFile(bytes);
                     if (parsed != null && parsed.thisClass() != null) {
                         classes.put(parsed.thisClass(), sha256(bytes));
-                        dependencies.computeIfAbsent(parsed.thisClass(), ignored -> new TreeSet<>())
-                                .addAll(parsed.dependencies());
+                        Set<String> deps = dependencies.get(parsed.thisClass());
+                        if (deps == null) {
+                            deps = new TreeSet<String>();
+                            dependencies.put(parsed.thisClass(), deps);
+                        }
+                        deps.addAll(parsed.dependencies());
                     }
                     return FileVisitResult.CONTINUE;
                 }
@@ -86,8 +109,9 @@ public final class ClassDependencyCensus {
         }
 
         for (Path reportDir : surefireDirs) {
-            try (var stream = Files.list(reportDir)) {
-                for (Path file : stream.sorted().toList()) {
+            try (Stream<Path> stream = Files.list(reportDir)) {
+                List<Path> files = stream.sorted().collect(Collectors.toList());
+                for (Path file : files) {
                     String fname = file.getFileName().toString();
                     if (fname.startsWith("TEST-") && fname.endsWith(".xml") && Files.isRegularFile(file)) {
                         accumulateSurefire(file, testCounts, failures, failingIds);
@@ -109,18 +133,18 @@ public final class ClassDependencyCensus {
                     + "TESTS_ERRORS=" + testCounts[2] + "\n"
                     + "CLASS_COUNT=" + classes.size() + "\n"
                     + "CLASS_CENSUS_SHA256=" + censusSha256 + "\n";
-            Files.writeString(envOut, env, StandardCharsets.UTF_8);
+            Files.write(envOut, env.getBytes(StandardCharsets.UTF_8));
         }
 
         if (failuresOut != null) {
             if (failuresOut.getParent() != null) Files.createDirectories(failuresOut.getParent());
-            Files.writeString(failuresOut, toFailuresJson(failures), StandardCharsets.UTF_8);
+            Files.write(failuresOut, toFailuresJson(failures).getBytes(StandardCharsets.UTF_8));
         }
 
         if (failIdsOut != null) {
             if (failIdsOut.getParent() != null) Files.createDirectories(failIdsOut.getParent());
             String joined = failingIds.isEmpty() ? "" : (String.join("\n", failingIds) + "\n");
-            Files.writeString(failIdsOut, joined, StandardCharsets.UTF_8);
+            Files.write(failIdsOut, joined.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -136,11 +160,11 @@ public final class ClassDependencyCensus {
         int candRun = Integer.parseInt(args[5]);
         int candFail = Integer.parseInt(args[6]);
         String outShaHex = args[7].trim();
-        var baseIds = readFailIds(Path.of(args[8]));
-        var candIds = readFailIds(Path.of(args[9]));
-        Path outJson = Path.of(args[10]).toAbsolutePath().normalize();
+        List<String> baseIds = readFailIds(Paths.get(args[8]));
+        List<String> candIds = readFailIds(Paths.get(args[9]));
+        Path outJson = Paths.get(args[10]).toAbsolutePath().normalize();
 
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         sb.append("{\"baseExit\":").append(baseExit)
                 .append(",\"baselineFailingTests\":");
         appendJsonStringArray(baseIds, sb);
@@ -155,20 +179,20 @@ public final class ClassDependencyCensus {
         appendJsonString("sha256:" + outShaHex, sb);
         sb.append('}');
         if (outJson.getParent() != null) Files.createDirectories(outJson.getParent());
-        Files.writeString(outJson, sb.toString(), StandardCharsets.UTF_8);
+        Files.write(outJson, sb.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     private static List<String> readFailIds(Path file) {
-        if (file == null || !Files.isRegularFile(file)) return List.of();
+        if (file == null || !Files.isRegularFile(file)) return Collections.emptyList();
         try {
-            var set = new TreeSet<String>();
+            Set<String> set = new TreeSet<String>();
             for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-                String trimmed = line.strip();
+                String trimmed = line.trim();
                 if (!trimmed.isEmpty()) set.add(trimmed);
             }
-            return List.copyOf(set);
+            return Collections.unmodifiableList(new ArrayList<String>(set));
         } catch (IOException ignored) {
-            return List.of();
+            return Collections.emptyList();
         }
     }
 
@@ -183,38 +207,40 @@ public final class ClassDependencyCensus {
 
     private static void accumulateSurefire(Path xml, int[] counts, List<TestFailure> failures, Set<String> failingIds) {
         try {
-            var dbf = DocumentBuilderFactory.newInstance();
+            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
             dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
             dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            var doc = dbf.newDocumentBuilder().parse(xml.toFile());
-            var root = doc.getDocumentElement();
+            org.w3c.dom.Document doc = dbf.newDocumentBuilder().parse(xml.toFile());
+            org.w3c.dom.Element root = doc.getDocumentElement();
             if (root != null && "testsuite".equals(root.getTagName())) {
                 counts[0] += parseAttrInt(root.getAttribute("tests"));
                 counts[1] += parseAttrInt(root.getAttribute("failures"));
                 counts[2] += parseAttrInt(root.getAttribute("errors"));
-                var cases = root.getElementsByTagName("testcase");
+                org.w3c.dom.NodeList cases = root.getElementsByTagName("testcase");
                 for (int i = 0; i < cases.getLength(); i++) {
-                    var tc = cases.item(i);
-                    if (!(tc instanceof org.w3c.dom.Element el)) continue;
+                    org.w3c.dom.Node tc = cases.item(i);
+                    if (!(tc instanceof org.w3c.dom.Element)) continue;
+                    org.w3c.dom.Element el = (org.w3c.dom.Element) tc;
                     String cls = el.getAttribute("classname");
                     String method = el.getAttribute("name");
-                    var children = el.getChildNodes();
+                    org.w3c.dom.NodeList children = el.getChildNodes();
                     for (int j = 0; j < children.getLength(); j++) {
-                        var child = children.item(j);
-                        if (!(child instanceof org.w3c.dom.Element cel)) continue;
+                        org.w3c.dom.Node child = children.item(j);
+                        if (!(child instanceof org.w3c.dom.Element)) continue;
+                        org.w3c.dom.Element cel = (org.w3c.dom.Element) child;
                         String tag = cel.getTagName();
                         if ("failure".equals(tag) || "error".equals(tag)) {
-                            String safeCls = cls == null ? "" : cls.strip();
-                            String safeMethod = method == null ? "" : method.strip();
+                            String safeCls = cls == null ? "" : cls.trim();
+                            String safeMethod = method == null ? "" : method.trim();
                             String id = safeCls.isEmpty() ? safeMethod : (safeMethod.isEmpty() ? safeCls : (safeCls + "#" + safeMethod));
                             if (!id.isEmpty() && failingIds.size() < 500) {
                                 failingIds.add(id);
                             }
                             if (failures.size() < MAX_FAILURES) {
                                 String msg = cel.getAttribute("message");
-                                if (msg == null || msg.isBlank()) msg = cel.getTextContent();
+                                if (msg == null || msg.trim().isEmpty()) msg = cel.getTextContent();
                                 if (msg == null) msg = "";
-                                msg = msg.replaceAll("\\s+", " ").strip();
+                                msg = msg.replaceAll("\\s+", " ").trim();
                                 if (msg.length() > MAX_MSG_CHARS) msg = msg.substring(0, MAX_MSG_CHARS) + "...";
                                 failures.add(new TestFailure(safeCls, safeMethod,
                                         "error".equals(tag) ? "ERROR" : "FAILURE", msg));
@@ -229,10 +255,10 @@ public final class ClassDependencyCensus {
     }
 
     private static String toFailuresJson(List<TestFailure> failures) {
-        var sb = new StringBuilder("[");
+        StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < failures.size(); i++) {
             if (i > 0) sb.append(',');
-            var f = failures.get(i);
+            TestFailure f = failures.get(i);
             sb.append("{\"className\":");
             appendJsonString(f.className(), sb);
             sb.append(",\"kind\":");
@@ -247,7 +273,7 @@ public final class ClassDependencyCensus {
     }
 
     private static int parseAttrInt(String raw) {
-        if (raw == null || raw.isBlank()) return 0;
+        if (raw == null || raw.trim().isEmpty()) return 0;
         try {
             return Math.max(0, Integer.parseInt(raw.trim()));
         } catch (NumberFormatException ignored) {
@@ -255,7 +281,18 @@ public final class ClassDependencyCensus {
         }
     }
 
-    private record ParsedClass(String thisClass, Set<String> dependencies) {}
+    private static final class ParsedClass {
+        private final String thisClass;
+        private final Set<String> dependencies;
+
+        ParsedClass(String thisClass, Set<String> dependencies) {
+            this.thisClass = thisClass;
+            this.dependencies = dependencies;
+        }
+
+        String thisClass() { return thisClass; }
+        Set<String> dependencies() { return dependencies; }
+    }
 
     private static ParsedClass parseClassFile(byte[] bytes) {
         try {
@@ -275,32 +312,47 @@ public final class ClassDependencyCensus {
             for (int i = 1; i < cpCount; i++) {
                 int tag = in.readUnsignedByte();
                 switch (tag) {
-                    case 1 -> utf8[i] = in.readUTF();
-                    case 3, 4 -> in.readInt();
-                    case 5, 6 -> {
+                    case 1:
+                        utf8[i] = in.readUTF();
+                        break;
+                    case 3:
+                    case 4:
+                        in.readInt();
+                        break;
+                    case 5:
+                    case 6:
                         in.readLong();
                         i++;
-                    }
-                    case 7 -> classNameIdx[i] = in.readUnsignedShort();
-                    case 8, 16, 19, 20 -> {
+                        break;
+                    case 7:
+                        classNameIdx[i] = in.readUnsignedShort();
+                        break;
+                    case 8:
+                    case 16:
+                    case 19:
+                    case 20: {
                         int ref = in.readUnsignedShort();
                         if (tag == 16) descriptorIdx[i] = ref;
+                        break;
                     }
-                    case 9, 10, 11, 17, 18 -> {
+                    case 9:
+                    case 10:
+                    case 11:
+                    case 17:
+                    case 18:
                         in.readUnsignedShort();
                         in.readUnsignedShort();
-                    }
-                    case 12 -> {
+                        break;
+                    case 12:
                         in.readUnsignedShort(); // name
                         descriptorIdx[i] = in.readUnsignedShort();
-                    }
-                    case 15 -> {
+                        break;
+                    case 15:
                         in.readUnsignedByte();
                         in.readUnsignedShort();
-                    }
-                    default -> {
+                        break;
+                    default:
                         return null;
-                    }
                 }
             }
 
@@ -310,7 +362,7 @@ public final class ClassDependencyCensus {
             String thisClass = normalizeClassName(utf8, classNameIdx, thisIdx);
             if (thisClass == null) return null;
 
-            var deps = new TreeSet<String>();
+            Set<String> deps = new TreeSet<String>();
             for (int i = 1; i < cpCount; i++) {
                 if (classNameIdx[i] >= 0) {
                     String name = normalizeClassName(utf8, classNameIdx, i);
@@ -363,28 +415,34 @@ public final class ClassDependencyCensus {
             int nameIdx = in.readUnsignedShort();
             int len = in.readInt();
             if (len < 0) throw new IOException("Negative attribute length");
-            byte[] payload = in.readNBytes(len);
-            if (payload.length != len) throw new EOFException();
+            byte[] payload = new byte[len];
+            in.readFully(payload);
             String attr = nameIdx > 0 && nameIdx < utf8.length ? utf8[nameIdx] : null;
             if (attr == null) continue;
-            var sub = new DataInputStream(new ByteArrayInputStream(payload));
+            DataInputStream sub = new DataInputStream(new ByteArrayInputStream(payload));
             switch (attr) {
-                case "Signature" -> {
+                case "Signature": {
                     int idx = sub.readUnsignedShort();
                     if (idx > 0 && idx < utf8.length && utf8[idx] != null) extractDescriptors(utf8[idx], deps);
+                    break;
                 }
-                case "RuntimeVisibleAnnotations", "RuntimeInvisibleAnnotations" -> {
+                case "RuntimeVisibleAnnotations":
+                case "RuntimeInvisibleAnnotations": {
                     int n = sub.readUnsignedShort();
                     for (int j = 0; j < n; j++) readAnnotation(sub, utf8, deps);
+                    break;
                 }
-                case "RuntimeVisibleParameterAnnotations", "RuntimeInvisibleParameterAnnotations" -> {
+                case "RuntimeVisibleParameterAnnotations":
+                case "RuntimeInvisibleParameterAnnotations": {
                     int params = sub.readUnsignedByte();
                     for (int p = 0; p < params; p++) {
                         int n = sub.readUnsignedShort();
                         for (int j = 0; j < n; j++) readAnnotation(sub, utf8, deps);
                     }
+                    break;
                 }
-                case "RuntimeVisibleTypeAnnotations", "RuntimeInvisibleTypeAnnotations" -> {
+                case "RuntimeVisibleTypeAnnotations":
+                case "RuntimeInvisibleTypeAnnotations": {
                     int n = sub.readUnsignedShort();
                     for (int j = 0; j < n; j++) {
                         skipTypeTarget(sub);
@@ -392,9 +450,12 @@ public final class ClassDependencyCensus {
                         skipBytes(sub, pathLen * 2);
                         readAnnotation(sub, utf8, deps);
                     }
+                    break;
                 }
-                case "AnnotationDefault" -> readElementValue(sub, utf8, deps);
-                case "Code" -> {
+                case "AnnotationDefault":
+                    readElementValue(sub, utf8, deps);
+                    break;
+                case "Code": {
                     sub.readUnsignedShort(); // max_stack
                     sub.readUnsignedShort(); // max_locals
                     int codeLen = sub.readInt();
@@ -402,8 +463,10 @@ public final class ClassDependencyCensus {
                     int exLen = sub.readUnsignedShort();
                     skipBytes(sub, exLen * 8);
                     readAttributes(sub, utf8, deps);
+                    break;
                 }
-                default -> {}
+                default:
+                    break;
             }
         }
     }
@@ -421,40 +484,80 @@ public final class ClassDependencyCensus {
     private static void readElementValue(DataInputStream in, String[] utf8, Set<String> deps) throws IOException {
         int tag = in.readUnsignedByte();
         switch (tag) {
-            case 'B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z', 's' -> in.readUnsignedShort();
-            case 'e' -> {
+            case 'B':
+            case 'C':
+            case 'D':
+            case 'F':
+            case 'I':
+            case 'J':
+            case 'S':
+            case 'Z':
+            case 's':
+                in.readUnsignedShort();
+                break;
+            case 'e': {
                 int typeIdx = in.readUnsignedShort();
                 in.readUnsignedShort();
                 if (typeIdx > 0 && typeIdx < utf8.length && utf8[typeIdx] != null) extractDescriptors(utf8[typeIdx], deps);
+                break;
             }
-            case 'c' -> {
+            case 'c': {
                 int classInfoIdx = in.readUnsignedShort();
                 if (classInfoIdx > 0 && classInfoIdx < utf8.length && utf8[classInfoIdx] != null) extractDescriptors(utf8[classInfoIdx], deps);
+                break;
             }
-            case '@' -> readAnnotation(in, utf8, deps);
-            case '[' -> {
+            case '@':
+                readAnnotation(in, utf8, deps);
+                break;
+            case '[': {
                 int numValues = in.readUnsignedShort();
                 for (int i = 0; i < numValues; i++) readElementValue(in, utf8, deps);
+                break;
             }
-            default -> throw new IOException("Unknown annotation element tag: " + tag);
+            default:
+                throw new IOException("Unknown annotation element tag: " + tag);
         }
     }
 
     private static void skipTypeTarget(DataInputStream in) throws IOException {
         int t = in.readUnsignedByte();
         switch (t) {
-            case 0x00, 0x01, 0x16 -> in.readUnsignedByte();
-            case 0x10, 0x11, 0x12, 0x17, 0x42, 0x43, 0x44, 0x45, 0x46 -> in.readUnsignedShort();
-            case 0x13, 0x14, 0x15 -> {}
-            case 0x40, 0x41 -> {
+            case 0x00:
+            case 0x01:
+            case 0x16:
+                in.readUnsignedByte();
+                break;
+            case 0x10:
+            case 0x11:
+            case 0x12:
+            case 0x17:
+            case 0x42:
+            case 0x43:
+            case 0x44:
+            case 0x45:
+            case 0x46:
+                in.readUnsignedShort();
+                break;
+            case 0x13:
+            case 0x14:
+            case 0x15:
+                break;
+            case 0x40:
+            case 0x41: {
                 int len = in.readUnsignedShort();
                 skipBytes(in, len * 6);
+                break;
             }
-            case 0x47, 0x48, 0x49, 0x4A, 0x4B -> {
+            case 0x47:
+            case 0x48:
+            case 0x49:
+            case 0x4A:
+            case 0x4B:
                 in.readUnsignedShort();
                 in.readUnsignedByte();
-            }
-            default -> throw new IOException("Unknown type_annotation target_type: " + t);
+                break;
+            default:
+                throw new IOException("Unknown type_annotation target_type: " + t);
         }
     }
 
@@ -488,11 +591,11 @@ public final class ClassDependencyCensus {
             while (end < text.length()) {
                 char c = text.charAt(end);
                 if (c == ';') {
-                    if (!internal.isEmpty()) deps.add(internal.toString());
+                    if (internal.length() > 0) deps.add(internal.toString());
                     break;
                 }
                 if (c == '<' || c == '.') {
-                    if (!internal.isEmpty()) deps.add(internal.toString());
+                    if (internal.length() > 0) deps.add(internal.toString());
                     break;
                 }
                 if (c == '*' || c == '+' || c == '-' || c == ':' || c == '(' || c == ')') break;
@@ -503,10 +606,10 @@ public final class ClassDependencyCensus {
     }
 
     private static String toCanonicalCensusJson(Map<String, String> classes, Map<String, Set<String>> dependencies) {
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         sb.append("{\"classCount\":").append(classes.size()).append(",\"classes\":{");
         boolean first = true;
-        for (var e : classes.entrySet()) {
+        for (Map.Entry<String, String> e : classes.entrySet()) {
             if (!first) sb.append(',');
             first = false;
             appendJsonString(e.getKey(), sb);
@@ -515,7 +618,7 @@ public final class ClassDependencyCensus {
         }
         sb.append("},\"dependencies\":{");
         first = true;
-        for (var e : dependencies.entrySet()) {
+        for (Map.Entry<String, Set<String>> e : dependencies.entrySet()) {
             if (!first) sb.append(',');
             first = false;
             appendJsonString(e.getKey(), sb);
@@ -537,14 +640,28 @@ public final class ClassDependencyCensus {
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\b' -> out.append("\\b");
-                case '\f' -> out.append("\\f");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> {
+                case '"':
+                    out.append("\\\"");
+                    break;
+                case '\\':
+                    out.append("\\\\");
+                    break;
+                case '\b':
+                    out.append("\\b");
+                    break;
+                case '\f':
+                    out.append("\\f");
+                    break;
+                case '\n':
+                    out.append("\\n");
+                    break;
+                case '\r':
+                    out.append("\\r");
+                    break;
+                case '\t':
+                    out.append("\\t");
+                    break;
+                default:
                     if (c < 0x20) {
                         out.append("\\u00")
                                 .append(Character.forDigit((c >>> 4) & 0xF, 16))
@@ -552,7 +669,7 @@ public final class ClassDependencyCensus {
                     } else {
                         out.append(c);
                     }
-                }
+                    break;
             }
         }
         out.append('"');
@@ -561,9 +678,19 @@ public final class ClassDependencyCensus {
     private static String sha256(byte[] bytes) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
-            return "sha256:" + HEX.formatHex(digest);
+            return "sha256:" + toHex(digest);
         } catch (java.security.NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    private static String toHex(byte[] bytes) {
+        char[] out = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) {
+            int v = bytes[i] & 0xFF;
+            out[i * 2] = HEX_CHARS[v >>> 4];
+            out[i * 2 + 1] = HEX_CHARS[v & 0x0F];
+        }
+        return new String(out);
     }
 }
