@@ -312,4 +312,62 @@ class BidirectionalTypeHintPropagatorTest {
         assertEquals(first.recoveredCallEdges(), second.recoveredCallEdges());
         assertEquals(first.capabilityGaps(), second.capabilityGaps());
     }
+
+    @Test
+    void wideningAmbiguityDoesNotLeakStaleRecoveredCallEdges() throws Exception {
+        var files = new LinkedHashMap<String, String>();
+        // Python: strongBs starts as singleton {Alpha} in iter 1, then widens to {Alpha, Beta} via caller in iter 2;
+        // x.run() MUST NOT leak a stale Alpha.run edge once T(x) widens to {Alpha, Beta}!
+        files.put("src/widen.py", """
+                class Alpha:
+                    def run(self) -> str:
+                        return "a"
+
+                class Beta:
+                    def run(self) -> str:
+                        return "b"
+
+                def _dispatch(x):
+                    if isinstance(x, Alpha):
+                        pass
+                    return x.run()
+
+                def _caller():
+                    _dispatch(Beta())
+                """);
+        // TypeScript equivalent: instanceof Alpha widens to {AlphaTs, BetaTs} via caller
+        files.put("src/widen.ts", """
+                export class AlphaTs {
+                  run(): string { return "a"; }
+                }
+                export class BetaTs {
+                  run(): string { return "b"; }
+                }
+                function dispatchTs(x) {
+                  if (x instanceof AlphaTs) {
+                    return x.run();
+                  }
+                  return x.run();
+                }
+                function callerTs() {
+                  dispatchTs(new BetaTs());
+                }
+                """);
+
+        Result result = new TreeSitterSourceFrontend().propagateTypeHints(utf8Files(files), () -> false);
+
+        SymbolTypeHint pyX = result.findHint("src/widen.py", "_dispatch", SlotKind.PARAMETER, "x").orElseThrow();
+        assertEquals(Set.of("Alpha", "Beta"), pyX.inferredTypes(),
+                "Python parameter must widen to {Alpha, Beta}: " + pyX);
+        assertTrue(result.recoveredCallEdges().stream().noneMatch(e -> e.sourcePath().equals("src/widen.py")),
+                () -> "Widened ambiguous receiver must NOT leak stale recovered edge from iter 1: "
+                        + result.recoveredCallEdges());
+
+        SymbolTypeHint tsX = result.findHint("src/widen.ts", "dispatchTs", SlotKind.PARAMETER, "x").orElseThrow();
+        assertEquals(Set.of("AlphaTs", "BetaTs"), tsX.inferredTypes(),
+                "TypeScript parameter must widen to {AlphaTs, BetaTs}: " + tsX);
+        assertTrue(result.recoveredCallEdges().stream().noneMatch(e -> e.sourcePath().equals("src/widen.ts")),
+                () -> "Widened ambiguous TS receiver must NOT leak stale recovered edge from iter 1: "
+                        + result.recoveredCallEdges());
+    }
 }

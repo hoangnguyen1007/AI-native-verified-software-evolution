@@ -461,7 +461,6 @@ public final class BidirectionalTypeHintPropagator {
         // Recompute nextF and nextBw cleanly from the previous iteration's T(s) so stale Unknowns
         // from early iterations never poison later converged iterations (order-independent fixed point, I2).
         int iterations = 0;
-        var recoveredEdges = new TreeSet<ResolvedHintCallEdge>();
         for (SlotState slot : slotsById.values()) {
             slot.currentT.clear();
             slot.currentT.addAll(slot.computeCurrentT());
@@ -523,7 +522,7 @@ public final class BidirectionalTypeHintPropagator {
                         List<CallableModel> targets = resolveCallTargets(
                                 mod, fn, call, callEdgeBySite, importedSymbolsByFile,
                                 callablesByFileAndQName, callablesByFileAndName, methodsByLangAndClass,
-                                scopeGraph, langGroup, recoveredEdges);
+                                scopeGraph, langGroup, null);
                         if (targets.size() == 1) {
                             CallableModel callee = targets.getFirst();
                             for (int i = 0; i < call.args.size(); i++) {
@@ -554,7 +553,7 @@ public final class BidirectionalTypeHintPropagator {
                                         List<CallableModel> innerTargets = resolveCallTargets(
                                                 mod, fn, arg.expr.nestedCall, callEdgeBySite, importedSymbolsByFile,
                                                 callablesByFileAndQName, callablesByFileAndName, methodsByLangAndClass,
-                                                scopeGraph, langGroup, recoveredEdges);
+                                                scopeGraph, langGroup, null);
                                         if (innerTargets.size() == 1 && innerTargets.getFirst().returnSlot != null) {
                                             SlotState innerRet = innerTargets.getFirst().returnSlot;
                                             nextBw.get(innerRet.symbolId).addAll(expectedTypes);
@@ -607,12 +606,13 @@ public final class BidirectionalTypeHintPropagator {
             if (!changed) break;
         }
 
-        // Final edge recovery pass using converged T(s)
+        // Final edge recovery pass strictly AFTER fixed-point convergence (zero stale intermediate edges)
+        var recoveredEdges = new TreeSet<ResolvedHintCallEdge>();
         for (ModuleModel mod : modules.values()) {
             String langGroup = languageGroup(mod.language);
             for (CallableModel fn : mod.callables) {
                 for (CallSiteStmt call : fn.calls) {
-                    resolveCallTargets(
+                    collectConvergedCallEdges(
                             mod, fn, call, callEdgeBySite, importedSymbolsByFile,
                             callablesByFileAndQName, callablesByFileAndName, methodsByLangAndClass,
                             scopeGraph, langGroup, recoveredEdges);
@@ -887,11 +887,10 @@ public final class BidirectionalTypeHintPropagator {
                         && isPythonConstructorName(nested.methodName, langGroup, classesByLangAndName)) {
                     yield Set.of(nested.methodName);
                 }
-                var tempRecovered = new TreeSet<ResolvedHintCallEdge>();
                 List<CallableModel> targets = resolveCallTargets(
                         mod, fn, nested, callEdgeBySite, importedSymbolsByFile,
                         callablesByFileAndQName, callablesByFileAndName, methodsByLangAndClass,
-                        scopeGraph, langGroup, tempRecovered);
+                        scopeGraph, langGroup, null);
                 if (targets.size() == 1 && targets.getFirst().returnSlot != null) {
                     yield targets.getFirst().returnSlot.computeCurrentT();
                 }
@@ -979,16 +978,18 @@ public final class BidirectionalTypeHintPropagator {
                     List<CallableModel> cands = classMethods.get(call.methodName);
                     if (cands != null && cands.size() == 1) {
                         CallableModel target = cands.getFirst();
-                        recoveredEdges.add(new ResolvedHintCallEdge(
-                                mod.path,
-                                caller.qualifiedName,
-                                call.receiver,
-                                simpleType,
-                                target.filePath,
-                                target.qualifiedName,
-                                HINT_TRUST_TIER,
-                                PROVENANCE_SOURCE_SYNTAX_HINT,
-                                call.span));
+                        if (recoveredEdges != null) {
+                            recoveredEdges.add(new ResolvedHintCallEdge(
+                                    mod.path,
+                                    caller.qualifiedName,
+                                    call.receiver,
+                                    simpleType,
+                                    target.filePath,
+                                    target.qualifiedName,
+                                    HINT_TRUST_TIER,
+                                    PROVENANCE_SOURCE_SYNTAX_HINT,
+                                    call.span));
+                        }
                         return List.of(target);
                     }
                 }
@@ -1007,6 +1008,32 @@ public final class BidirectionalTypeHintPropagator {
             }
         }
         return List.of();
+    }
+
+    private static void collectConvergedCallEdges(
+            ModuleModel mod,
+            CallableModel caller,
+            CallSiteStmt call,
+            Map<String, List<ResolvedEdge>> callEdgeBySite,
+            Map<String, Map<String, List<ResolvedEdge>>> importedSymbolsByFile,
+            Map<String, CallableModel> callablesByFileAndQName,
+            Map<String, List<CallableModel>> callablesByFileAndName,
+            Map<String, Map<String, List<CallableModel>>> methodsByLangAndClass,
+            ScopeGraph scopeGraph,
+            String langGroup,
+            Set<ResolvedHintCallEdge> recoveredEdges) {
+        resolveCallTargets(
+                mod, caller, call, callEdgeBySite, importedSymbolsByFile,
+                callablesByFileAndQName, callablesByFileAndName, methodsByLangAndClass,
+                scopeGraph, langGroup, recoveredEdges);
+        for (ArgRef arg : call.args) {
+            if (arg.expr != null && arg.expr.kind == ExprKind.CALL && arg.expr.nestedCall != null) {
+                collectConvergedCallEdges(
+                        mod, caller, arg.expr.nestedCall, callEdgeBySite, importedSymbolsByFile,
+                        callablesByFileAndQName, callablesByFileAndName, methodsByLangAndClass,
+                        scopeGraph, langGroup, recoveredEdges);
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
