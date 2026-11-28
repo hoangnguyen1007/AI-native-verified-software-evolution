@@ -310,4 +310,43 @@ class GraphProjectionServiceTest {
         assertTrue(nonCompoundIds.contains(f.types.get("OrderRepository")));
         assertFalse(nonCompoundIds.contains(f.types.get("Clean")));
     }
+
+    @Test
+    void multiScaleProjectionsExposeOracleFreeGammaSweepAcrossMacroMesoAndMicro() {
+        var f = new Fixture()
+                .type("mod-a", "com.example.billing", "InvoiceService")
+                .type("mod-a", "com.example.billing", "InvoiceRepository")
+                .type("mod-a", "com.example.billing", "InvoiceTaxCalculator")
+                .type("mod-b", "com.example.shipping", "ShipmentService")
+                .type("mod-b", "com.example.shipping", "ShipmentRepository")
+                .type("mod-b", "com.example.shipping", "ShipmentCarrier")
+                .edge("InvoiceService", "InvoiceRepository")
+                .edge("InvoiceRepository", "InvoiceService")
+                .edge("InvoiceService", "InvoiceTaxCalculator")
+                .edge("ShipmentService", "ShipmentRepository")
+                .edge("ShipmentRepository", "ShipmentService")
+                .edge("ShipmentService", "ShipmentCarrier")
+                .edge("InvoiceService", "ShipmentService");
+
+        KnowledgeGraph graph = f.graph();
+        var service = new GraphProjectionService(new ArchitectureQueryService(graph));
+
+        var macro = service.projectMultiScale(graph, new GraphProjectionService.MultiScaleRequest(
+                f.context, GraphProjectionService.ProjectionLevel.MACRO, List.of(), List.of(),
+                GraphProjectionService.CycleMode.SCC, 100, 500, Set.of(), Map.of()));
+        var meso = service.projectMultiScale(graph, new GraphProjectionService.MultiScaleRequest(
+                f.context, GraphProjectionService.ProjectionLevel.MESO, List.of(), List.of(),
+                GraphProjectionService.CycleMode.SCC, 100, 500, Set.of(), Map.of()));
+        var micro = service.projectMultiScale(graph, new GraphProjectionService.MultiScaleRequest(
+                f.context, GraphProjectionService.ProjectionLevel.MICRO, List.of(), List.of(),
+                GraphProjectionService.CycleMode.SCC, 100, 500, Set.of(), Map.of()));
+
+        assertEquals(new java.math.BigDecimal("0.50"), macro.metadata().get("leidenResolutionGamma"));
+        var mesoGamma = (java.math.BigDecimal) meso.metadata().get("leidenResolutionGamma");
+        assertTrue(mesoGamma.equals(new java.math.BigDecimal("1.00")) || mesoGamma.equals(new java.math.BigDecimal("1.50")));
+        assertEquals(new java.math.BigDecimal("2.00"), micro.metadata().get("leidenResolutionGamma"));
+        assertEquals(4, ((List<?>) macro.metadata().get("leidenGammaSweep")).size());
+        assertEquals("ENHANCED_COMPOSITE", macro.metadata().get("leidenWeightingMode"));
+        assertTrue(micro.nodes().stream().allMatch(n -> n.properties().containsKey("microCommunityId")));
+    }
 }

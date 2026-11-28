@@ -295,6 +295,13 @@ class AdvisoryOverlayQuarantineTest {
         assertEquals(evalBefore.findings().size(), evalAfter.findings().size(), "Adding .md/.sql/.tf/.mcp.json MUST change 0 Policy findings");
         assertEquals(0, advBaseline.links().size());
 
+        // Verify quarantined SemRef cluster refinement entry point also preserves 0 canonical leakage
+        var semRefOut = AdvisoryOverlayService.refineClustersAdvisory(baseline, ctx);
+        assertEquals(com.evolution.analysis.contract.semantic.TrustTier.ADVISORY_UNVERIFIED, semRefOut.trustTier());
+        assertTrue(semRefOut.quarantined());
+        assertEquals(beforeDigest, baseline.identity());
+        assertEquals(scoreBefore.score(), scorer.assess(baselineQueries, ctx, Optional.empty(), Optional.empty(), ArchitectureScoreModelV2.standard()).score());
+
         // 2. Verify Web App HTTP endpoints (/advisory-links, /markdown-section, /wiki-dossier json|zip|markdown, /mcp/setup)
         var graphsDir = tempDir.resolve("graphs");
         java.nio.file.Files.createDirectories(graphsDir);

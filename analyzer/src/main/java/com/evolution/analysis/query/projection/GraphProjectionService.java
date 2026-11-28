@@ -702,7 +702,7 @@ public final class GraphProjectionService {
             return buildMultiScaleVisualGraph(
                     graph, request, resolvedLevel, layoutSeed,
                     0, 0, 0, false, 0, 0,
-                    List.of(), List.of(), emptyScc, Optional.empty(), Optional.empty());
+                    List.of(), List.of(), emptyScc, Optional.empty(), Optional.empty(), Map.of());
         }
 
         return switch (resolvedLevel) {
@@ -719,7 +719,8 @@ public final class GraphProjectionService {
             String layoutSeed,
             ContextGraphExtractor.ExtractedContext extracted,
             Runnable checkpoint) {
-        var leiden = runLeidenForContext(request.context(), extracted.projectEntities(), extracted.projectEdges(), checkpoint);
+        var sweep = runMultiGammaLeidenForContext(request.context(), extracted.projectEntities(), extracted.projectEdges(), checkpoint);
+        var leiden = sweep.macro();
         var communities = leiden.communities();
         var externalEntities = extracted.externalEntities();
         boolean hasExternal = !externalEntities.isEmpty();
@@ -934,12 +935,13 @@ public final class GraphProjectionService {
         }
 
         boolean truncated = cappedNodeCount > 0 || cappedEdgeCount > 0;
+        var sweepMeta = buildGammaSweepMetadata(sweep, sweep.macroGamma(), false);
         return buildMultiScaleVisualGraph(
                 graph, request, resolvedLevel, layoutSeed,
                 extracted.projectEntities().size(), extracted.projectEdges().size(),
                 visualNodes.size(), truncated, cappedNodeCount, cappedEdgeCount,
                 visualNodes, visualEdges, superScc,
-                Optional.of(communities.size()), Optional.empty());
+                Optional.of(communities.size()), Optional.empty(), sweepMeta);
     }
 
     private VisualGraph buildMesoGraph(
@@ -949,17 +951,35 @@ public final class GraphProjectionService {
             String layoutSeed,
             ContextGraphExtractor.ExtractedContext extracted,
             Runnable checkpoint) {
-        var leiden = runLeidenForContext(request.context(), extracted.projectEntities(), extracted.projectEdges(), checkpoint);
-        var communities = leiden.communities();
-        var externalEntities = extracted.externalEntities();
-        boolean hasExternal = !externalEntities.isEmpty();
-
+        var sweep = runMultiGammaLeidenForContext(request.context(), extracted.projectEntities(), extracted.projectEdges(), checkpoint);
         var expandSet = new LinkedHashSet<String>();
         for (String raw : request.expandCommunities()) {
             String stripped = raw.startsWith(COMMUNITY_ID_PREFIX) ? raw.substring(COMMUNITY_ID_PREFIX.length()) : raw;
             expandSet.add(stripped);
             expandSet.add(raw);
         }
+
+        // Default to oracle-free MESO elbow (gamma=1.0/1.5); if user drilled down from a MACRO super-node ID
+        // not present in the finer MESO partition, preserve seamless MACRO->MESO expansion alignment.
+        LeidenCommunityDetector.Result leiden = sweep.meso();
+        double activeGamma = sweep.mesoGamma();
+        boolean alignedFromMacro = false;
+        if (!expandSet.isEmpty()) {
+            boolean matchesMeso = sweep.meso().communities().stream()
+                    .anyMatch(c -> expandSet.contains(c.id()) || expandSet.contains(COMMUNITY_ID_PREFIX + c.id()));
+            if (!matchesMeso) {
+                boolean matchesMacro = sweep.macro().communities().stream()
+                        .anyMatch(c -> expandSet.contains(c.id()) || expandSet.contains(COMMUNITY_ID_PREFIX + c.id()));
+                if (matchesMacro) {
+                    leiden = sweep.macro();
+                    activeGamma = sweep.macroGamma();
+                    alignedFromMacro = true;
+                }
+            }
+        }
+        var communities = leiden.communities();
+        var externalEntities = extracted.externalEntities();
+        boolean hasExternal = !externalEntities.isEmpty();
 
         // Compute deterministic MACRO anchor positions for all communities first (1.5x spread for breathing room)
         var allCommSuperIds = new LinkedHashSet<String>();
@@ -1300,12 +1320,13 @@ public final class GraphProjectionService {
         }
 
         boolean truncated = cappedNodeCount > 0 || cappedEdgeCount > 0;
+        var sweepMeta = buildGammaSweepMetadata(sweep, activeGamma, alignedFromMacro);
         return buildMultiScaleVisualGraph(
                 graph, request, resolvedLevel, layoutSeed,
                 extracted.projectEntities().size(), extracted.projectEdges().size(),
                 keptCollapsedSuperIds.size(), truncated, cappedNodeCount, cappedEdgeCount,
                 visualNodes, visualEdges, mesoScc,
-                Optional.of(communities.size()), Optional.empty());
+                Optional.of(communities.size()), Optional.empty(), sweepMeta);
     }
 
     private VisualGraph buildMicroGraph(
@@ -1315,6 +1336,8 @@ public final class GraphProjectionService {
             String layoutSeed,
             ContextGraphExtractor.ExtractedContext extracted,
             Runnable checkpoint) {
+        var sweep = runMultiGammaLeidenForContext(request.context(), extracted.projectEntities(), extracted.projectEdges(), checkpoint);
+        var microLeiden = sweep.micro();
         var allEntities = extracted.allEntities();
         var allEdges = extracted.allEdges();
         var entityDeg = computeEntityDegrees(allEdges);
@@ -1448,6 +1471,8 @@ public final class GraphProjectionService {
             props.put("x", pos.x());
             props.put("y", pos.y());
             props.put("trustTier", ent.trustTier().name());
+            String microComm = microLeiden.communityByNode().get(id);
+            if (microComm != null) props.put("microCommunityId", microComm);
             if (!ent.packageName().isEmpty()) props.put("packageName", ent.packageName());
             if (!ent.moduleName().isEmpty()) props.put("moduleName", ent.moduleName());
             if (focusSeeds.contains(id)) props.put("focusSeed", true);
@@ -1491,12 +1516,13 @@ public final class GraphProjectionService {
         }
 
         boolean truncated = cappedNodeCount > 0 || cappedEdgeCount > 0;
+        var sweepMeta = buildGammaSweepMetadata(sweep, sweep.microGamma(), false);
         return buildMultiScaleVisualGraph(
                 graph, request, resolvedLevel, layoutSeed,
                 extracted.projectEntities().size(), extracted.projectEdges().size(),
                 0, truncated, cappedNodeCount, cappedEdgeCount,
                 visualNodes, visualEdges, microScc,
-                Optional.empty(), Optional.empty());
+                Optional.of(microLeiden.communities().size()), Optional.empty(), sweepMeta);
     }
 
     private VisualGraph buildMultiScaleVisualGraph(
@@ -1514,7 +1540,8 @@ public final class GraphProjectionService {
             List<VisualGraph.VisualEdge> visualEdges,
             TarjanSccAnalyzer.SccResult sccResult,
             Optional<Integer> communityCount,
-            Optional<TarjanSccAnalyzer.SccResult> projectScc) {
+            Optional<TarjanSccAnalyzer.SccResult> projectScc,
+            Map<String, Object> extraMetadata) {
         var sccSummary = buildSccSummaryMap(sccResult);
 
         var metadata = new TreeMap<String, Object>();
@@ -1535,6 +1562,9 @@ public final class GraphProjectionService {
         metadata.put("sccSummary", sccSummary);
         communityCount.ifPresent(c -> metadata.put("communityCount", c));
         projectScc.ifPresent(ps -> metadata.put("projectSccSummary", buildSccSummaryMap(ps)));
+        if (extraMetadata != null && !extraMetadata.isEmpty()) {
+            metadata.putAll(extraMetadata);
+        }
         if (!request.expandCommunities().isEmpty()) {
             metadata.put("expandCommunities", request.expandCommunities());
         }
@@ -1582,7 +1612,25 @@ public final class GraphProjectionService {
         return Collections.unmodifiableMap(m);
     }
 
-    private static LeidenCommunityDetector.Result runLeidenForContext(
+    private static Map<String, Object> buildGammaSweepMetadata(
+            LeidenCommunityDetector.MultiGammaResult sweep,
+            double activeGamma,
+            boolean alignedFromMacro) {
+        var m = new TreeMap<String, Object>();
+        m.put("leidenAlgorithm", LeidenCommunityDetector.ENHANCED_ALGORITHM);
+        m.put("leidenWeightingMode", LeidenCommunityDetector.WeightingMode.ENHANCED_COMPOSITE.name());
+        m.put("leidenResolutionGamma", BigDecimal.valueOf(activeGamma).setScale(2, RoundingMode.HALF_UP));
+        m.put("leidenMesoSelectionRationale", sweep.mesoSelectionRationale());
+        if (alignedFromMacro) {
+            m.put("leidenExpandedFromMacro", true);
+        }
+        m.put("leidenGammaSweep", sweep.levels().stream()
+                .map(LeidenCommunityDetector.GammaSweepLevel::toSummaryView)
+                .toList());
+        return Collections.unmodifiableMap(m);
+    }
+
+    static LeidenCommunityDetector.MultiGammaResult runMultiGammaLeidenForContext(
             String context,
             List<ContextGraphExtractor.ExtractedEntity> projectEntities,
             List<ContextGraphExtractor.ExtractedEdge> projectEdges,
@@ -1593,20 +1641,29 @@ public final class GraphProjectionService {
         }
         String commonPkgPrefix = computeCommonPackagePrefix(views, Scope.TYPE);
         var leidenNodes = new ArrayList<LeidenCommunityDetector.NodeInput>(projectEntities.size());
+        var extraLexical = new HashMap<String, String>(projectEntities.size() * 2);
         for (int i = 0; i < projectEntities.size(); i++) {
+            var ent = projectEntities.get(i);
             var ev = views.get(i);
             leidenNodes.add(new LeidenCommunityDetector.NodeInput(
                     ev.identity(),
                     shortLabel(ev, Scope.TYPE),
                     groupName(ev, Scope.TYPE, commonPkgPrefix),
                     ev.kind()));
+            var lexBuf = new StringBuilder();
+            if (!ent.qualifiedName().isEmpty()) lexBuf.append(ent.qualifiedName()).append(' ');
+            if (!ent.packageName().isEmpty()) lexBuf.append(ent.packageName()).append(' ');
+            if (!ent.moduleName().isEmpty() && !"(default)".equals(ent.moduleName())) lexBuf.append(ent.moduleName());
+            String lex = lexBuf.toString().strip();
+            if (!lex.isEmpty()) extraLexical.put(ev.identity(), lex);
         }
         var leidenEdges = new ArrayList<LeidenCommunityDetector.EdgeInput>(projectEdges.size());
         for (var edge : projectEdges) {
             leidenEdges.add(new LeidenCommunityDetector.EdgeInput(
                     edge.source(), edge.target(), Math.max(1.0, edge.supportCount()), edge.primaryKind()));
         }
-        return LeidenCommunityDetector.detect(leidenNodes, leidenEdges, checkpoint);
+        return LeidenCommunityDetector.sweepMultiGamma(
+                leidenNodes, leidenEdges, LeidenCommunityDetector.Config.defaults(), extraLexical, checkpoint);
     }
 
     private static boolean matchesContainerFocus(ContextGraphExtractor.ExtractedEntity ent, String focusId) {

@@ -18,6 +18,29 @@ import java.util.*;
  */
 public final class LeidenCommunityDetector {
     public static final String ALGORITHM = "leiden-modularity:java21-v1";
+    public static final String ENHANCED_ALGORITHM = "leiden-modularity:java21-v2-semref-ssar";
+    /** Fixed global composite edge weights (I5: strictly zero per-repo tuning). */
+    public static final double WEIGHT_STRUCTURAL = 0.55;
+    public static final double WEIGHT_LEXICAL = 0.30;
+    public static final double WEIGHT_DIRECTORY = 0.15;
+    /** SSAR Eq. 6 mutual-cycle structural boost factor. */
+    public static final double CYCLIC_BOOST_FACTOR = 2.0;
+    /** Fixed global BM25 term-weighting parameters (deterministic, zero GPU, zero RNG). */
+    private static final double BM25_K1 = 1.2;
+    private static final double BM25_B = 0.75;
+    /** Fixed oracle-free multi-resolution gamma grid (I5: strictly zero GT cluster-count leakage). */
+    public static final double[] MULTI_GAMMA_GRID = {0.5, 1.0, 1.5, 2.0};
+    private static final double MESO_MODULARITY_ELBOW_DELTA = 0.02;
+    private static final double MESO_STABILITY_TIE_DELTA = 0.15;
+    private static final double MIN_EDGE_WEIGHT = 1e-9;
+
+    public enum WeightingMode {
+        /** Legacy raw undirected edge weight summation (v1). */
+        RAW_STRUCTURAL,
+        /** SemRef Eq. 1 (1/inDeg) + SSAR Eq. 6 (2x mutual cycle) + BM25 lexical cosine + directory proximity (0.55/0.30/0.15). */
+        ENHANCED_COMPOSITE
+    }
+
     private static final int MAX_LEVELS = 20;
     private static final int MAX_LOCAL_PASSES = 64;
     private static final double GAIN_EPSILON = 1e-12;
@@ -58,9 +81,36 @@ public final class LeidenCommunityDetector {
             int minSplitSize,
             double minCohesionForLarge,
             int minLargeSize,
-            int maxSplitDepth) {
+            int maxSplitDepth,
+            WeightingMode weightingMode) {
+        public Config(
+                double resolution,
+                long seed,
+                double maxClusterShare,
+                int minSplitSize,
+                double minCohesionForLarge,
+                int minLargeSize,
+                int maxSplitDepth) {
+            this(resolution, seed, maxClusterShare, minSplitSize, minCohesionForLarge, minLargeSize, maxSplitDepth,
+                    WeightingMode.ENHANCED_COMPOSITE);
+        }
+
         public static Config defaults() {
-            return new Config(1.0, 0x5EED_CAFE_2026L, 0.25, 10, 0.05, 50, 3);
+            return new Config(1.0, 0x5EED_CAFE_2026L, 0.25, 10, 0.05, 50, 3, WeightingMode.ENHANCED_COMPOSITE);
+        }
+
+        public static Config legacyDefaults() {
+            return new Config(1.0, 0x5EED_CAFE_2026L, 0.25, 10, 0.05, 50, 3, WeightingMode.RAW_STRUCTURAL);
+        }
+
+        public Config withResolution(double newResolution) {
+            return new Config(newResolution, seed, maxClusterShare, minSplitSize,
+                    minCohesionForLarge, minLargeSize, maxSplitDepth, weightingMode);
+        }
+
+        public Config withWeightingMode(WeightingMode mode) {
+            return new Config(resolution, seed, maxClusterShare, minSplitSize,
+                    minCohesionForLarge, minLargeSize, maxSplitDepth, mode);
         }
 
         public Config {
@@ -70,6 +120,60 @@ public final class LeidenCommunityDetector {
             if (!Double.isFinite(minCohesionForLarge) || minCohesionForLarge < 0.0) minCohesionForLarge = 0.05;
             minLargeSize = Math.max(10, minLargeSize);
             maxSplitDepth = Math.max(0, Math.min(5, maxSplitDepth));
+            weightingMode = weightingMode == null ? WeightingMode.ENHANCED_COMPOSITE : weightingMode;
+        }
+    }
+
+    /** Breakdown of deterministic composite edge weighting for one undirected connected pair. */
+    public record EnhancedEdgeWeight(
+            String source,
+            String target,
+            double rawStructuralWeight,
+            double normalizedStructuralWeight,
+            double lexicalSimilarity,
+            double directoryProximity,
+            double compositeWeight,
+            boolean mutualCycle) {}
+
+    /** Single resolution level inside an oracle-free multi-gamma sweep. */
+    public record GammaSweepLevel(
+            double gamma,
+            BigDecimal standardModularityQ1,
+            BigDecimal gammaModularityQ,
+            int communityCount,
+            BigDecimal adjacentStabilityNmi,
+            Result result) {
+        public Map<String, Object> toSummaryView() {
+            var m = new TreeMap<String, Object>();
+            m.put("gamma", BigDecimal.valueOf(gamma).setScale(2, RoundingMode.HALF_UP));
+            m.put("standardModularityQ1", standardModularityQ1);
+            m.put("gammaModularityQ", gammaModularityQ);
+            m.put("communityCount", communityCount);
+            m.put("adjacentStabilityNmi", adjacentStabilityNmi);
+            return Collections.unmodifiableMap(m);
+        }
+    }
+
+    /**
+     * Oracle-free multi-resolution Leiden sweep over {@code gamma in {0.5, 1.0, 1.5, 2.0}}.
+     * Strictly zero ground-truth cluster-count leakage: maps {@code 0.5 -> MACRO},
+     * modularity-elbow {@code 1.0/1.5 -> MESO}, and {@code 2.0 -> MICRO}.
+     */
+    public record MultiGammaResult(
+            List<GammaSweepLevel> levels,
+            double macroGamma,
+            double mesoGamma,
+            double microGamma,
+            Result macro,
+            Result meso,
+            Result micro,
+            String mesoSelectionRationale) {
+        public MultiGammaResult {
+            levels = List.copyOf(Objects.requireNonNull(levels, "levels"));
+            Objects.requireNonNull(macro, "macro");
+            Objects.requireNonNull(meso, "meso");
+            Objects.requireNonNull(micro, "micro");
+            mesoSelectionRationale = mesoSelectionRationale == null ? "" : mesoSelectionRationale;
         }
     }
 
@@ -137,13 +241,29 @@ public final class LeidenCommunityDetector {
     private LeidenCommunityDetector() {}
 
     public static Result detect(List<NodeInput> rawNodes, List<EdgeInput> rawEdges, Runnable checkpoint) {
-        return detect(rawNodes, rawEdges, Config.defaults(), checkpoint);
+        return detect(rawNodes, rawEdges, Config.defaults(), Map.of(), checkpoint);
     }
 
     public static Result detect(List<NodeInput> rawNodes, List<EdgeInput> rawEdges, Config config, Runnable checkpoint) {
+        return detect(rawNodes, rawEdges, config, Map.of(), checkpoint);
+    }
+
+    /**
+     * Executes deterministic Leiden community detection with optional extra per-node lexical tokens
+     * (e.g., extracted identifier/file tokens from {@code CapturedSearchIndex}).
+     */
+    public static Result detect(
+            List<NodeInput> rawNodes,
+            List<EdgeInput> rawEdges,
+            Config config,
+            Map<String, String> extraLexicalByNode,
+            Runnable checkpoint) {
         Config cfg = config == null ? Config.defaults() : config;
+        Map<String, String> extraLex = extraLexicalByNode == null ? Map.of() : extraLexicalByNode;
         Runnable tick = checkpoint == null ? () -> {} : checkpoint;
         tick.run();
+
+        String algoName = cfg.weightingMode() == WeightingMode.ENHANCED_COMPOSITE ? ENHANCED_ALGORITHM : ALGORITHM;
 
         // 1. Canonical sort & deduplication by identity
         var nodeMap = new TreeMap<String, NodeInput>();
@@ -155,8 +275,8 @@ public final class LeidenCommunityDetector {
         int n = nodeMap.size();
         if (n == 0) {
             String emptyKey = ContentDigest.sha256Utf8(CanonicalJson.write(List.of(
-                    ALGORITHM, Double.toString(cfg.resolution()), cfg.seed(), List.of()))).value();
-            return new Result(ALGORITHM, emptyKey, BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP),
+                    algoName, Double.toString(cfg.resolution()), cfg.seed(), List.of()))).value();
+            return new Result(algoName, emptyKey, BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP),
                     0, 0, List.of(), List.of(), List.of(), Map.of());
         }
 
@@ -166,9 +286,9 @@ public final class LeidenCommunityDetector {
             idToIndex.put(nodes.get(i).identity(), i);
         }
 
-        // 2. Canonical undirected weighted adjacency + preserved directed edges for bridge reporting
-        var undirectedWeights = new ArrayList<TreeMap<Integer, Double>>(n);
-        for (int i = 0; i < n; i++) undirectedWeights.add(new TreeMap<>());
+        // 2. Canonical directed edge sorting & undirected weighted adjacency construction
+        var rawUndirected = new ArrayList<TreeMap<Integer, Double>>(n);
+        for (int i = 0; i < n; i++) rawUndirected.add(new TreeMap<>());
         double[] selfLoops = new double[n];
         var directedEdges = new ArrayList<ResolvedDirectedEdge>();
         int validEdgeCount = 0;
@@ -193,23 +313,26 @@ public final class LeidenCommunityDetector {
                 if (u == v) {
                     selfLoops[u] += e.weight();
                 } else {
-                    undirectedWeights.get(u).merge(v, e.weight(), Double::sum);
-                    undirectedWeights.get(v).merge(u, e.weight(), Double::sum);
+                    rawUndirected.get(u).merge(v, e.weight(), Double::sum);
+                    rawUndirected.get(v).merge(u, e.weight(), Double::sum);
                     directedEdges.add(new ResolvedDirectedEdge(u, v, e.weight(), e.kind()));
                 }
             }
         }
 
         // 3. Canonical sorted SHA-256 cache key (never XOR)
-        String cacheKey = computeCacheKey(nodes, directedEdges, selfLoops, validEdgeCount, cfg);
+        String cacheKey = computeCacheKey(algoName, nodes, directedEdges, selfLoops, validEdgeCount, cfg, extraLex);
         Result cached = CACHE.get(cacheKey);
         if (cached != null) {
             return cached;
         }
         tick.run();
 
-        // 4. Build compact graph representation & execute Leiden
-        WeightedGraph graph = WeightedGraph.fromAdjacency(n, undirectedWeights, selfLoops);
+        // 4. Build compact graph representation (legacy raw vs enhanced 0.55 struct + 0.30 BM25 lex + 0.15 dir)
+        List<TreeMap<Integer, Double>> effectiveAdj = cfg.weightingMode() == WeightingMode.ENHANCED_COMPOSITE
+                ? buildEnhancedAdjacency(nodes, directedEdges, extraLex, tick)
+                : rawUndirected;
+        WeightedGraph graph = WeightedGraph.fromAdjacency(n, effectiveAdj, selfLoops);
         int[] rawPartition = runLeiden(graph, cfg.resolution(), cfg.seed(), tick);
         int[] connectedPartition = enforceConnectedCommunities(graph, rawPartition, tick);
         int[] finalPartition = applySmartRecursiveSplits(graph, connectedPartition, cfg, 0, tick);
@@ -218,9 +341,632 @@ public final class LeidenCommunityDetector {
         double modularityQ = computeModularity(graph, finalPartition, cfg.resolution());
 
         // 6. Materialize canonical communities, drift (misplaced types), and cross-community bridges
-        Result built = buildResult(cacheKey, nodes, graph, directedEdges, validEdgeCount, finalPartition, modularityQ);
+        Result built = buildResult(algoName, cacheKey, nodes, graph, directedEdges, validEdgeCount, finalPartition, modularityQ);
         CACHE.put(cacheKey, built);
         return built;
+    }
+
+    /**
+     * Oracle-free multi-resolution gamma sweep over {@code gamma in {0.5, 1.0, 1.5, 2.0}}.
+     *
+     * <p>Strictly zero ground-truth cluster-count leakage (I5): computes standard Newman-Girvan
+     * modularity {@code Q(gamma=1.0)} and adjacent-level NMI stability for every level, then maps
+     * {@code MACRO -> 0.5}, {@code MESO -> 1.0/1.5} (modularity elbow), and {@code MICRO -> 2.0}.
+     */
+    public static MultiGammaResult sweepMultiGamma(
+            List<NodeInput> rawNodes,
+            List<EdgeInput> rawEdges,
+            Runnable checkpoint) {
+        return sweepMultiGamma(rawNodes, rawEdges, Config.defaults(), Map.of(), checkpoint);
+    }
+
+    public static MultiGammaResult sweepMultiGamma(
+            List<NodeInput> rawNodes,
+            List<EdgeInput> rawEdges,
+            Config baseConfig,
+            Map<String, String> extraLexicalByNode,
+            Runnable checkpoint) {
+        Config cfg = baseConfig == null ? Config.defaults() : baseConfig;
+        Map<String, String> extraLex = extraLexicalByNode == null ? Map.of() : extraLexicalByNode;
+        Runnable tick = checkpoint == null ? () -> {} : checkpoint;
+        tick.run();
+
+        // Build canonical weighted graph once so standard Q1(gamma=1.0) comparison across gammas is apples-to-apples
+        var nodeMap = new TreeMap<String, NodeInput>();
+        if (rawNodes != null) {
+            for (var n : rawNodes) {
+                if (n != null) nodeMap.putIfAbsent(n.identity(), n);
+            }
+        }
+        List<NodeInput> nodes = List.copyOf(nodeMap.values());
+        int n = nodes.size();
+        var idToIndex = new HashMap<String, Integer>(n * 2);
+        for (int i = 0; i < n; i++) idToIndex.put(nodes.get(i).identity(), i);
+
+        var rawUndirected = new ArrayList<TreeMap<Integer, Double>>(n);
+        for (int i = 0; i < n; i++) rawUndirected.add(new TreeMap<>());
+        double[] selfLoops = new double[n];
+        var directedEdges = new ArrayList<ResolvedDirectedEdge>();
+        if (rawEdges != null) {
+            var sortedEdges = new ArrayList<EdgeInput>(rawEdges.size());
+            for (var e : rawEdges) {
+                if (e != null && idToIndex.containsKey(e.source()) && idToIndex.containsKey(e.target())) {
+                    sortedEdges.add(e);
+                }
+            }
+            sortedEdges.sort(Comparator.comparing(EdgeInput::source)
+                    .thenComparing(EdgeInput::target)
+                    .thenComparing(EdgeInput::kind)
+                    .thenComparingDouble(EdgeInput::weight));
+            for (var e : sortedEdges) {
+                int u = idToIndex.get(e.source());
+                int v = idToIndex.get(e.target());
+                if (u == v) {
+                    selfLoops[u] += e.weight();
+                } else {
+                    rawUndirected.get(u).merge(v, e.weight(), Double::sum);
+                    rawUndirected.get(v).merge(u, e.weight(), Double::sum);
+                    directedEdges.add(new ResolvedDirectedEdge(u, v, e.weight(), e.kind()));
+                }
+            }
+        }
+
+        List<TreeMap<Integer, Double>> effectiveAdj = (n > 0 && cfg.weightingMode() == WeightingMode.ENHANCED_COMPOSITE)
+                ? buildEnhancedAdjacency(nodes, directedEdges, extraLex, tick)
+                : rawUndirected;
+        WeightedGraph sharedGraph = WeightedGraph.fromAdjacency(n, effectiveAdj, selfLoops);
+
+        Result[] results = new Result[MULTI_GAMMA_GRID.length];
+        int[][] partitions = new int[MULTI_GAMMA_GRID.length][];
+        double[] q1Scores = new double[MULTI_GAMMA_GRID.length];
+
+        for (int gi = 0; gi < MULTI_GAMMA_GRID.length; gi++) {
+            tick.run();
+            double gamma = MULTI_GAMMA_GRID[gi];
+            Result res = detect(nodes, rawEdges, cfg.withResolution(gamma), extraLex, tick);
+            results[gi] = res;
+            partitions[gi] = extractPartitionArray(nodes, res);
+            q1Scores[gi] = n > 0 ? computeModularity(sharedGraph, partitions[gi], 1.0) : 0.0;
+        }
+
+        // Compute adjacent-level NMI stability between consecutive gamma resolutions
+        double[] adjNmi = new double[MULTI_GAMMA_GRID.length];
+        for (int gi = 0; gi < MULTI_GAMMA_GRID.length; gi++) {
+            double left = gi > 0 ? normalizedMutualInformation(partitions[gi - 1], partitions[gi]) : -1.0;
+            double right = gi + 1 < MULTI_GAMMA_GRID.length
+                    ? normalizedMutualInformation(partitions[gi], partitions[gi + 1]) : -1.0;
+            if (left >= 0.0 && right >= 0.0) {
+                adjNmi[gi] = 0.5 * (left + right);
+            } else if (left >= 0.0) {
+                adjNmi[gi] = left;
+            } else if (right >= 0.0) {
+                adjNmi[gi] = right;
+            } else {
+                adjNmi[gi] = 1.0;
+            }
+        }
+
+        var levels = new ArrayList<GammaSweepLevel>(MULTI_GAMMA_GRID.length);
+        for (int gi = 0; gi < MULTI_GAMMA_GRID.length; gi++) {
+            levels.add(new GammaSweepLevel(
+                    MULTI_GAMMA_GRID[gi],
+                    BigDecimal.valueOf(q1Scores[gi]).setScale(4, RoundingMode.HALF_UP),
+                    results[gi].modularity(),
+                    results[gi].communities().size(),
+                    BigDecimal.valueOf(adjNmi[gi]).setScale(4, RoundingMode.HALF_UP),
+                    results[gi]));
+        }
+
+        // Oracle-free modularity elbow selection for MESO between gamma=1.0 (idx 1) and gamma=1.5 (idx 2)
+        double q10 = q1Scores[1];
+        double q15 = q1Scores[2];
+        int k10 = results[1].communities().size();
+        int k15 = results[2].communities().size();
+        double stab10To15 = normalizedMutualInformation(partitions[1], partitions[2]);
+        double stab15To20 = normalizedMutualInformation(partitions[2], partitions[3]);
+
+        int mesoIdx;
+        String rationale;
+        if (q15 > q10 + MESO_MODULARITY_ELBOW_DELTA) {
+            mesoIdx = 2;
+            rationale = String.format(Locale.ROOT,
+                    "Selected gamma=1.50 (Q1=%.4f vs gamma=1.00 Q1=%.4f; clear modularity elbow gain).", q15, q10);
+        } else if (k10 <= 1 && k15 > 1 && q15 > 0.0) {
+            mesoIdx = 2;
+            rationale = String.format(Locale.ROOT,
+                    "Selected gamma=1.50 (resolved trivial single-cluster plateau at gamma=1.00 into %d communities, Q1=%.4f).",
+                    k15, q15);
+        } else if (StrictMath.abs(q15 - q10) <= 0.01 && q15 > q10
+                && stab15To20 > stab10To15 + MESO_STABILITY_TIE_DELTA && k15 > k10) {
+            mesoIdx = 2;
+            rationale = String.format(Locale.ROOT,
+                    "Selected gamma=1.50 (equal Q1=%.4f with higher upper-resolution stability NMI=%.4f vs %.4f).",
+                    q15, stab15To20, stab10To15);
+        } else {
+            mesoIdx = 1;
+            rationale = String.format(Locale.ROOT,
+                    "Selected gamma=1.00 (modularity elbow Q1=%.4f vs gamma=1.50 Q1=%.4f, stability NMI=%.4f).",
+                    q10, q15, adjNmi[1]);
+        }
+
+        return new MultiGammaResult(
+                levels,
+                MULTI_GAMMA_GRID[0],
+                MULTI_GAMMA_GRID[mesoIdx],
+                MULTI_GAMMA_GRID[3],
+                results[0],
+                results[mesoIdx],
+                results[3],
+                rationale);
+    }
+
+    /**
+     * Pure deterministic inspection helper computing the exact SemRef Eq. 1 + SSAR Eq. 6 + BM25
+     * lexical cosine + directory proximity composite edge weights for all connected undirected pairs.
+     */
+    public static List<EnhancedEdgeWeight> computeEnhancedEdgeWeights(
+            List<NodeInput> rawNodes,
+            List<EdgeInput> rawEdges,
+            Map<String, String> extraLexicalByNode) {
+        var nodeMap = new TreeMap<String, NodeInput>();
+        if (rawNodes != null) {
+            for (var n : rawNodes) {
+                if (n != null) nodeMap.putIfAbsent(n.identity(), n);
+            }
+        }
+        List<NodeInput> nodes = List.copyOf(nodeMap.values());
+        int n = nodes.size();
+        if (n == 0 || rawEdges == null || rawEdges.isEmpty()) return List.of();
+
+        var idToIndex = new HashMap<String, Integer>(n * 2);
+        for (int i = 0; i < n; i++) idToIndex.put(nodes.get(i).identity(), i);
+
+        var sortedEdges = new ArrayList<EdgeInput>(rawEdges.size());
+        for (var e : rawEdges) {
+            if (e != null && idToIndex.containsKey(e.source()) && idToIndex.containsKey(e.target())) {
+                sortedEdges.add(e);
+            }
+        }
+        sortedEdges.sort(Comparator.comparing(EdgeInput::source)
+                .thenComparing(EdgeInput::target)
+                .thenComparing(EdgeInput::kind)
+                .thenComparingDouble(EdgeInput::weight));
+
+        var directedEdges = new ArrayList<ResolvedDirectedEdge>(sortedEdges.size());
+        for (var e : sortedEdges) {
+            int u = idToIndex.get(e.source());
+            int v = idToIndex.get(e.target());
+            if (u != v) {
+                directedEdges.add(new ResolvedDirectedEdge(u, v, e.weight(), e.kind()));
+            }
+        }
+        return computeEnhancedWeightsInternal(nodes, directedEdges, extraLexicalByNode == null ? Map.of() : extraLexicalByNode, () -> {});
+    }
+
+    /** Deterministic camelCase / snake_case / acronym / path identifier tokenizer (zero GPU, zero RNG). */
+    public static List<String> tokenizeIdentifiers(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        var tokens = new ArrayList<String>();
+        int len = raw.length();
+        int start = -1;
+        for (int i = 0; i < len; i++) {
+            char c = raw.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                if (start < 0) {
+                    start = i;
+                } else {
+                    char prev = raw.charAt(i - 1);
+                    boolean prevLower = Character.isLowerCase(prev);
+                    boolean curUpper = Character.isUpperCase(c);
+                    boolean prevUpper = Character.isUpperCase(prev);
+                    boolean curLower = Character.isLowerCase(c);
+                    boolean prevDigit = Character.isDigit(prev);
+                    boolean curDigit = Character.isDigit(c);
+                    // Split camelCase (aB), acronym boundary (HTTPClient -> HTTP + Client), and letter<->digit
+                    if ((prevLower && curUpper)
+                            || (prevDigit != curDigit)) {
+                        emitToken(raw, start, i, tokens);
+                        start = i;
+                    } else if (prevUpper && curLower && i - start >= 2) {
+                        emitToken(raw, start, i - 1, tokens);
+                        start = i - 1;
+                    }
+                }
+            } else {
+                if (start >= 0) {
+                    emitToken(raw, start, i, tokens);
+                    start = -1;
+                }
+            }
+        }
+        if (start >= 0) {
+            emitToken(raw, start, len, tokens);
+        }
+        return tokens;
+    }
+
+    private static void emitToken(String raw, int start, int end, List<String> out) {
+        if (end - start < 2) return;
+        String tok = raw.substring(start, end).toLowerCase(Locale.ROOT);
+        // Skip pure numeric tokens (e.g. version digits) while keeping alphanumeric stems
+        boolean anyLetter = false;
+        for (int k = 0; k < tok.length(); k++) {
+            if (Character.isLetter(tok.charAt(k))) {
+                anyLetter = true;
+                break;
+            }
+        }
+        if (anyLetter) {
+            out.add(tok);
+        }
+    }
+
+    private static List<TreeMap<Integer, Double>> buildEnhancedAdjacency(
+            List<NodeInput> nodes,
+            List<ResolvedDirectedEdge> directedEdges,
+            Map<String, String> extraLexical,
+            Runnable tick) {
+        int n = nodes.size();
+        var adj = new ArrayList<TreeMap<Integer, Double>>(n);
+        for (int i = 0; i < n; i++) adj.add(new TreeMap<>());
+        if (directedEdges.isEmpty()) return adj;
+
+        var idToIdx = new HashMap<String, Integer>(n * 2);
+        for (int i = 0; i < n; i++) idToIdx.put(nodes.get(i).identity(), i);
+
+        var weights = computeEnhancedWeightsInternal(nodes, directedEdges, extraLexical, tick);
+        for (var ew : weights) {
+            int u = idToIdx.get(ew.source());
+            int v = idToIdx.get(ew.target());
+            double w = Math.max(MIN_EDGE_WEIGHT, ew.compositeWeight());
+            adj.get(u).put(v, w);
+            adj.get(v).put(u, w);
+        }
+        return adj;
+    }
+
+    private record Bm25Vector(int[] termIds, double[] weights, double norm) {}
+
+    private static List<EnhancedEdgeWeight> computeEnhancedWeightsInternal(
+            List<NodeInput> nodes,
+            List<ResolvedDirectedEdge> directedEdges,
+            Map<String, String> extraLexical,
+            Runnable tick) {
+        int n = nodes.size();
+        if (directedEdges.isEmpty()) return List.of();
+
+        // 1. Aggregate directed weights delta(u, v) and distinct incoming structural degree inDeg(v)
+        var dirWeight = new ArrayList<TreeMap<Integer, Double>>(n);
+        for (int i = 0; i < n; i++) dirWeight.add(new TreeMap<>());
+        var pairSet = new TreeMap<Long, int[]>();
+        for (var de : directedEdges) {
+            dirWeight.get(de.u()).merge(de.v(), de.weight(), Double::sum);
+            int a = Math.min(de.u(), de.v());
+            int b = Math.max(de.u(), de.v());
+            long pairKey = (((long) a) << 32) | (b & 0xFFFF_FFFFL);
+            pairSet.putIfAbsent(pairKey, new int[]{a, b});
+        }
+        int[] inDeg = new int[n];
+        for (int u = 0; u < n; u++) {
+            for (int v : dirWeight.get(u).keySet()) {
+                inDeg[v]++;
+            }
+        }
+
+        // 2. Compute raw structural weight (SemRef Eq. 1 1/inDeg + SSAR Eq. 6 2x mutual cycle) & max for [0,1] norm
+        int pairCount = pairSet.size();
+        int[] pairU = new int[pairCount];
+        int[] pairV = new int[pairCount];
+        double[] rawStruct = new double[pairCount];
+        boolean[] mutualCycle = new boolean[pairCount];
+        double maxStruct = 0.0;
+
+        int idx = 0;
+        for (var uv : pairSet.values()) {
+            if ((idx & 2047) == 0) tick.run();
+            int u = uv[0];
+            int v = uv[1];
+            double duv = dirWeight.get(u).getOrDefault(v, 0.0);
+            double dvu = dirWeight.get(v).getOrDefault(u, 0.0);
+            boolean cyc = duv > 0.0 && dvu > 0.0;
+            double cf = cyc ? CYCLIC_BOOST_FACTOR : 1.0;
+            double ws = cf * ((duv / Math.max(1, inDeg[v])) + (dvu / Math.max(1, inDeg[u])));
+            pairU[idx] = u;
+            pairV[idx] = v;
+            rawStruct[idx] = ws;
+            mutualCycle[idx] = cyc;
+            if (ws > maxStruct) maxStruct = ws;
+            idx++;
+        }
+
+        // 3. Build deterministic BM25 / TF-IDF sparse vectors for every node (zero GPU, zero RNG)
+        Bm25Vector[] bm25 = buildBm25Vectors(nodes, extraLexical, tick);
+
+        // 4. Extract canonical directory/package segments (stripping universal common prefix across the repo)
+        String[][] dirSegments = extractNormalizedPathSegments(nodes);
+
+        // 5. Combine fixed global weights: 0.55 * w_struct_norm + 0.30 * w_lex + 0.15 * w_dir
+        var out = new ArrayList<EnhancedEdgeWeight>(pairCount);
+        for (int i = 0; i < pairCount; i++) {
+            if ((i & 2047) == 0) tick.run();
+            int u = pairU[i];
+            int v = pairV[i];
+            double wsNorm = maxStruct > 0.0 ? Math.min(1.0, Math.max(0.0, rawStruct[i] / maxStruct)) : 0.0;
+            double wLex = cosineSimilarity(bm25[u], bm25[v]);
+            double wDir = directoryProximity(dirSegments[u], dirSegments[v],
+                    nodes.get(u).declaredPackage(), nodes.get(v).declaredPackage());
+            double comp = WEIGHT_STRUCTURAL * wsNorm + WEIGHT_LEXICAL * wLex + WEIGHT_DIRECTORY * wDir;
+            if (!Double.isFinite(comp) || comp <= 0.0) comp = MIN_EDGE_WEIGHT;
+            out.add(new EnhancedEdgeWeight(
+                    nodes.get(u).identity(),
+                    nodes.get(v).identity(),
+                    rawStruct[i],
+                    wsNorm,
+                    wLex,
+                    wDir,
+                    comp,
+                    mutualCycle[i]));
+        }
+        return out;
+    }
+
+    private static Bm25Vector[] buildBm25Vectors(
+            List<NodeInput> nodes,
+            Map<String, String> extraLexical,
+            Runnable tick) {
+        int n = nodes.size();
+        var termToId = new TreeMap<String, Integer>();
+        var docTfs = new ArrayList<TreeMap<String, Integer>>(n);
+        int[] docLen = new int[n];
+        long totalLen = 0;
+
+        for (int u = 0; u < n; u++) {
+            if ((u & 1023) == 0) tick.run();
+            var node = nodes.get(u);
+            var tf = new TreeMap<String, Integer>();
+            for (String t : tokenizeIdentifiers(node.label())) {
+                tf.merge(t, 1, Integer::sum);
+            }
+            for (String t : tokenizeIdentifiers(node.declaredPackage())) {
+                tf.merge(t, 1, Integer::sum);
+            }
+            String extra = extraLexical.get(node.identity());
+            if (extra != null && !extra.isBlank()) {
+                for (String t : tokenizeIdentifiers(extra)) {
+                    tf.merge(t, 1, Integer::sum);
+                }
+            }
+            int dl = 0;
+            for (var e : tf.entrySet()) {
+                dl += e.getValue();
+                termToId.putIfAbsent(e.getKey(), 0);
+            }
+            docTfs.add(tf);
+            docLen[u] = dl;
+            totalLen += dl;
+        }
+
+        // Assign canonical deterministic term IDs in lexicographical order
+        int vocabSize = 0;
+        for (var entry : termToId.entrySet()) {
+            entry.setValue(vocabSize++);
+        }
+        int[] df = new int[vocabSize];
+        for (var tf : docTfs) {
+            for (String term : tf.keySet()) {
+                df[termToId.get(term)]++;
+            }
+        }
+
+        double avgDl = n > 0 && totalLen > 0 ? ((double) totalLen / n) : 1.0;
+        double[] idf = new double[vocabSize];
+        for (int tid = 0; tid < vocabSize; tid++) {
+            double d = df[tid];
+            idf[tid] = StrictMath.log(1.0 + ((n - d + 0.5) / (d + 0.5)));
+        }
+
+        Bm25Vector[] vectors = new Bm25Vector[n];
+        for (int u = 0; u < n; u++) {
+            var tf = docTfs.get(u);
+            int k = tf.size();
+            int[] tids = new int[k];
+            double[] wts = new double[k];
+            int p = 0;
+            double sumSq = 0.0;
+            double lenNorm = 1.0 - BM25_B + BM25_B * (docLen[u] / avgDl);
+            for (var entry : tf.entrySet()) {
+                int tid = termToId.get(entry.getKey());
+                double f = entry.getValue();
+                double w = idf[tid] * ((f * (BM25_K1 + 1.0)) / (f + BM25_K1 * lenNorm));
+                tids[p] = tid;
+                wts[p] = w;
+                sumSq += w * w;
+                p++;
+            }
+            vectors[u] = new Bm25Vector(tids, wts, StrictMath.sqrt(sumSq));
+        }
+        return vectors;
+    }
+
+    private static double cosineSimilarity(Bm25Vector a, Bm25Vector b) {
+        if (a.norm <= 0.0 || b.norm <= 0.0) return 0.0;
+        int[] ta = a.termIds;
+        int[] tb = b.termIds;
+        double[] wa = a.weights;
+        double[] wb = b.weights;
+        int i = 0, j = 0;
+        double dot = 0.0;
+        while (i < ta.length && j < tb.length) {
+            if (ta[i] == tb[j]) {
+                dot += wa[i] * wb[j];
+                i++;
+                j++;
+            } else if (ta[i] < tb[j]) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+        double cos = dot / (a.norm * b.norm);
+        if (!Double.isFinite(cos) || cos <= 0.0) return 0.0;
+        return Math.min(1.0, cos);
+    }
+
+    private static String[][] extractNormalizedPathSegments(List<NodeInput> nodes) {
+        int n = nodes.size();
+        String[][] raw = new String[n][];
+        String[] commonPrefix = null;
+        int nonEmptyCount = 0;
+
+        for (int u = 0; u < n; u++) {
+            var node = nodes.get(u);
+            String pathSource = !node.declaredPackage().isEmpty()
+                    ? node.declaredPackage()
+                    : extractParentPathFromLabel(node.label());
+            String[] segs = splitPathSegments(pathSource);
+            raw[u] = segs;
+            if (segs.length > 0) {
+                nonEmptyCount++;
+                if (commonPrefix == null) {
+                    commonPrefix = segs;
+                } else {
+                    int lim = Math.min(commonPrefix.length, segs.length);
+                    int match = 0;
+                    while (match < lim && commonPrefix[match].equals(segs[match])) match++;
+                    commonPrefix = Arrays.copyOf(commonPrefix, match);
+                }
+            }
+        }
+
+        int stripLen = (nonEmptyCount >= 2 && commonPrefix != null) ? commonPrefix.length : 0;
+        if (stripLen == 0) return raw;
+
+        // Avoid stripping the entire path if all nodes live in the exact same single package
+        boolean anyLongerThanPrefix = false;
+        for (int u = 0; u < n; u++) {
+            if (raw[u].length > stripLen) {
+                anyLongerThanPrefix = true;
+                break;
+            }
+        }
+        if (!anyLongerThanPrefix) return raw;
+
+        String[][] trimmed = new String[n][];
+        for (int u = 0; u < n; u++) {
+            if (raw[u].length >= stripLen) {
+                trimmed[u] = Arrays.copyOfRange(raw[u], stripLen, raw[u].length);
+            } else {
+                trimmed[u] = raw[u];
+            }
+        }
+        return trimmed;
+    }
+
+    private static String extractParentPathFromLabel(String label) {
+        if (label == null || label.isBlank()) return "";
+        int hash = label.indexOf('#');
+        String base = hash >= 0 ? label.substring(0, hash) : label;
+        int slash = base.lastIndexOf('/');
+        if (slash > 0) return base.substring(0, slash);
+        int dot = base.lastIndexOf('.');
+        return dot > 0 ? base.substring(0, dot) : "";
+    }
+
+    private static String[] splitPathSegments(String raw) {
+        if (raw == null || raw.isBlank()) return new String[0];
+        String norm = raw.replace('\\', '/').replace('.', '/').strip();
+        String[] parts = norm.split("/");
+        var out = new ArrayList<String>(parts.length);
+        for (String p : parts) {
+            String s = p.strip().toLowerCase(Locale.ROOT);
+            if (!s.isEmpty() && !s.equals("(default)") && !s.equals("(root)")) {
+                out.add(s);
+            }
+        }
+        return out.toArray(String[]::new);
+    }
+
+    private static double directoryProximity(String[] segA, String[] segB, String rawPkgA, String rawPkgB) {
+        if (segA.length == 0 && segB.length == 0) {
+            return (!rawPkgA.isEmpty() && rawPkgA.equals(rawPkgB)) ? 1.0 : 0.0;
+        }
+        if (segA.length == 0 || segB.length == 0) {
+            return 0.0;
+        }
+        int maxLen = Math.max(segA.length, segB.length);
+        int minLen = Math.min(segA.length, segB.length);
+        int lcp = 0;
+        while (lcp < minLen && segA[lcp].equals(segB[lcp])) {
+            lcp++;
+        }
+        return (double) lcp / maxLen;
+    }
+
+    private static int[] extractPartitionArray(List<NodeInput> nodes, Result res) {
+        int n = nodes.size();
+        int[] part = new int[n];
+        var commToInt = new HashMap<String, Integer>();
+        int next = 0;
+        for (int i = 0; i < n; i++) {
+            String cid = res.communityByNode().getOrDefault(nodes.get(i).identity(), "singleton:" + i);
+            Integer mapped = commToInt.get(cid);
+            if (mapped == null) {
+                mapped = next++;
+                commToInt.put(cid, mapped);
+            }
+            part[i] = mapped;
+        }
+        return part;
+    }
+
+    /** Deterministic Normalized Mutual Information (NMI) in [0, 1] for oracle-free gamma stability. */
+    static double normalizedMutualInformation(int[] partA, int[] partB) {
+        int n = partA.length;
+        if (n <= 1) return 1.0;
+        int maxA = 0, maxB = 0;
+        for (int i = 0; i < n; i++) {
+            if (partA[i] + 1 > maxA) maxA = partA[i] + 1;
+            if (partB[i] + 1 > maxB) maxB = partB[i] + 1;
+        }
+        int[] countA = new int[maxA];
+        int[] countB = new int[maxB];
+        var contingency = new TreeMap<Long, Integer>();
+        for (int i = 0; i < n; i++) {
+            int a = partA[i];
+            int b = partB[i];
+            countA[a]++;
+            countB[b]++;
+            long key = (((long) a) << 32) | (b & 0xFFFF_FFFFL);
+            contingency.merge(key, 1, Integer::sum);
+        }
+        double invN = 1.0 / n;
+        double hA = 0.0;
+        for (int c : countA) {
+            if (c > 0) {
+                double p = c * invN;
+                hA -= p * StrictMath.log(p);
+            }
+        }
+        double hB = 0.0;
+        for (int c : countB) {
+            if (c > 0) {
+                double p = c * invN;
+                hB -= p * StrictMath.log(p);
+            }
+        }
+        if (hA + hB <= 1e-15) return 1.0;
+        double mi = 0.0;
+        for (var entry : contingency.entrySet()) {
+            long key = entry.getKey();
+            int a = (int) (key >>> 32);
+            int b = (int) (key & 0xFFFF_FFFFL);
+            int nij = entry.getValue();
+            double p = nij * invN;
+            mi += p * StrictMath.log((nij * (double) n) / ((double) countA[a] * countB[b]));
+        }
+        double nmi = (2.0 * mi) / (hA + hB);
+        if (!Double.isFinite(nmi) || nmi < 0.0) return 0.0;
+        return Math.min(1.0, nmi);
     }
 
     private record ResolvedDirectedEdge(int u, int v, double weight, String kind) {}
@@ -755,6 +1501,7 @@ public final class LeidenCommunityDetector {
     }
 
     private static Result buildResult(
+            String algorithm,
             String cacheKey,
             List<NodeInput> nodes,
             WeightedGraph graph,
@@ -944,7 +1691,7 @@ public final class LeidenCommunityDetector {
                 .thenComparing(EmergentCommunity::id));
 
         return new Result(
-                ALGORITHM,
+                algorithm,
                 cacheKey,
                 BigDecimal.valueOf(modularityQ).setScale(4, RoundingMode.HALF_UP),
                 n,
@@ -956,11 +1703,13 @@ public final class LeidenCommunityDetector {
     }
 
     private static String computeCacheKey(
+            String algorithm,
             List<NodeInput> nodes,
             List<ResolvedDirectedEdge> directedEdges,
             double[] selfLoops,
             int validEdgeCount,
-            Config cfg) {
+            Config cfg,
+            Map<String, String> extraLexical) {
         java.security.MessageDigest md;
         try {
             md = java.security.MessageDigest.getInstance("SHA-256");
@@ -970,7 +1719,8 @@ public final class LeidenCommunityDetector {
         // Stream directly into SHA-256 without allocating a multi-megabyte StringBuilder.
         // Byte stream matches the exact length-prefixed canonical format.
         var scratch = new StringBuilder(256);
-        scratch.append(ALGORITHM).append('|')
+        scratch.append(algorithm).append('|')
+                .append(cfg.weightingMode().name()).append('|')
                 .append(Double.doubleToLongBits(cfg.resolution())).append('|')
                 .append(cfg.seed()).append('|')
                 .append(Double.doubleToLongBits(cfg.maxClusterShare())).append('|')
@@ -987,6 +1737,11 @@ public final class LeidenCommunityDetector {
             appendLenPrefixed(scratch, node.label());
             appendLenPrefixed(scratch, node.declaredPackage());
             appendLenPrefixed(scratch, node.kind());
+            String extra = extraLexical.get(node.identity());
+            if (extra != null && !extra.isEmpty()) {
+                scratch.append('L');
+                appendLenPrefixed(scratch, extra);
+            }
             if (selfLoops[u] != 0.0) {
                 scratch.append('S').append(Double.doubleToLongBits(selfLoops[u]));
             }

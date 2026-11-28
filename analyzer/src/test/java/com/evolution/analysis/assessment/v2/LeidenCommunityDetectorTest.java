@@ -585,6 +585,129 @@ class LeidenCommunityDetectorTest {
         }
     }
 
+    @Test
+    void enhancedCompositeWeightingAppliesUtilityDownweightingCyclicBoostBm25LexicalAndDirectoryProximity() {
+        var nodes = new ArrayList<LeidenCommunityDetector.NodeInput>();
+        var edges = new ArrayList<LeidenCommunityDetector.EdgeInput>();
+
+        // Domain A: mutual cycle between InvoiceCalculator <-> InvoiceValidator (same package & domain tokens)
+        nodes.add(new LeidenCommunityDetector.NodeInput("a1", "com.acme.billing.InvoiceCalculator", "com.acme.billing", "TYPE"));
+        nodes.add(new LeidenCommunityDetector.NodeInput("a2", "com.acme.billing.InvoiceValidator", "com.acme.billing", "TYPE"));
+        nodes.add(new LeidenCommunityDetector.NodeInput("a3", "com.acme.billing.InvoiceLedger", "com.acme.billing", "TYPE"));
+        // Domain B: shipping classes
+        nodes.add(new LeidenCommunityDetector.NodeInput("b1", "com.acme.shipping.ShipmentTracker", "com.acme.shipping", "TYPE"));
+        nodes.add(new LeidenCommunityDetector.NodeInput("b2", "com.acme.shipping.ShipmentRouter", "com.acme.shipping", "TYPE"));
+        nodes.add(new LeidenCommunityDetector.NodeInput("b3", "com.acme.shipping.ShipmentManifest", "com.acme.shipping", "TYPE"));
+        // Shared high-inDegree utility class called by ALL 6 domain classes
+        nodes.add(new LeidenCommunityDetector.NodeInput("util", "com.acme.common.StringFormatUtil", "com.acme.common", "TYPE"));
+
+        // Mutual cycle in billing (a1 <-> a2) + directed edges inside billing & shipping
+        edges.add(new LeidenCommunityDetector.EdgeInput("a1", "a2", 1.0, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("a2", "a1", 1.0, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("a1", "a3", 1.0, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("a2", "a3", 1.0, "java.calls"));
+
+        edges.add(new LeidenCommunityDetector.EdgeInput("b1", "b2", 1.0, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("b2", "b3", 1.0, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("b3", "b1", 1.0, "java.calls"));
+
+        // Every domain node calls shared utility hub (inDeg(util) = 6)
+        for (String caller : List.of("a1", "a2", "a3", "b1", "b2", "b3")) {
+            edges.add(new LeidenCommunityDetector.EdgeInput(caller, "util", 1.0, "java.calls"));
+        }
+
+        var weights = LeidenCommunityDetector.computeEnhancedEdgeWeights(nodes, edges, Map.of());
+        var byPair = new HashMap<String, LeidenCommunityDetector.EnhancedEdgeWeight>();
+        for (var w : weights) byPair.put(w.source() + "|" + w.target(), w);
+
+        var cycPair = byPair.get("a1|a2");
+        var acycPair = byPair.get("a1|a3");
+        var utilPair = byPair.get("a1|util");
+        assertNotNull(cycPair);
+        assertNotNull(acycPair);
+        assertNotNull(utilPair);
+
+        // SSAR Eq. 6: mutual cycle a1<->a2 gets 2x boost (inDeg(a1)=1, inDeg(a2)=1 -> 2*(1/1 + 1/1) = 4.0)
+        assertTrue(cycPair.mutualCycle());
+        assertEquals(4.0, cycPair.rawStructuralWeight(), 1e-9);
+        assertEquals(1.0, cycPair.normalizedStructuralWeight(), 1e-9);
+
+        // Acyclic domain edge a1->a3 (inDeg(a3)=2 -> 1*(1/2) = 0.5)
+        assertFalse(acycPair.mutualCycle());
+        assertEquals(0.5, acycPair.rawStructuralWeight(), 1e-9);
+
+        // SemRef Eq. 1 utility downweighting: a1->util has inDeg(util)=6 -> 1/6 = 0.1667 << domain edges
+        assertEquals(1.0 / 6.0, utilPair.rawStructuralWeight(), 1e-9);
+        assertTrue(utilPair.rawStructuralWeight() < acycPair.rawStructuralWeight());
+        assertTrue(utilPair.compositeWeight() < acycPair.compositeWeight());
+
+        // Lexical BM25 cosine and directory proximity in [0, 1] + exact 0.55/0.30/0.15 linear combination
+        assertTrue(cycPair.lexicalSimilarity() > 0.0 && cycPair.lexicalSimilarity() <= 1.0);
+        assertEquals(1.0, cycPair.directoryProximity(), 1e-9);
+        assertEquals(0.0, utilPair.directoryProximity(), 1e-9);
+        double expectedComposite = 0.55 * cycPair.normalizedStructuralWeight()
+                + 0.30 * cycPair.lexicalSimilarity()
+                + 0.15 * cycPair.directoryProximity();
+        assertEquals(expectedComposite, cycPair.compositeWeight(), 1e-12);
+
+        // Clustering keeps billing and shipping separated despite shared utility hub
+        var detected = LeidenCommunityDetector.detect(nodes, edges, null);
+        assertEquals(LeidenCommunityDetector.ENHANCED_ALGORITHM, detected.algorithm());
+        assertNotEquals(detected.communityByNode().get("a1"), detected.communityByNode().get("b1"),
+                "Utility hub downweighting must prevent billing and shipping from collapsing together");
+        assertEquals(detected.communityByNode().get("a1"), detected.communityByNode().get("a2"),
+                "2x cyclic boost must keep mutually cyclic pair together");
+    }
+
+    @Test
+    void oracleFreeMultiGammaSweepMapsMacroMesoMicroDeterministicallyWithZeroGtLeakage() {
+        var nodes = new ArrayList<LeidenCommunityDetector.NodeInput>();
+        var edges = new ArrayList<LeidenCommunityDetector.EdgeInput>();
+        // 4 distinct clusters (8 nodes each) with 2 weak super-pair bridges so gamma=0.5..2.0 spans coarseness cleanly
+        String[] domains = {"billing", "ledger", "shipping", "customs"};
+        for (int c = 0; c < 4; c++) {
+            for (int i = 0; i < 8; i++) {
+                String id = domains[c] + ":" + i;
+                nodes.add(new LeidenCommunityDetector.NodeInput(
+                        id, "com.acme." + domains[c] + "." + domains[c] + "Service" + i,
+                        "com.acme." + domains[c], "TYPE"));
+            }
+            for (int i = 0; i < 8; i++) {
+                edges.add(new LeidenCommunityDetector.EdgeInput(
+                        domains[c] + ":" + i, domains[c] + ":" + ((i + 1) % 8), 2.0, "java.calls"));
+                edges.add(new LeidenCommunityDetector.EdgeInput(
+                        domains[c] + ":" + i, domains[c] + ":" + ((i + 2) % 8), 1.5, "java.calls"));
+            }
+        }
+        edges.add(new LeidenCommunityDetector.EdgeInput("billing:0", "ledger:0", 0.5, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("shipping:0", "customs:0", 0.5, "java.calls"));
+        edges.add(new LeidenCommunityDetector.EdgeInput("ledger:1", "shipping:1", 0.25, "java.calls"));
+
+        var sweep1 = LeidenCommunityDetector.sweepMultiGamma(nodes, edges, null);
+        assertEquals(4, sweep1.levels().size());
+        assertEquals(0.5, sweep1.macroGamma(), 1e-9);
+        assertTrue(sweep1.mesoGamma() == 1.0 || sweep1.mesoGamma() == 1.5,
+                "MESO gamma must come from oracle-free elbow {1.0, 1.5}, got " + sweep1.mesoGamma());
+        assertEquals(2.0, sweep1.microGamma(), 1e-9);
+        assertFalse(sweep1.mesoSelectionRationale().isBlank());
+        assertTrue(sweep1.micro().communities().size() >= sweep1.macro().communities().size());
+
+        // Shuffled replay must produce bit-identical multi-gamma sweep results
+        var shuffledNodes = new ArrayList<>(nodes);
+        var shuffledEdges = new ArrayList<>(edges);
+        var rng = new Random(2026L);
+        Collections.shuffle(shuffledNodes, rng);
+        Collections.shuffle(shuffledEdges, rng);
+        var sweep2 = LeidenCommunityDetector.sweepMultiGamma(shuffledNodes, shuffledEdges, null);
+
+        assertEquals(sweep1.macroGamma(), sweep2.macroGamma());
+        assertEquals(sweep1.mesoGamma(), sweep2.mesoGamma());
+        assertEquals(sweep1.microGamma(), sweep2.microGamma());
+        assertEquals(sweep1.macro().communities(), sweep2.macro().communities());
+        assertEquals(sweep1.meso().communities(), sweep2.meso().communities());
+        assertEquals(sweep1.micro().communities(), sweep2.micro().communities());
+    }
+
     private static LeidenCommunityDetector.EmergentCommunity comm(String id, String label, List<String> members) {
         return new LeidenCommunityDetector.EmergentCommunity(
                 id, "sha256:0000", label, "com.acme", members.getFirst(), members.getFirst(),

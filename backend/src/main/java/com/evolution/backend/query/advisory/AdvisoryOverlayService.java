@@ -43,6 +43,30 @@ public final class AdvisoryOverlayService {
         return built;
     }
 
+    /**
+     * Read-only quarantined entry point for SemRef Stages 2-4 hierarchical cluster refinement.
+     * Strictly returns {@code TrustTier.ADVISORY_UNVERIFIED} outputs without mutating
+     * {@link KnowledgeGraph}, canonical Leiden partitions, Policy findings, or Score v2.
+     */
+    public static SemanticClusterRefinementService.RefinementResult refineClustersAdvisory(
+            KnowledgeGraph graph,
+            String context,
+            SemanticClusterRefinementService.RefinementAdvisor advisor,
+            SemanticClusterRefinementService.Config config) {
+        return SemanticClusterRefinementService.refineGraph(graph, context, advisor, config);
+    }
+
+    /** Read-only quarantined SemRef refinement using the deterministic offline fallback advisor. */
+    public static SemanticClusterRefinementService.RefinementResult refineClustersAdvisory(
+            KnowledgeGraph graph,
+            String context) {
+        return SemanticClusterRefinementService.refineGraph(
+                graph,
+                context,
+                SemanticClusterRefinementService.deterministicAdvisor(),
+                SemanticClusterRefinementService.Config.defaults());
+    }
+
     /** Filters an overlay snapshot by optional entity identity/name, kind, or source path substring. */
     public static AdvisoryOverlay.Snapshot filter(
             AdvisoryOverlay.Snapshot full,

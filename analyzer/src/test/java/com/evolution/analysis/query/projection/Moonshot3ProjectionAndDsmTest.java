@@ -275,6 +275,18 @@ class Moonshot3ProjectionAndDsmTest {
         assertEquals("MICRO", smallAuto.metadata().get("resolvedLevel"));
         assertEquals(2, smallAuto.nodes().size());
 
+        // (e) Verify DSM communityId drill-down matches MACRO super-node communityId 100% (shared extraLexical cache parity)
+        var commFilteredDsm = DsmMatrixBuilder.build(graph, new DsmMatrixBuilder.DsmRequest(
+                builder.context,
+                DsmMatrixBuilder.Granularity.TYPE,
+                Optional.of("community:" + targetCommId),
+                100,
+                Set.of()));
+        assertEquals(expectedMembers, commFilteredDsm.order().size(),
+                "DSM communityId filter must match GraphProjectionService MACRO communityId member count 100%");
+        assertTrue(commFilteredDsm.order().stream()
+                .allMatch(it -> Optional.of(targetCommId).equals(it.communityId())));
+
         // (e) Zero canonical KnowledgeGraph digest mutation
         assertEquals(digestBefore, graph.identity());
         assertEquals(semanticBefore, graph.semanticIdentity());
@@ -490,6 +502,91 @@ class Moonshot3ProjectionAndDsmTest {
         assertEquals(2, dsm.order().size());
         assertTrue(dsm.order().stream().allMatch(it -> it.trustTier() == TrustTier.SOURCE_SYNTAX));
         assertEquals(TrustTier.SOURCE_SYNTAX, dsm.cells().getFirst().trustTier());
+    }
+
+    @Test
+    void dsmSemRefMetricsComputeEq1DepEq2CohesionEq3CouplingEq4RdpAndMisplacedFlagsAtZeroLlmTokens() {
+        // Pure formula verification: Billing (3 files), Shipping (3 files), SharedUtil (1 high-inDeg utility),
+        // plus MisplacedInvoiceHelper declared in Shipping but depending only on Billing!
+        var moduleByFile = new LinkedHashMap<String, String>();
+        moduleByFile.put("bill1", "billing");
+        moduleByFile.put("bill2", "billing");
+        moduleByFile.put("bill3", "billing");
+        moduleByFile.put("ship1", "shipping");
+        moduleByFile.put("ship2", "shipping");
+        moduleByFile.put("ship3", "shipping");
+        moduleByFile.put("misplaced", "shipping");
+        moduleByFile.put("util", "common");
+
+        var deps = List.of(
+                // Billing internal deps
+                new DsmMatrixBuilder.DirectedDependency("bill1", "bill2"),
+                new DsmMatrixBuilder.DirectedDependency("bill2", "bill3"),
+                new DsmMatrixBuilder.DirectedDependency("bill3", "bill1"),
+                // Shipping internal deps
+                new DsmMatrixBuilder.DirectedDependency("ship1", "ship2"),
+                new DsmMatrixBuilder.DirectedDependency("ship2", "ship3"),
+                new DsmMatrixBuilder.DirectedDependency("ship3", "ship1"),
+                // Misplaced file declared in shipping depends exclusively on bill1, bill2, bill3
+                new DsmMatrixBuilder.DirectedDependency("misplaced", "bill1"),
+                new DsmMatrixBuilder.DirectedDependency("misplaced", "bill2"),
+                new DsmMatrixBuilder.DirectedDependency("misplaced", "bill3"),
+                // Every file calls shared utility (inDeg(util) = 7 -> strongly downweighted!)
+                new DsmMatrixBuilder.DirectedDependency("bill1", "util"),
+                new DsmMatrixBuilder.DirectedDependency("bill2", "util"),
+                new DsmMatrixBuilder.DirectedDependency("bill3", "util"),
+                new DsmMatrixBuilder.DirectedDependency("ship1", "util"),
+                new DsmMatrixBuilder.DirectedDependency("ship2", "util"),
+                new DsmMatrixBuilder.DirectedDependency("ship3", "util"),
+                new DsmMatrixBuilder.DirectedDependency("misplaced", "util"));
+
+        var metrics = DsmMatrixBuilder.computeSemRefMetrics(moduleByFile, deps);
+        // SemRef Eq. 2: billing cohesion must be much higher than shipping (which contains misplaced file)
+        assertTrue(metrics.moduleCohesion().get("billing").doubleValue()
+                > metrics.moduleCohesion().get("shipping").doubleValue());
+        // SemRef Eq. 3: inter-module coupling shipping -> billing is positive
+        assertTrue(metrics.interModuleCoupling().stream()
+                .anyMatch(c -> "shipping".equals(c.sourceModule()) && "billing".equals(c.targetModule())
+                        && c.depStrength().doubleValue() > 0.0));
+        // Zero-LLM MISPLACED_FILE_CANDIDATE flags ONLY "misplaced" -> "billing", NOT normal files calling shared util!
+        assertEquals(1, metrics.misplacedCandidates().size(), "Expected exactly 1 misplaced candidate: " + metrics.misplacedCandidates());
+        var cand = metrics.misplacedCandidates().getFirst();
+        assertEquals("misplaced", cand.entityId());
+        assertEquals(DsmMatrixBuilder.MISPLACED_FILE_CANDIDATE_FLAG, cand.flag());
+        assertEquals("shipping", cand.currentModule());
+        assertEquals("billing", cand.suggestedModule());
+        assertTrue(cand.suggestedModuleDep().doubleValue() > cand.ownModuleDep().doubleValue());
+
+        // SemRef Eqs. 4-5: RDP(A, A') = (M(A') - M(A)) / (1 - M(A))
+        assertEquals(new BigDecimal("0.4533"), DsmMatrixBuilder.computeRdp(0.3935, 0.6684));
+        var fixedModules = new LinkedHashMap<>(moduleByFile);
+        fixedModules.put("misplaced", "billing");
+        var afterMetrics = DsmMatrixBuilder.computeSemRefMetrics(fixedModules, deps);
+        var rdp = DsmMatrixBuilder.computeRdp(
+                metrics.meanCohesion().doubleValue(), afterMetrics.meanCohesion().doubleValue());
+        assertTrue(rdp.doubleValue() > 0.0, "Moving misplaced file must yield positive cohesion RDP, got " + rdp);
+        assertTrue(afterMetrics.misplacedCandidates().isEmpty());
+
+        // Verify DsmMatrixBuilder.build embeds SemRefMetrics and stays CanonicalJson-safe without mutating KnowledgeGraph
+        var gb = new GraphBuilder()
+                .type("mod-a", "com.acme.billing", "BillA", EntityOrigin.PROJECT)
+                .type("mod-a", "com.acme.billing", "BillB", EntityOrigin.PROJECT)
+                .type("mod-a", "com.acme.shipping", "ShipA", EntityOrigin.PROJECT)
+                .type("mod-a", "com.acme.shipping", "ShipB", EntityOrigin.PROJECT)
+                .type("mod-a", "com.acme.shipping", "StrayBillHelper", EntityOrigin.PROJECT)
+                .edge("BillA", "BillB")
+                .edge("ShipA", "ShipB")
+                .edge("StrayBillHelper", "BillA")
+                .edge("StrayBillHelper", "BillB");
+        KnowledgeGraph g = gb.build();
+        ContentDigest before = g.identity();
+        var dsm = DsmMatrixBuilder.build(g, DsmMatrixBuilder.DsmRequest.defaults(gb.context, DsmMatrixBuilder.Granularity.TYPE));
+        assertTrue(dsm.semRefMetrics().misplacedCandidates().stream()
+                .anyMatch(c -> c.entityId().equals(gb.typeId("StrayBillHelper"))
+                        && "com.acme.billing".equals(c.suggestedModule())
+                        && DsmMatrixBuilder.MISPLACED_FILE_CANDIDATE_FLAG.equals(c.flag())));
+        assertDoesNotThrow(() -> CanonicalJson.write(dsm.toView()));
+        assertEquals(before, g.identity());
     }
 
     // ─── Compact Deterministic Synthetic KnowledgeGraph Builder ───
