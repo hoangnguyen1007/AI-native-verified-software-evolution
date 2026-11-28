@@ -6,6 +6,8 @@ import com.evolution.analysis.ingestion.IngestionEvidence;
 import com.evolution.analysis.spring.condition.*;
 import com.evolution.analysis.spring.binding.*;
 import com.evolution.analysis.spring.universal.UniversalSpringEvidence;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.*;
 import static com.evolution.analysis.spring.truth.SymbolicConfiguration.*;
 import static com.evolution.analysis.spring.truth.ConfigurationReasoner.Satisfiability.*;
@@ -63,22 +65,39 @@ public final class SymbolicTruthRegions {
 
     public record Row(ConditionOccurrence.Identity occurrence, ContentDigest trueRegion, ContentDigest falseRegion,
             ContentDigest unknownRegion, TruthRegionEvaluation.Classification classification,
-            List<Witness> witnesses) {
+            List<Witness> witnesses, Optional<BigDecimal> mayExposureRatio, Optional<BigInteger> validWorldCount) {
         public Row {
             witnesses = List.copyOf(witnesses);
+            mayExposureRatio = mayExposureRatio == null ? Optional.empty() : mayExposureRatio;
+            validWorldCount = validWorldCount == null ? Optional.empty() : validWorldCount;
+        }
+
+        public Row(ConditionOccurrence.Identity occurrence, ContentDigest trueRegion, ContentDigest falseRegion,
+                ContentDigest unknownRegion, TruthRegionEvaluation.Classification classification,
+                List<Witness> witnesses) {
+            this(occurrence, trueRegion, falseRegion, unknownRegion, classification, witnesses,
+                    Optional.empty(), Optional.empty());
         }
     }
 
     public record Result(ContentDigest inputIdentity, ConfigurationSpaceIdentity space,
             ConfigurationReasoner.Satisfiability feasibility, List<Row> rows,
             List<Answer> queries, List<Node> formulas, List<UniversalSpringEvidence.Issue> issues,
-            List<CapabilityGapRecord> gaps) {
+            List<CapabilityGapRecord> gaps, Optional<BigInteger> validWorldCount) {
         public Result {
             rows = List.copyOf(rows);
             queries = List.copyOf(queries);
             formulas = List.copyOf(formulas);
             issues = List.copyOf(issues);
             gaps = List.copyOf(gaps);
+            validWorldCount = validWorldCount == null ? Optional.empty() : validWorldCount;
+        }
+
+        public Result(ContentDigest inputIdentity, ConfigurationSpaceIdentity space,
+                ConfigurationReasoner.Satisfiability feasibility, List<Row> rows,
+                List<Answer> queries, List<Node> formulas, List<UniversalSpringEvidence.Issue> issues,
+                List<CapabilityGapRecord> gaps) {
+            this(inputIdentity, space, feasibility, rows, queries, formulas, issues, gaps, Optional.empty());
         }
 
         public ContentDigest identity() {
@@ -86,15 +105,21 @@ public final class SymbolicTruthRegions {
                     rows.stream()
                             .map(r -> List.of(r.occurrence(), r.trueRegion(), r.falseRegion(), r.unknownRegion(),
                                     r.classification(),
-                                    r.witnesses().stream().map(Witness::identity).toList()))
+                                    r.witnesses().stream().map(Witness::identity).toList(),
+                                    r.mayExposureRatio(), r.validWorldCount()))
                             .toList(),
-                    queries, formulas, issues, gaps));
+                    queries, formulas, issues, gaps, validWorldCount));
         }
     }
 
     public static Result evaluate(ConditionModel model, ConditionExpression.Semantics semantics,
             ConfigurationReasoner reasoner, Limits limits) {
-        return new Compilation(model, semantics, reasoner, limits).run();
+        return evaluate(model, semantics, reasoner, limits, SlicedDdnnfCompiler.Limits.defaults());
+    }
+
+    public static Result evaluate(ConditionModel model, ConditionExpression.Semantics semantics,
+            ConfigurationReasoner reasoner, Limits limits, SlicedDdnnfCompiler.Limits ddnnfLimits) {
+        return new Compilation(model, semantics, reasoner, limits, ddnnfLimits).run();
     }
 
     public record Trace(ContentDigest region, ConfigurationAssignment representative, ContentDigest bindingResult,
@@ -112,13 +137,24 @@ public final class SymbolicTruthRegions {
 
     public record FactRegion(ConditionalFactKey fact, ContentDigest trueRegion, ContentDigest falseRegion,
             ContentDigest unknownRegion,
-            TruthRegionEvaluation.Classification classification) {
+            TruthRegionEvaluation.Classification classification,
+            Optional<BigDecimal> mayExposureRatio,
+            Optional<BigInteger> validWorldCount) {
+        public FactRegion {
+            mayExposureRatio = mayExposureRatio == null ? Optional.empty() : mayExposureRatio;
+            validWorldCount = validWorldCount == null ? Optional.empty() : validWorldCount;
+        }
+
+        public FactRegion(ConditionalFactKey fact, ContentDigest trueRegion, ContentDigest falseRegion,
+                ContentDigest unknownRegion, TruthRegionEvaluation.Classification classification) {
+            this(fact, trueRegion, falseRegion, unknownRegion, classification, Optional.empty(), Optional.empty());
+        }
     }
 
     public record StagedResult(ContentDigest inputIdentity, boolean signaturesComplete, List<Trace> traces,
             List<FactRegion> regions,
             List<Node> formulas, List<Answer> queries, List<UniversalSpringEvidence.Issue> issues,
-            List<CapabilityGapRecord> gaps) {
+            List<CapabilityGapRecord> gaps, Optional<BigInteger> validWorldCount) {
         public StagedResult {
             traces = List.copyOf(traces);
             regions = List.copyOf(regions);
@@ -126,11 +162,20 @@ public final class SymbolicTruthRegions {
             queries = List.copyOf(queries);
             issues = List.copyOf(issues);
             gaps = List.copyOf(gaps);
+            validWorldCount = validWorldCount == null ? Optional.empty() : validWorldCount;
+        }
+
+        public StagedResult(ContentDigest inputIdentity, boolean signaturesComplete, List<Trace> traces,
+                List<FactRegion> regions, List<Node> formulas, List<Answer> queries,
+                List<UniversalSpringEvidence.Issue> issues, List<CapabilityGapRecord> gaps) {
+            this(inputIdentity, signaturesComplete, traces, regions, formulas, queries, issues, gaps,
+                    Optional.empty());
         }
 
         public ContentDigest identity() {
             return IngestionEvidence.digest(List.of(inputIdentity, signaturesComplete,
-                    traces.stream().map(Trace::canonicalForm).toList(), regions, formulas, queries, issues, gaps));
+                    traces.stream().map(Trace::canonicalForm).toList(), regions, formulas, queries, issues, gaps,
+                    validWorldCount));
         }
     }
 
@@ -152,9 +197,17 @@ public final class SymbolicTruthRegions {
      */
     public static StagedResult evaluateStaged(TruthRegionEvaluation.Request request, int maxSignatures, Limits limits,
             boolean verifyWitnessReplay) {
+        return evaluateStaged(request, maxSignatures, limits, verifyWitnessReplay,
+                SlicedDdnnfCompiler.Limits.defaults());
+    }
+
+    public static StagedResult evaluateStaged(TruthRegionEvaluation.Request request, int maxSignatures, Limits limits,
+            boolean verifyWitnessReplay, SlicedDdnnfCompiler.Limits ddnnfLimits) {
         if (maxSignatures < 1)
             throw new IllegalArgumentException("Positive signature limit required");
-        var c = new Compilation(request.conditionModel(), request.conditionSemantics(), request.reasoner(), limits);
+        Objects.requireNonNull(ddnnfLimits, "ddnnfLimits");
+        var c = new Compilation(request.conditionModel(), request.conditionSemantics(), request.reasoner(), limits,
+                ddnnfLimits);
         var input = IngestionEvidence.digest(List.of("spring.symbolic-staged:m8.4-native-spel-v2", c.input,
                 request.bindingPlan().identity(), request.baseline().identity(),
                 request.limits(), request.evaluatorArtifactDigest(), maxSignatures));
@@ -232,7 +285,10 @@ public final class SymbolicTruthRegions {
                 }
                 cdclSession = new IncrementalCdclReasoner.Session(limits);
                 c.registerFormula(feasible);
-                cdclSession.addRoot(feasible);
+                RepositoryConfigurationSpaceBuilder.encodeChoiceGroupsExactly1Pb(c.domainChoiceGroups, cdclSession);
+                if (feasibility.yes() != TRUE) {
+                    cdclSession.addRoot(feasibility.yes());
+                }
                 for (int i = 0; i < atomList.size(); i++) {
                     var truth = atomList.get(i).getValue();
                     atomYesLit[i] = cdclSession.encode(truth.yes());
@@ -245,6 +301,7 @@ public final class SymbolicTruthRegions {
             }
         }
 
+        var traceCubes = new ArrayList<List<Formula>>();
         long evaluatedCells = 0;
         for (int signature = 0; compatible && signature < maxSignatures; signature++) {
             Answer answer;
@@ -336,6 +393,7 @@ public final class SymbolicTruthRegions {
                     no.get(fid).add(region);
             }
             traces.add(new Trace(region.identity(), assignment, binding.identity(), operation, values, replayed));
+            traceCubes.add(List.copyOf(cube));
             remaining = and(remaining, not(and(cube)));
         }
         if (!complete && compatible) {
@@ -357,6 +415,53 @@ public final class SymbolicTruthRegions {
             complete = false;
             c.issue(UniversalSpringEvidence.Reason.SYMBOLIC_INPUT_UNKNOWN, "feasibility-residual");
         }
+
+        // Pure-Java per-COI-slice d-DNNF #SAT model counting & exact MAY exposure ratio (I1/I2/I3)
+        Optional<BigInteger> validWorldCount = Optional.empty();
+        BigInteger[] traceWorldCounts = null;
+        SlicedDdnnfCompiler.CompiledDdnnf stagedDdnnf = null;
+        int[][] traceCubeLits = null;
+        boolean ddnnfBounded = false;
+        if (complete && compatible && !traces.isEmpty()) {
+            try {
+                var sliceBuilder = new SlicedDdnnfCompiler.SliceBuilder();
+                encodeChoiceGroupsIntoSlice(c.domainChoiceGroups, sliceBuilder);
+                if (feasibility.yes() != TRUE) {
+                    sliceBuilder.addFormulaRoot(feasibility.yes());
+                }
+                traceCubeLits = new int[traceCubes.size()][];
+                for (int t = 0; t < traceCubes.size(); t++) {
+                    var cubeFormulas = traceCubes.get(t);
+                    int[] lits = new int[cubeFormulas.size()];
+                    for (int k = 0; k < cubeFormulas.size(); k++) {
+                        lits[k] = sliceBuilder.encodeFormula(cubeFormulas.get(k));
+                    }
+                    traceCubeLits[t] = lits;
+                }
+                var compiled = SlicedDdnnfCompiler.compile(sliceBuilder.build(), ddnnfLimits);
+                if (compiled.isComplete()) {
+                    stagedDdnnf = compiled.ddnnf().orElseThrow();
+                    BigInteger total = stagedDdnnf.countModels();
+                    if (total.signum() > 0) {
+                        validWorldCount = Optional.of(total);
+                        BigInteger[] counts = new BigInteger[traces.size()];
+                        BigInteger sum = BigInteger.ZERO;
+                        for (int t = 0; t < traces.size(); t++) {
+                            counts[t] = stagedDdnnf.countModelsUnder(traceCubeLits[t]);
+                            sum = sum.add(counts[t]);
+                        }
+                        if (sum.equals(total)) {
+                            traceWorldCounts = counts;
+                        }
+                    }
+                } else {
+                    ddnnfBounded = true;
+                }
+            } catch (RuntimeException bounded) {
+                ddnnfBounded = true;
+            }
+        }
+
         var regions = new ArrayList<FactRegion>(facts.size());
         var exists = complete ? null : c.query(feasible);
         for (int i = 0; i < facts.size(); i++) {
@@ -394,13 +499,81 @@ public final class SymbolicTruthRegions {
                         classification = TruthRegionEvaluation.Classification.MAY;
                 }
             }
-            regions.add(new FactRegion(fact, y.identity(), n.identity(), u.identity(), classification));
+            Optional<BigDecimal> mayRatio = Optional.empty();
+            if (validWorldCount.isPresent()) {
+                BigInteger total = validWorldCount.orElseThrow();
+                if (classification == TruthRegionEvaluation.Classification.MUST) {
+                    mayRatio = Optional.of(BigDecimal.ONE);
+                } else if (classification == TruthRegionEvaluation.Classification.NEVER) {
+                    mayRatio = Optional.of(BigDecimal.ZERO);
+                } else if (classification == TruthRegionEvaluation.Classification.MAY) {
+                    if (traceWorldCounts != null) {
+                        BigInteger trueSum = BigInteger.ZERO;
+                        for (int t = 0; t < traces.size(); t++) {
+                            if (traces.get(t).facts().get(fid) == LogicalValue.TRUE) {
+                                trueSum = trueSum.add(traceWorldCounts[t]);
+                            }
+                        }
+                        mayRatio = Optional.of(SlicedDdnnfCompiler.computeExposureRatio(trueSum, total));
+                    } else {
+                        // Minimized cubes overlapped: count exact union of TRUE cubes directly via d-DNNF
+                        var yesCubes = new ArrayList<Formula>();
+                        for (int t = 0; t < traces.size(); t++) {
+                            if (traces.get(t).facts().get(fid) == LogicalValue.TRUE) {
+                                yesCubes.add(and(traceCubes.get(t)));
+                            }
+                        }
+                        var factSlice = new SlicedDdnnfCompiler.SliceBuilder();
+                        encodeChoiceGroupsIntoSlice(c.domainChoiceGroups, factSlice);
+                        if (feasibility.yes() != TRUE) {
+                            factSlice.addFormulaRoot(feasibility.yes());
+                        }
+                        int yesLit = factSlice.encodeFormula(or(yesCubes));
+                        var factCompiled = SlicedDdnnfCompiler.compile(factSlice.build(), ddnnfLimits);
+                        if (factCompiled.isComplete()) {
+                            BigInteger trueWorlds = factCompiled.ddnnf().orElseThrow().countModelsUnder(yesLit);
+                            mayRatio = Optional.of(SlicedDdnnfCompiler.computeExposureRatio(trueWorlds, total));
+                        } else {
+                            ddnnfBounded = true;
+                        }
+                    }
+                }
+            }
+            regions.add(new FactRegion(fact, y.identity(), n.identity(), u.identity(), classification,
+                    mayRatio, validWorldCount));
         }
         var issues = c.issues.stream().distinct().sorted(Comparator.comparing(UniversalSpringEvidence.Issue::identity))
                 .toList();
         gaps.addAll(UniversalSpringEvidence.gaps(c.space.buildContext().snapshotIdentity(), input, issues));
+        if (ddnnfBounded) {
+            gaps.add(SlicedDdnnfCompiler.boundedCountGap(
+                    c.space.buildContext().snapshotIdentity(),
+                    input,
+                    "staged-regions",
+                    ddnnfLimits.maxNodes(),
+                    ddnnfLimits.maxSliceVars()));
+        }
         return new StagedResult(input, complete, traces, regions, List.copyOf(c.formulas.values()), c.queries, issues,
-                List.copyOf(gaps));
+                List.copyOf(gaps), validWorldCount);
+    }
+
+    private static void encodeChoiceGroupsIntoSlice(
+            List<List<Formula>> choiceGroups,
+            SlicedDdnnfCompiler.SliceBuilder builder) {
+        for (var group : choiceGroups) {
+            int n = group.size();
+            int[] lits = new int[n];
+            for (int i = 0; i < n; i++) {
+                lits[i] = builder.encodeFormula(group.get(i));
+            }
+            if (n == 0) {
+                builder.addPbConstraint(new IncrementalCdclReasoner.PbConstraint(new int[0], new int[0], 1));
+            } else if (n == 1) {
+                builder.addClause(lits[0]);
+            } else {
+                builder.addExactly1(lits);
+            }
+        }
     }
 
     private static final int KLEENE_TRUE = 1;
@@ -549,11 +722,13 @@ public final class SymbolicTruthRegions {
         final ConditionExpression.Semantics semantics;
         final ConfigurationReasoner reasoner;
         final Limits limits;
+        final SlicedDdnnfCompiler.Limits ddnnfLimits;
         final ContentDigest input;
         final List<UniversalSpringEvidence.Issue> issues = new ArrayList<>();
         final List<Answer> queries = new ArrayList<>();
         final Map<ContentDigest, Node> formulas = new TreeMap<>();
         final List<Formula> constraints = new ArrayList<>();
+        final List<List<Formula>> domainChoiceGroups = new ArrayList<>();
         final Map<String, Choice> choices = new TreeMap<>();
         final Map<FiniteDomain.Variable, Map<FiniteDomain.Value, Formula>> environment = new TreeMap<>();
         final Map<String, Truth> profiles = new TreeMap<>();
@@ -561,12 +736,13 @@ public final class SymbolicTruthRegions {
         boolean incomplete;
 
         Compilation(ConditionModel model, ConditionExpression.Semantics semantics, ConfigurationReasoner reasoner,
-                Limits limits) {
+                Limits limits, SlicedDdnnfCompiler.Limits ddnnfLimits) {
             this.model = Objects.requireNonNull(model);
             space = model.space();
             this.semantics = Objects.requireNonNull(semantics);
             this.reasoner = Objects.requireNonNull(reasoner);
             this.limits = Objects.requireNonNull(limits);
+            this.ddnnfLimits = Objects.requireNonNull(ddnnfLimits);
             input = IngestionEvidence.digest(List.of("spring.symbolic-regions:m8.4-native-spel-v2", model.identity(),
                     semantics, reasoner.policy(), limits));
         }
@@ -585,10 +761,48 @@ public final class SymbolicTruthRegions {
             var possibleFeasibility = query(possible);
             var feasibilityStatus = feasibility.status() == SATISFIABLE ? SATISFIABLE
                     : possibleFeasibility.status() == UNSATISFIABLE ? UNSATISFIABLE : UNKNOWN;
-            var rows = new ArrayList<Row>();
+
+            var occTruths = new ArrayList<Truth>(model.sourceRows().size());
             for (var occurrence : model.sourceRows()) {
-                Truth truth = evidenced(occurrence.declarationEvidenceKey()) ? expression(occurrence.expression(), 0)
-                        : U;
+                occTruths.add(evidenced(occurrence.declarationEvidenceKey())
+                        ? expression(occurrence.expression(), 0)
+                        : U);
+            }
+
+            Optional<BigInteger> validWorldCount = Optional.empty();
+            SlicedDdnnfCompiler.CompiledDdnnf sliceDdnnf = null;
+            int[] occYesLits = null;
+            boolean ddnnfBounded = false;
+            if (feasibilityStatus == SATISFIABLE) {
+                try {
+                    var sliceBuilder = new SlicedDdnnfCompiler.SliceBuilder();
+                    encodeChoiceGroupsIntoSlice(domainChoiceGroups, sliceBuilder);
+                    if (feasible.yes() != TRUE) {
+                        sliceBuilder.addFormulaRoot(feasible.yes());
+                    }
+                    occYesLits = new int[occTruths.size()];
+                    for (int i = 0; i < occTruths.size(); i++) {
+                        occYesLits[i] = sliceBuilder.encodeFormula(occTruths.get(i).yes());
+                    }
+                    var compileRes = SlicedDdnnfCompiler.compile(sliceBuilder.build(), ddnnfLimits);
+                    if (compileRes.isComplete()) {
+                        sliceDdnnf = compileRes.ddnnf().orElseThrow();
+                        BigInteger total = sliceDdnnf.countModels();
+                        if (total.signum() > 0) {
+                            validWorldCount = Optional.of(total);
+                        }
+                    } else {
+                        ddnnfBounded = true;
+                    }
+                } catch (RuntimeException bounded) {
+                    ddnnfBounded = true;
+                }
+            }
+
+            var rows = new ArrayList<Row>();
+            for (int i = 0; i < model.sourceRows().size(); i++) {
+                var occurrence = model.sourceRows().get(i);
+                Truth truth = occTruths.get(i);
                 Formula yes = and(legal, feasible.yes(), truth.yes()), no = and(legal, feasible.yes(), truth.no());
                 Formula unknown = and(possible, or(feasible.unknown(), truth.unknown()));
                 Answer y = query(yes), n = query(no), u = query(unknown);
@@ -606,15 +820,35 @@ public final class SymbolicTruthRegions {
                 replay(occurrence, n, LogicalValue.FALSE, witnesses);
                 if ((y.status() == SATISFIABLE ? 1 : 0) + (n.status() == SATISFIABLE ? 1 : 0) != witnesses.size())
                     classification = TruthRegionEvaluation.Classification.UNKNOWN;
+                Optional<BigDecimal> mayRatio = Optional.empty();
+                if (validWorldCount.isPresent() && sliceDdnnf != null) {
+                    BigInteger total = validWorldCount.orElseThrow();
+                    if (classification == TruthRegionEvaluation.Classification.MUST) {
+                        mayRatio = Optional.of(BigDecimal.ONE);
+                    } else if (classification == TruthRegionEvaluation.Classification.NEVER) {
+                        mayRatio = Optional.of(BigDecimal.ZERO);
+                    } else if (classification == TruthRegionEvaluation.Classification.MAY) {
+                        BigInteger trueWorlds = sliceDdnnf.countModelsUnder(occYesLits[i]);
+                        mayRatio = Optional.of(SlicedDdnnfCompiler.computeExposureRatio(trueWorlds, total));
+                    }
+                }
                 rows.add(new Row(occurrence.identity(), yes.identity(), no.identity(), unknown.identity(),
-                        classification, witnesses));
+                        classification, witnesses, mayRatio, validWorldCount));
             }
             var sorted = issues.stream().distinct()
                     .sorted(Comparator.comparing(UniversalSpringEvidence.Issue::identity)).toList();
             var gaps = new TreeSet<>(model.capabilityGaps());
             gaps.addAll(UniversalSpringEvidence.gaps(space.buildContext().snapshotIdentity(), input, sorted));
+            if (ddnnfBounded) {
+                gaps.add(SlicedDdnnfCompiler.boundedCountGap(
+                        space.buildContext().snapshotIdentity(),
+                        input,
+                        "exogenous-rows",
+                        ddnnfLimits.maxNodes(),
+                        ddnnfLimits.maxSliceVars()));
+            }
             return new Result(input, space.identity(), feasibilityStatus, rows, queries, List.copyOf(formulas.values()),
-                    sorted, List.copyOf(gaps));
+                    sorted, List.copyOf(gaps), validWorldCount);
         }
 
         void prepare() {
@@ -706,6 +940,7 @@ public final class SymbolicTruthRegions {
                     issue(UniversalSpringEvidence.Reason.SYMBOLIC_INPUT_UNKNOWN, "other-value");
                 }
             }
+            domainChoiceGroups.add(List.copyOf(formulas));
             constraints.add(or(formulas));
             // Linear sequential at-most-one encoding, avoiding quadratic clauses for large
             // finite domains.

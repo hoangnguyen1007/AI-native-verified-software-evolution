@@ -7,7 +7,10 @@ import com.evolution.analysis.evidence.CapabilityGapRecord;
 import com.evolution.analysis.frontend.JavaSymbolName;
 import com.evolution.analysis.spring.*;
 import com.evolution.analysis.spring.SpringMechanismInventory.*;
+import com.evolution.analysis.spring.truth.IncrementalCdclReasoner;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import static com.evolution.analysis.spring.condition.ConditionProcessing.Reason.*;
 
 /** Passive evidence-to-IR boundary. Every M4A obligation is classified in the output denominator. */
@@ -449,6 +452,487 @@ public final class ConditionEvidenceLowering {
             }
         }
         return null;
+    }
+
+    /** Numeric comparison operator supported for native Pseudo-Boolean SpEL threshold lowering. */
+    public enum ComparisonOp { GE, GT, LE, LT, EQ, NE }
+
+    /** Linear integer-weighted property term inside a SpEL threshold expression. */
+    public record WeightedPropertyTerm(int coefficient, String propertyKey, Optional<Integer> defaultValue) {
+        public WeightedPropertyTerm {
+            if (coefficient == 0) {
+                throw new IllegalArgumentException("PB term coefficient must be non-zero");
+            }
+            propertyKey = Objects.requireNonNull(propertyKey, "propertyKey").trim();
+            if (propertyKey.isEmpty()) {
+                throw new IllegalArgumentException("PB term propertyKey must not be blank");
+            }
+            defaultValue = Objects.requireNonNull(defaultValue, "defaultValue");
+        }
+    }
+
+    /** Parsed linear numeric SpEL threshold {@code sum(c_i * prop_i) op threshold}. */
+    public record SpelNumericThreshold(List<WeightedPropertyTerm> terms, ComparisonOp operator, int threshold) {
+        public SpelNumericThreshold {
+            terms = List.copyOf(Objects.requireNonNull(terms, "terms"));
+            if (terms.isEmpty()) {
+                throw new IllegalArgumentException("SpEL numeric threshold requires at least one property term");
+            }
+            Objects.requireNonNull(operator, "operator");
+        }
+    }
+
+    /** Summary of native Pseudo-Boolean lowering size vs pairwise/DNF CNF baseline. */
+    public record PbLoweringSummary(
+            List<IncrementalCdclReasoner.PbConstraint> constraints,
+            int auxiliaryVars,
+            int pbLiteralCount,
+            int baselineCnfLiteralCount,
+            double literalReductionRatio) {
+        public PbLoweringSummary {
+            constraints = List.copyOf(Objects.requireNonNull(constraints, "constraints"));
+        }
+    }
+
+    private static final Pattern SPEL_THRESHOLD_SPLIT = Pattern.compile(
+            "^\\s*(.+?)\\s*(>=|<=|==|!=|>|<)\\s*([+-]?\\d+)\\s*$");
+    private static final Pattern SPEL_LINEAR_TERM = Pattern.compile(
+            "(?:([+-])\\s*)?(?:(\\d+)\\s*\\*\\s*)?(?:T\\(Integer\\)\\.parseInt\\(\\s*['\"]\\s*)?\\$\\{([^}:]+)(?::([+-]?\\d+))?\\}(?:\\s*['\"]\\s*\\))?");
+
+    /**
+     * Parses passive linear integer SpEL numeric thresholds such as
+     * {@code #{${app.workers:2} >= 4}}, {@code #{T(Integer).parseInt('${app.replicas:1}') >= 3}},
+     * or weighted sums {@code #{2 * ${app.tier:1} + ${app.boost:0} >= 4}}.
+     */
+    public static Optional<SpelNumericThreshold> parseSpelNumericThreshold(String expression) {
+        if (expression == null) {
+            return Optional.empty();
+        }
+        String s = expression.trim();
+        if (s.startsWith("#{") && s.endsWith("}")) {
+            s = s.substring(2, s.length() - 1).trim();
+        }
+        while (s.startsWith("(") && s.endsWith(")")) {
+            int depth = 0;
+            boolean wrapsWhole = true;
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '(') depth++;
+                else if (c == ')') depth--;
+                if (depth == 0 && i < s.length() - 1) {
+                    wrapsWhole = false;
+                    break;
+                }
+            }
+            if (!wrapsWhole || depth != 0) {
+                break;
+            }
+            s = s.substring(1, s.length() - 1).trim();
+        }
+        Matcher split = SPEL_THRESHOLD_SPLIT.matcher(s);
+        if (!split.matches()) {
+            return Optional.empty();
+        }
+        String lhs = split.group(1).trim();
+        ComparisonOp op = switch (split.group(2)) {
+            case ">=" -> ComparisonOp.GE;
+            case ">" -> ComparisonOp.GT;
+            case "<=" -> ComparisonOp.LE;
+            case "<" -> ComparisonOp.LT;
+            case "==" -> ComparisonOp.EQ;
+            case "!=" -> ComparisonOp.NE;
+            default -> null;
+        };
+        if (op == null) {
+            return Optional.empty();
+        }
+        int threshold;
+        try {
+            threshold = Integer.parseInt(split.group(3));
+        } catch (NumberFormatException overflow) {
+            return Optional.empty();
+        }
+        var terms = new ArrayList<WeightedPropertyTerm>();
+        Matcher m = SPEL_LINEAR_TERM.matcher(lhs);
+        int cursor = 0;
+        while (cursor < lhs.length()) {
+            while (cursor < lhs.length() && Character.isWhitespace(lhs.charAt(cursor))) {
+                cursor++;
+            }
+            if (cursor >= lhs.length()) {
+                break;
+            }
+            if (!m.find(cursor) || m.start() != cursor) {
+                return Optional.empty();
+            }
+            String signStr = m.group(1);
+            if (!terms.isEmpty() && signStr == null) {
+                return Optional.empty();
+            }
+            int sign = "-".equals(signStr) ? -1 : 1;
+            int coeff = 1;
+            if (m.group(2) != null) {
+                try {
+                    coeff = Integer.parseInt(m.group(2));
+                } catch (NumberFormatException overflow) {
+                    return Optional.empty();
+                }
+            }
+            if (coeff == 0) {
+                return Optional.empty();
+            }
+            String key = m.group(3).trim();
+            if (key.isEmpty() || key.contains("${")) {
+                return Optional.empty();
+            }
+            Optional<Integer> defVal = Optional.empty();
+            if (m.group(4) != null) {
+                try {
+                    defVal = Optional.of(Integer.parseInt(m.group(4)));
+                } catch (NumberFormatException overflow) {
+                    return Optional.empty();
+                }
+            }
+            terms.add(new WeightedPropertyTerm(sign * coeff, key, defVal));
+            cursor = m.end();
+        }
+        if (terms.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new SpelNumericThreshold(terms, op, threshold));
+    }
+
+    /**
+     * Lowers {@code @ConditionalOnSingleCandidate} directly into linear Pseudo-Boolean constraints:
+     * {@code resultLit <=> (sum(candidateLits) == 1) || (sum(primaryCandidateLits) == 1)}.
+     *
+     * <p>When {@code resultLit == 0} (unreified assertion mode), emits native {@code Exactly1}
+     * PB constraints directly without auxiliary reification overhead.
+     */
+    public static PbLoweringSummary lowerSingleCandidateToPb(
+            int[] candidateLits,
+            boolean[] primaryFlags,
+            int resultLit,
+            IncrementalCdclReasoner.Session session) {
+        Objects.requireNonNull(candidateLits, "candidateLits");
+        Objects.requireNonNull(primaryFlags, "primaryFlags");
+        if (candidateLits.length != primaryFlags.length) {
+            throw new IllegalArgumentException("candidateLits/primaryFlags length mismatch");
+        }
+        int n = candidateLits.length;
+        int primaryCount = 0;
+        for (boolean pf : primaryFlags) {
+            if (pf) primaryCount++;
+        }
+        int[] primaryLits = new int[primaryCount];
+        int pi = 0;
+        for (int i = 0; i < n; i++) {
+            if (primaryFlags[i]) {
+                primaryLits[pi++] = candidateLits[i];
+            }
+        }
+
+        var constraints = new ArrayList<IncrementalCdclReasoner.PbConstraint>();
+        int[] auxCounter = new int[] { 0 };
+
+        if (resultLit == 0) {
+            // Direct assertion mode (e.g., condition must hold)
+            if (n == 0) {
+                constraints.add(new IncrementalCdclReasoner.PbConstraint(new int[0], new int[0], 1));
+            } else if (n == 1) {
+                constraints.add(IncrementalCdclReasoner.PbConstraint.clause(candidateLits[0]));
+            } else if (primaryCount == 0) {
+                constraints.addAll(IncrementalCdclReasoner.PbConstraint.exactly1(candidateLits));
+            } else {
+                Objects.requireNonNull(session, "session required for multi-candidate primary PB lowering");
+                int eqAll = reifyExactly1(candidateLits, session, constraints, auxCounter);
+                int eqPrim = primaryCount == 1
+                        ? primaryLits[0]
+                        : reifyExactly1(primaryLits, session, constraints, auxCounter);
+                constraints.add(IncrementalCdclReasoner.PbConstraint.clause(eqAll, eqPrim));
+            }
+        } else {
+            if (n == 0) {
+                constraints.add(IncrementalCdclReasoner.PbConstraint.clause(-resultLit));
+            } else if (n == 1) {
+                constraints.add(IncrementalCdclReasoner.PbConstraint.clause(-resultLit, candidateLits[0]));
+                constraints.add(IncrementalCdclReasoner.PbConstraint.clause(resultLit, -candidateLits[0]));
+            } else {
+                Objects.requireNonNull(session, "session required for reified single-candidate PB lowering");
+                if (primaryCount == 0) {
+                    reifyExactly1Into(candidateLits, resultLit, session, constraints, auxCounter);
+                } else {
+                    int eqAll = reifyExactly1(candidateLits, session, constraints, auxCounter);
+                    int eqPrim = primaryCount == 1
+                            ? primaryLits[0]
+                            : reifyExactly1(primaryLits, session, constraints, auxCounter);
+                    constraints.add(IncrementalCdclReasoner.PbConstraint.clause(-resultLit, eqAll, eqPrim));
+                    constraints.add(IncrementalCdclReasoner.PbConstraint.clause(resultLit, -eqAll));
+                    constraints.add(IncrementalCdclReasoner.PbConstraint.clause(resultLit, -eqPrim));
+                }
+            }
+        }
+
+        if (session != null) {
+            for (var pb : constraints) {
+                session.addPbConstraint(pb);
+            }
+        }
+        int pbLits = constraints.stream().mapToInt(IncrementalCdclReasoner.PbConstraint::literalCount).sum();
+        int baselineLits = estimateLegacySingleCandidateCnfLiterals(n, primaryCount, resultLit != 0);
+        double reduction = baselineLits <= 0 ? 0.0 : 1.0 - ((double) pbLits / baselineLits);
+        return new PbLoweringSummary(constraints, auxCounter[0], pbLits, baselineLits, reduction);
+    }
+
+    /**
+     * Lowers a parsed linear SpEL numeric threshold {@code sum(c_i * prop_i) op threshold}
+     * over one-hot finite property value literals directly into weighted Pseudo-Boolean constraints.
+     *
+     * <p>When {@code resultLit == 0}, asserts the threshold directly; otherwise reifies
+     * {@code resultLit <=> (sum(c_i * prop_i) op threshold)} while preserving exact {@code #SAT}
+     * bijection over all auxiliary variables.
+     */
+    public static PbLoweringSummary lowerSpelNumericThresholdToPb(
+            SpelNumericThreshold spec,
+            Map<String, Map<Integer, Integer>> propertyValueLits,
+            int resultLit,
+            IncrementalCdclReasoner.Session session) {
+        Objects.requireNonNull(spec, "spec");
+        Objects.requireNonNull(propertyValueLits, "propertyValueLits");
+
+        // Build linear weighted sum sum_k (w_k * lit_k) over one-hot finite domain choice literals
+        var litList = new ArrayList<Integer>();
+        var weightList = new ArrayList<Integer>();
+        long minSum = 0L;
+        long maxSum = 0L;
+        for (var term : spec.terms()) {
+            Map<Integer, Integer> dom = propertyValueLits.get(term.propertyKey());
+            if (dom == null || dom.isEmpty()) {
+                throw new IllegalArgumentException("Missing numeric domain literals for property " + term.propertyKey());
+            }
+            long termMin = Long.MAX_VALUE;
+            long termMax = Long.MIN_VALUE;
+            for (var entry : new TreeMap<>(dom).entrySet()) {
+                int val = entry.getKey();
+                int lit = entry.getValue();
+                long wLong = (long) term.coefficient() * val;
+                if (wLong < Integer.MIN_VALUE / 4 || wLong > Integer.MAX_VALUE / 4) {
+                    throw new ArithmeticException("SpEL PB weight out of safe int range: " + wLong);
+                }
+                int w = (int) wLong;
+                termMin = Math.min(termMin, w);
+                termMax = Math.max(termMax, w);
+                if (w != 0) {
+                    litList.add(lit);
+                    weightList.add(w);
+                }
+            }
+            minSum += termMin;
+            maxSum += termMax;
+        }
+        int[] lits = litList.stream().mapToInt(Integer::intValue).toArray();
+        int[] weights = weightList.stream().mapToInt(Integer::intValue).toArray();
+
+        var constraints = new ArrayList<IncrementalCdclReasoner.PbConstraint>();
+        int[] auxCounter = new int[] { 0 };
+        int threshold = spec.threshold();
+
+        switch (spec.operator()) {
+            case GE -> emitLinearGe(lits, weights, threshold, minSum, maxSum, resultLit, constraints);
+            case GT -> emitLinearGe(lits, weights, Math.addExact(threshold, 1), minSum, maxSum, resultLit, constraints);
+            case LE -> emitLinearGe(lits, negateWeights(weights), Math.negateExact(threshold),
+                    -maxSum, -minSum, resultLit, constraints);
+            case LT -> emitLinearGe(lits, negateWeights(weights), Math.negateExact(Math.subtractExact(threshold, 1)),
+                    -maxSum, -minSum, resultLit, constraints);
+            case EQ, NE -> {
+                boolean isNe = spec.operator() == ComparisonOp.NE;
+                if (resultLit == 0 && !isNe) {
+                    emitLinearGe(lits, weights, threshold, minSum, maxSum, 0, constraints);
+                    emitLinearGe(lits, negateWeights(weights), Math.negateExact(threshold),
+                            -maxSum, -minSum, 0, constraints);
+                } else {
+                    Objects.requireNonNull(session, "session required for EQ/NE SpEL PB lowering");
+                    int geLit = session.newAuxiliaryVar();
+                    int leLit = session.newAuxiliaryVar();
+                    auxCounter[0] += 2;
+                    emitLinearGe(lits, weights, threshold, minSum, maxSum, geLit, constraints);
+                    emitLinearGe(lits, negateWeights(weights), Math.negateExact(threshold),
+                            -maxSum, -minSum, leLit, constraints);
+                    int eqTarget = resultLit == 0 ? 0 : (isNe ? -resultLit : resultLit);
+                    if (eqTarget == 0) {
+                        // Unreified NE: !(geLit & leLit) == (-geLit | -leLit)
+                        constraints.add(IncrementalCdclReasoner.PbConstraint.clause(-geLit, -leLit));
+                    } else {
+                        constraints.add(IncrementalCdclReasoner.PbConstraint.clause(-eqTarget, geLit));
+                        constraints.add(IncrementalCdclReasoner.PbConstraint.clause(-eqTarget, leLit));
+                        constraints.add(IncrementalCdclReasoner.PbConstraint.clause(eqTarget, -geLit, -leLit));
+                    }
+                }
+            }
+        }
+
+        if (session != null) {
+            for (var pb : constraints) {
+                session.addPbConstraint(pb);
+            }
+        }
+        int pbLits = constraints.stream().mapToInt(IncrementalCdclReasoner.PbConstraint::literalCount).sum();
+        // Baseline: Cartesian table enumeration over all term domain combinations
+        long cartesianCells = 1L;
+        for (var term : spec.terms()) {
+            cartesianCells = Math.min(100_000L, cartesianCells * propertyValueLits.get(term.propertyKey()).size());
+        }
+        int baselineLits = (int) Math.min(Integer.MAX_VALUE, cartesianCells * Math.max(2, spec.terms().size() + 1));
+        double reduction = baselineLits <= 0 ? 0.0 : 1.0 - ((double) pbLits / baselineLits);
+        return new PbLoweringSummary(constraints, auxCounter[0], pbLits, baselineLits, reduction);
+    }
+
+    private static int[] negateWeights(int[] weights) {
+        int[] neg = new int[weights.length];
+        for (int i = 0; i < weights.length; i++) {
+            neg[i] = Math.negateExact(weights[i]);
+        }
+        return neg;
+    }
+
+    private static void emitLinearGe(
+            int[] lits,
+            int[] weights,
+            int rhs,
+            long minSum,
+            long maxSum,
+            int resultLit,
+            List<IncrementalCdclReasoner.PbConstraint> out) {
+        if (minSum >= rhs) {
+            if (resultLit != 0) {
+                out.add(IncrementalCdclReasoner.PbConstraint.clause(resultLit));
+            }
+            return;
+        }
+        if (maxSum < rhs) {
+            if (resultLit == 0) {
+                out.add(new IncrementalCdclReasoner.PbConstraint(new int[0], new int[0], 1));
+            } else {
+                out.add(IncrementalCdclReasoner.PbConstraint.clause(-resultLit));
+            }
+            return;
+        }
+        if (resultLit == 0) {
+            out.add(new IncrementalCdclReasoner.PbConstraint(lits, weights, rhs));
+            return;
+        }
+        // Forward: resultLit => sum(w_i * l_i) >= rhs  <=>  BigM1 * (-resultLit) + sum(w_i * l_i) >= rhs
+        int bigM1 = Math.toIntExact(Math.max(1L, rhs - minSum));
+        int[] fwdLits = new int[lits.length + 1];
+        int[] fwdWeights = new int[weights.length + 1];
+        fwdLits[0] = -resultLit;
+        fwdWeights[0] = bigM1;
+        System.arraycopy(lits, 0, fwdLits, 1, lits.length);
+        System.arraycopy(weights, 0, fwdWeights, 1, weights.length);
+        out.add(new IncrementalCdclReasoner.PbConstraint(fwdLits, fwdWeights, rhs));
+
+        // Backward: (!resultLit) => sum(w_i * l_i) <= rhs - 1
+        // <=> BigM2 * resultLit + sum((-w_i) * l_i) >= -(rhs - 1)
+        int negRhs = Math.negateExact(rhs - 1);
+        int bigM2 = Math.toIntExact(Math.max(1L, maxSum - (rhs - 1)));
+        int[] bwdLits = new int[lits.length + 1];
+        int[] bwdWeights = new int[weights.length + 1];
+        bwdLits[0] = resultLit;
+        bwdWeights[0] = bigM2;
+        for (int i = 0; i < lits.length; i++) {
+            bwdLits[i + 1] = lits[i];
+            bwdWeights[i + 1] = Math.negateExact(weights[i]);
+        }
+        out.add(new IncrementalCdclReasoner.PbConstraint(bwdLits, bwdWeights, negRhs));
+    }
+
+    private static int reifyExactly1(
+            int[] lits,
+            IncrementalCdclReasoner.Session session,
+            List<IncrementalCdclReasoner.PbConstraint> out,
+            int[] auxCounter) {
+        int eq = session.newAuxiliaryVar();
+        auxCounter[0]++;
+        reifyExactly1Into(lits, eq, session, out, auxCounter);
+        return eq;
+    }
+
+    private static void reifyExactly1Into(
+            int[] lits,
+            int targetLit,
+            IncrementalCdclReasoner.Session session,
+            List<IncrementalCdclReasoner.PbConstraint> out,
+            int[] auxCounter) {
+        int n = lits.length;
+        int ge1 = session.newAuxiliaryVar();
+        int le1 = session.newAuxiliaryVar();
+        auxCounter[0] += 2;
+
+        // ge1 => sum(lits) >= 1  <=>  (-ge1) + sum(lits) >= 1
+        int[] geFwdLits = new int[n + 1];
+        int[] geFwdW = new int[n + 1];
+        geFwdLits[0] = -ge1;
+        geFwdW[0] = 1;
+        for (int i = 0; i < n; i++) {
+            geFwdLits[i + 1] = lits[i];
+            geFwdW[i + 1] = 1;
+        }
+        out.add(new IncrementalCdclReasoner.PbConstraint(geFwdLits, geFwdW, 1));
+
+        // (!ge1) => sum(-lits) >= n  <=>  n * ge1 + sum(-lits) >= n
+        int[] geBwdLits = new int[n + 1];
+        int[] geBwdW = new int[n + 1];
+        geBwdLits[0] = ge1;
+        geBwdW[0] = n;
+        for (int i = 0; i < n; i++) {
+            geBwdLits[i + 1] = -lits[i];
+            geBwdW[i + 1] = 1;
+        }
+        out.add(new IncrementalCdclReasoner.PbConstraint(geBwdLits, geBwdW, n));
+
+        // le1 => sum(-lits) >= n - 1  <=>  (n - 1) * (-le1) + sum(-lits) >= n - 1
+        int[] leFwdLits = new int[n + 1];
+        int[] leFwdW = new int[n + 1];
+        leFwdLits[0] = -le1;
+        leFwdW[0] = n - 1;
+        for (int i = 0; i < n; i++) {
+            leFwdLits[i + 1] = -lits[i];
+            leFwdW[i + 1] = 1;
+        }
+        out.add(new IncrementalCdclReasoner.PbConstraint(leFwdLits, leFwdW, n - 1));
+
+        // (!le1) => sum(lits) >= 2  <=>  2 * le1 + sum(lits) >= 2
+        int[] leBwdLits = new int[n + 1];
+        int[] leBwdW = new int[n + 1];
+        leBwdLits[0] = le1;
+        leBwdW[0] = 2;
+        for (int i = 0; i < n; i++) {
+            leBwdLits[i + 1] = lits[i];
+            leBwdW[i + 1] = 1;
+        }
+        out.add(new IncrementalCdclReasoner.PbConstraint(leBwdLits, leBwdW, 2));
+
+        // targetLit <=> ge1 & le1
+        out.add(IncrementalCdclReasoner.PbConstraint.clause(-targetLit, ge1));
+        out.add(IncrementalCdclReasoner.PbConstraint.clause(-targetLit, le1));
+        out.add(IncrementalCdclReasoner.PbConstraint.clause(targetLit, -ge1, -le1));
+    }
+
+    /** Estimates legacy Tseitin-CNF literal count for pairwise/DNF @ConditionalOnSingleCandidate encoding. */
+    public static int estimateLegacySingleCandidateCnfLiterals(int candidateCount, int primaryCount, boolean reified) {
+        if (candidateCount <= 1) {
+            return Math.max(1, candidateCount * 2);
+        }
+        if (!reified && primaryCount == 0) {
+            // 1 AtLeast1 clause (n lits) + C(n,2) pairwise clauses (n*(n-1) lits) = n^2 lits
+            return candidateCount * candidateCount;
+        }
+        // DNF: n conjunctions of size n (each Tseitin AND gate = 3n + 1 lits) + primary conjunctions + outer OR gate
+        int andGateLits = candidateCount * (3 * candidateCount + 1);
+        int primGateLits = primaryCount <= 1 ? 0 : primaryCount * (3 * primaryCount + 1);
+        int orArity = candidateCount + primaryCount;
+        int orGateLits = 3 * orArity + 1;
+        return andGateLits + primGateLits + orGateLits;
     }
 
     private static String parseCanonicalTopLevelTypeFqn(String canonicalKey) {

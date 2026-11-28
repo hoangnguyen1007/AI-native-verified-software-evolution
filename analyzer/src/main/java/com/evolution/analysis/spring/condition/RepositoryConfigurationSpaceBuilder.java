@@ -3,6 +3,9 @@ package com.evolution.analysis.spring.condition;
 import com.evolution.analysis.contract.common.ContentDigest;
 import com.evolution.analysis.contract.common.VersionedIdentifier;
 import com.evolution.analysis.evidence.*;
+import com.evolution.analysis.spring.truth.IncrementalCdclReasoner;
+import com.evolution.analysis.spring.truth.SymbolicConfiguration;
+import com.evolution.analysis.spring.truth.SymbolicTruthRegions;
 import com.evolution.analysis.spring.universal.BasicSpelEvaluator;
 import java.util.*;
 
@@ -25,6 +28,147 @@ public final class RepositoryConfigurationSpaceBuilder {
             Objects.requireNonNull(baseline);
             gaps = List.copyOf(gaps);
         }
+    }
+
+    /**
+     * Exact encoding comparison between native {@code Exactly1} Pseudo-Boolean domain constraints
+     * and legacy quadratic pairwise CNF exclusivity clauses across finite property/profile domains.
+     */
+    public record DomainPbEncoding(
+            int domainCount,
+            int pbConstraintCount,
+            int pbLiteralCount,
+            int pairwiseClauseCount,
+            int pairwiseLiteralCount,
+            double literalReductionRatio,
+            double constraintReductionRatio) {
+    }
+
+    /**
+     * Encodes finite-domain mutual exclusivity directly into {@code session} using linear native
+     * {@code Exactly1} Pseudo-Boolean constraints (replacing {@code O(n^2)} pairwise CNF clauses),
+     * populating {@code outVarLits} when non-null.
+     */
+    public static DomainPbEncoding encodeDomainExclusivityPb(
+            List<FiniteDomain> domains,
+            IncrementalCdclReasoner.Session session,
+            Map<FiniteDomain.Variable, Map<FiniteDomain.Value, Integer>> outVarLits) {
+        Objects.requireNonNull(domains, "domains");
+        Objects.requireNonNull(session, "session");
+        int pbConstraints = 0;
+        int pbLits = 0;
+        int pairwiseClauses = 0;
+        int pairwiseLits = 0;
+        for (var domain : domains) {
+            var vals = domain.values();
+            int n = vals.size();
+            var valueMap = new LinkedHashMap<FiniteDomain.Value, Integer>(n * 2);
+            int[] lits = new int[n];
+            for (int i = 0; i < n; i++) {
+                var val = vals.get(i);
+                String varName = SymbolicTruthRegions.baselineChoiceVariable(domain.variable(), val);
+                int lit = session.newVariable(varName);
+                lits[i] = lit;
+                valueMap.put(val, lit);
+            }
+            if (outVarLits != null) {
+                outVarLits.put(domain.variable(), Collections.unmodifiableMap(valueMap));
+            }
+            if (n == 0) {
+                session.addPbConstraint(new IncrementalCdclReasoner.PbConstraint(new int[0], new int[0], 1));
+                pbConstraints += 1;
+                pairwiseClauses += 1;
+            } else if (n == 1) {
+                session.addPbConstraint(IncrementalCdclReasoner.PbConstraint.clause(lits[0]));
+                pbConstraints += 1;
+                pbLits += 1;
+                pairwiseClauses += 1;
+                pairwiseLits += 1;
+            } else {
+                session.addExactly1(lits);
+                pbConstraints += 2;
+                pbLits += 2 * n;
+                int pairs = (n * (n - 1)) / 2;
+                pairwiseClauses += 1 + pairs;
+                pairwiseLits += n + 2 * pairs;
+            }
+        }
+        double litReduction = pairwiseLits <= 0 ? 0.0 : 1.0 - ((double) pbLits / pairwiseLits);
+        double clauseReduction = pairwiseClauses <= 0 ? 0.0 : 1.0 - ((double) pbConstraints / pairwiseClauses);
+        return new DomainPbEncoding(
+                domains.size(), pbConstraints, pbLits, pairwiseClauses, pairwiseLits, litReduction, clauseReduction);
+    }
+
+    /**
+     * Encodes choice-variable groups directly as native {@code Exactly1} Pseudo-Boolean constraints
+     * in {@code session} (zero auxiliary sequential-counter variables, zero quadratic pairwise clauses).
+     */
+    public static DomainPbEncoding encodeChoiceGroupsExactly1Pb(
+            List<List<SymbolicConfiguration.Formula>> choiceGroups,
+            IncrementalCdclReasoner.Session session) {
+        Objects.requireNonNull(choiceGroups, "choiceGroups");
+        Objects.requireNonNull(session, "session");
+        int pbConstraints = 0;
+        int pbLits = 0;
+        int pairwiseClauses = 0;
+        int pairwiseLits = 0;
+        for (var group : choiceGroups) {
+            int n = group.size();
+            int[] lits = new int[n];
+            for (int i = 0; i < n; i++) {
+                lits[i] = session.encode(group.get(i));
+            }
+            if (n == 0) {
+                session.addPbConstraint(new IncrementalCdclReasoner.PbConstraint(new int[0], new int[0], 1));
+                pbConstraints += 1;
+                pairwiseClauses += 1;
+            } else if (n == 1) {
+                session.addPbConstraint(IncrementalCdclReasoner.PbConstraint.clause(lits[0]));
+                pbConstraints += 1;
+                pbLits += 1;
+                pairwiseClauses += 1;
+                pairwiseLits += 1;
+            } else {
+                session.addExactly1(lits);
+                pbConstraints += 2;
+                pbLits += 2 * n;
+                int pairs = (n * (n - 1)) / 2;
+                pairwiseClauses += 1 + pairs;
+                pairwiseLits += n + 2 * pairs;
+            }
+        }
+        double litReduction = pairwiseLits <= 0 ? 0.0 : 1.0 - ((double) pbLits / pairwiseLits);
+        double clauseReduction = pairwiseClauses <= 0 ? 0.0 : 1.0 - ((double) pbConstraints / pairwiseClauses);
+        return new DomainPbEncoding(
+                choiceGroups.size(), pbConstraints, pbLits, pairwiseClauses, pairwiseLits, litReduction, clauseReduction);
+    }
+
+    /** Computes exact native PB vs pairwise CNF encoding savings for a list of finite domains. */
+    public static DomainPbEncoding estimatePbEncodingSavings(List<FiniteDomain> domains) {
+        Objects.requireNonNull(domains, "domains");
+        int pbConstraints = 0;
+        int pbLits = 0;
+        int pairwiseClauses = 0;
+        int pairwiseLits = 0;
+        for (var domain : domains) {
+            int n = domain.values().size();
+            if (n <= 1) {
+                pbConstraints += 1;
+                pbLits += n;
+                pairwiseClauses += 1;
+                pairwiseLits += n;
+            } else {
+                pbConstraints += 2;
+                pbLits += 2 * n;
+                int pairs = (n * (n - 1)) / 2;
+                pairwiseClauses += 1 + pairs;
+                pairwiseLits += n + 2 * pairs;
+            }
+        }
+        double litReduction = pairwiseLits <= 0 ? 0.0 : 1.0 - ((double) pbLits / pairwiseLits);
+        double clauseReduction = pairwiseClauses <= 0 ? 0.0 : 1.0 - ((double) pbConstraints / pairwiseClauses);
+        return new DomainPbEncoding(
+                domains.size(), pbConstraints, pbLits, pairwiseClauses, pairwiseLits, litReduction, clauseReduction);
     }
 
     private RepositoryConfigurationSpaceBuilder() {
@@ -80,15 +224,39 @@ public final class RepositoryConfigurationSpaceBuilder {
                     }
                 }
             } else if (expr.operand() instanceof ConditionExpression.BasicSpel spel) {
-                BasicSpelEvaluator.propertyKeys(spel.expression()).ifPresent(keys -> {
-                    for (String key : keys) {
-                        if (key.isBlank())
-                            continue;
-                        var hints = propertyHints.computeIfAbsent(key, k -> new LinkedHashSet<>());
-                        hints.add("true");
-                        hints.add("false");
+                var numericThreshold = ConditionEvidenceLowering.parseSpelNumericThreshold(spel.expression());
+                if (numericThreshold.isPresent()) {
+                    var parsed = numericThreshold.orElseThrow();
+                    boolean singleTerm = parsed.terms().size() == 1;
+                    for (var term : parsed.terms()) {
+                        var hints = propertyHints.computeIfAbsent(term.propertyKey(), k -> new LinkedHashSet<>());
+                        term.defaultValue().ifPresent(d -> hints.add(Integer.toString(d)));
+                        if (singleTerm && Math.abs(term.coefficient()) == 1) {
+                            int boundary = term.coefficient() == 1 ? parsed.threshold() : -parsed.threshold();
+                            if (boundary > Integer.MIN_VALUE) {
+                                hints.add(Integer.toString(boundary - 1));
+                            }
+                            hints.add(Integer.toString(boundary));
+                            if (boundary < Integer.MAX_VALUE) {
+                                hints.add(Integer.toString(boundary + 1));
+                            }
+                        } else {
+                            hints.add("0");
+                            hints.add("1");
+                            hints.add(Integer.toString(Math.max(2, Math.abs(parsed.threshold()))));
+                        }
                     }
-                });
+                } else {
+                    BasicSpelEvaluator.propertyKeys(spel.expression()).ifPresent(keys -> {
+                        for (String key : keys) {
+                            if (key.isBlank())
+                                continue;
+                            var hints = propertyHints.computeIfAbsent(key, k -> new LinkedHashSet<>());
+                            hints.add("true");
+                            hints.add("false");
+                        }
+                    });
+                }
             }
             pending.addAll(expr.children());
         }

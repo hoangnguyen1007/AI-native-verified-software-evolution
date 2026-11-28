@@ -94,6 +94,236 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
         return 1 << seq;
     }
 
+    /**
+     * Native linear Pseudo-Boolean constraint {@code sum(weights[i] * lits[i]) >= rhs}
+     * where each {@code lits[i] != 0} is a signed DIMACS literal ({@code +v} for {@code x_v = 1},
+     * {@code -v} for {@code x_v = 0}) and {@code weights[i], rhs} are integers.
+     */
+    public static final class PbConstraint {
+        private final int[] lits;
+        private final int[] weights;
+        private final int rhs;
+
+        public PbConstraint(int[] lits, int[] weights, int rhs) {
+            Objects.requireNonNull(lits, "lits");
+            Objects.requireNonNull(weights, "weights");
+            if (lits.length != weights.length) {
+                throw new IllegalArgumentException(
+                        "PB literals/weights length mismatch: " + lits.length + " vs " + weights.length);
+            }
+            for (int lit : lits) {
+                if (lit == 0) {
+                    throw new IllegalArgumentException("PB constraint literal must be non-zero");
+                }
+            }
+            this.lits = Arrays.copyOf(lits, lits.length);
+            this.weights = Arrays.copyOf(weights, weights.length);
+            this.rhs = rhs;
+        }
+
+        public int[] lits() {
+            return Arrays.copyOf(lits, lits.length);
+        }
+
+        public int[] weights() {
+            return Arrays.copyOf(weights, weights.length);
+        }
+
+        public int rhs() {
+            return rhs;
+        }
+
+        public int literalCount() {
+            return lits.length;
+        }
+
+        /** Standard Boolean clause {@code lits[0] | lits[1] | ... >= 1}. */
+        public static PbConstraint clause(int... lits) {
+            return atLeastK(lits, 1);
+        }
+
+        /** Cardinality constraint {@code sum(lits[i]) >= k}. */
+        public static PbConstraint atLeastK(int[] lits, int k) {
+            Objects.requireNonNull(lits, "lits");
+            int[] w = new int[lits.length];
+            Arrays.fill(w, 1);
+            return new PbConstraint(lits, w, k);
+        }
+
+        /** Cardinality constraint {@code sum(lits[i]) <= k}, normalized as {@code sum(-lits[i]) >= n - k}. */
+        public static PbConstraint atMostK(int[] lits, int k) {
+            Objects.requireNonNull(lits, "lits");
+            int[] neg = new int[lits.length];
+            int[] w = new int[lits.length];
+            for (int i = 0; i < lits.length; i++) {
+                if (lits[i] == 0) {
+                    throw new IllegalArgumentException("PB constraint literal must be non-zero");
+                }
+                neg[i] = -lits[i];
+                w[i] = 1;
+            }
+            return new PbConstraint(neg, w, lits.length - k);
+        }
+
+        /** Cardinality constraint {@code sum(lits[i]) <= 1}. */
+        public static PbConstraint atMost1(int[] lits) {
+            return atMostK(lits, 1);
+        }
+
+        /** Exact-cardinality pair {@code sum(lits[i]) == k} ({@code AtLeastK} + {@code AtMostK}). */
+        public static List<PbConstraint> exactlyK(int[] lits, int k) {
+            return List.of(atLeastK(lits, k), atMostK(lits, k));
+        }
+
+        /** Native {@code Exactly1} constraint pair ({@code sum(lits[i]) >= 1} and {@code sum(-lits[i]) >= n - 1}). */
+        public static List<PbConstraint> exactly1(int[] lits) {
+            return exactlyK(lits, 1);
+        }
+
+        /** Evaluates this PB constraint directly against a 1-indexed Boolean value array ({@code values[v]}). */
+        public boolean evaluate(boolean[] varValues) {
+            long sum = 0L;
+            for (int i = 0; i < lits.length; i++) {
+                int lit = lits[i];
+                int v = Math.abs(lit);
+                boolean litTrue = lit > 0 ? varValues[v] : !varValues[v];
+                if (litTrue) {
+                    sum += weights[i];
+                }
+            }
+            return sum >= rhs;
+        }
+
+        /**
+         * Canonical normalized positive-weight form with distinct variables sorted by
+         * {@code (weight desc, lit asc)}, coefficient-saturated at {@code rhs}.
+         */
+        NormalizedPb normalize() {
+            // Accumulate signed coefficients on positive variables: sum(coef[v] * x_v) >= adjRhs
+            var coefByVar = new TreeMap<Integer, Long>();
+            long adjRhs = rhs;
+            for (int i = 0; i < lits.length; i++) {
+                long w = weights[i];
+                if (w == 0L) {
+                    continue;
+                }
+                int lit = lits[i];
+                int v = Math.abs(lit);
+                if (lit > 0) {
+                    coefByVar.merge(v, w, Long::sum);
+                } else {
+                    // w * (1 - x_v) = w - w * x_v -> subtract w from rhs, add -w to x_v
+                    adjRhs -= w;
+                    coefByVar.merge(v, -w, Long::sum);
+                }
+            }
+            int nonZero = 0;
+            for (long c : coefByVar.values()) {
+                if (c != 0L) {
+                    nonZero++;
+                }
+            }
+            int[] normLits = new int[nonZero];
+            long[] normWeights = new long[nonZero];
+            int idx = 0;
+            for (var entry : coefByVar.entrySet()) {
+                int v = entry.getKey();
+                long c = entry.getValue();
+                if (c > 0L) {
+                    normLits[idx] = v;
+                    normWeights[idx] = c;
+                    idx++;
+                } else if (c < 0L) {
+                    // -|c| * x_v = |c| * (1 - x_v) - |c| -> flip literal to -v and add |c| to rhs
+                    long absC = -c;
+                    adjRhs += absC;
+                    normLits[idx] = -v;
+                    normWeights[idx] = absC;
+                    idx++;
+                }
+            }
+            if (adjRhs <= 0L) {
+                return NormalizedPb.TAUTOLOGY;
+            }
+            // Coefficient saturation: cap each weight at adjRhs (logically equivalent for sum >= adjRhs)
+            long maxSum = 0L;
+            int[] satWeights = new int[nonZero];
+            for (int i = 0; i < nonZero; i++) {
+                long w = Math.min(normWeights[i], adjRhs);
+                if (w > Integer.MAX_VALUE) {
+                    throw new ArithmeticException("Normalized PB weight exceeds int range: " + w);
+                }
+                satWeights[i] = (int) w;
+                maxSum += w;
+            }
+            if (maxSum < adjRhs) {
+                return NormalizedPb.CONFLICT;
+            }
+            // Deterministic sort: weight descending, then literal ascending
+            Integer[] order = new Integer[nonZero];
+            for (int i = 0; i < nonZero; i++) {
+                order[i] = i;
+            }
+            Arrays.sort(order, (a, b) -> {
+                int cmp = Integer.compare(satWeights[b], satWeights[a]);
+                if (cmp != 0) {
+                    return cmp;
+                }
+                return Integer.compare(normLits[a], normLits[b]);
+            });
+            int[] sortedLits = new int[nonZero];
+            int[] sortedWeights = new int[nonZero];
+            for (int i = 0; i < nonZero; i++) {
+                int oi = order[i];
+                sortedLits[i] = normLits[oi];
+                sortedWeights[i] = satWeights[oi];
+            }
+            return new NormalizedPb(sortedLits, sortedWeights, adjRhs, maxSum, false, false);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof PbConstraint other)) return false;
+            return rhs == other.rhs && Arrays.equals(lits, other.lits) && Arrays.equals(weights, other.weights);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = Integer.hashCode(rhs);
+            result = 31 * result + Arrays.hashCode(lits);
+            result = 31 * result + Arrays.hashCode(weights);
+            return result;
+        }
+
+        @Override
+        public String toString() {
+            return "PbConstraint[lits=" + Arrays.toString(lits)
+                    + ", weights=" + Arrays.toString(weights) + ", rhs=" + rhs + "]";
+        }
+    }
+
+    static final class NormalizedPb {
+        static final NormalizedPb TAUTOLOGY = new NormalizedPb(new int[0], new int[0], 0L, 0L, true, false);
+        static final NormalizedPb CONFLICT = new NormalizedPb(new int[0], new int[0], 1L, 0L, false, true);
+
+        final int[] lits;
+        final int[] weights;
+        final long rhs;
+        final long maxSum;
+        final boolean tautology;
+        final boolean conflict;
+
+        NormalizedPb(int[] lits, int[] weights, long rhs, long maxSum, boolean tautology, boolean conflict) {
+            this.lits = lits;
+            this.weights = weights;
+            this.rhs = rhs;
+            this.maxSum = maxSum;
+            this.tautology = tautology;
+            this.conflict = conflict;
+        }
+    }
+
     private static final class IntList {
         int[] data = new int[4];
         int size;
@@ -136,16 +366,35 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
         private static final int LEARNT_BUDGET_INCREMENT = 100;
         private static final int GLUE_LBD_LIMIT = 2;
 
+        private static final class InternalPb {
+            final int[] lits;
+            final int[] weights;
+            final long rhs;
+            final long maxSum;
+            long slackMax;
+
+            InternalPb(int[] lits, int[] weights, long rhs, long maxSum) {
+                this.lits = lits;
+                this.weights = weights;
+                this.rhs = rhs;
+                this.maxSum = maxSum;
+                this.slackMax = maxSum;
+            }
+        }
+
         private final SymbolicConfiguration.Limits limits;
         private final Map<ContentDigest, Integer> ids = new HashMap<>();
         private final Map<String, Integer> variables = new TreeMap<>();
         private final List<int[]> clauses = new ArrayList<>();
+        private final List<InternalPb> pbConstraints = new ArrayList<>();
 
         private int clauseCapacity = 128;
         private boolean[] clauseLearnt = new boolean[clauseCapacity];
         private int[] clauseLbd = new int[clauseCapacity];
         private double[] clauseActivity = new double[clauseCapacity];
         private int permanentCount;
+        private int permanentLitCount;
+        private int pbLitCount;
         private int learntCount;
         private int learntBudget = INITIAL_LEARNT_BUDGET;
         private double clauseInc = 1.0;
@@ -156,11 +405,14 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
         private byte[] savedPhase = new byte[capacity + 1];
         private int[] level = new int[capacity + 1];
         private int[] reason = new int[capacity + 1];
+        private int[] trailPos = new int[capacity + 1];
         private double[] activity = new double[capacity + 1];
         private boolean[] seenMark = new boolean[capacity + 1];
         private int[] lbdStamp = new int[capacity + 1];
         private int lbdEpoch;
         private IntList[] watches = new IntList[(capacity + 1) * 2];
+        private IntList[] pbWatchIds = new IntList[(capacity + 1) * 2];
+        private IntList[] pbWatchWeights = new IntList[(capacity + 1) * 2];
 
         // Deterministic binary max-heap over variables 1..numVars (tie-break by smallest var index)
         private int[] heap = new int[capacity + 1];
@@ -185,9 +437,12 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             this.limits = Objects.requireNonNull(limits, "limits");
             Arrays.fill(savedPhase, (byte) -1);
             Arrays.fill(reason, -1);
+            Arrays.fill(trailPos, -1);
             Arrays.fill(heapPos, -1);
             for (int i = 0; i < watches.length; i++) {
                 watches[i] = new IntList();
+                pbWatchIds[i] = new IntList();
+                pbWatchWeights[i] = new IntList();
             }
         }
 
@@ -197,6 +452,22 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
 
         public int variableCount() {
             return numVars;
+        }
+
+        public int pbConstraintCount() {
+            return pbConstraints.size();
+        }
+
+        public int pbLiteralCount() {
+            return pbLitCount;
+        }
+
+        public int permanentClauseCount() {
+            return permanentCount;
+        }
+
+        public int permanentClauseLiteralCount() {
+            return permanentLitCount;
         }
 
         public long conflicts() {
@@ -253,6 +524,9 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             int oldReasonLen = reason.length;
             reason = Arrays.copyOf(reason, capacity + 1);
             Arrays.fill(reason, oldReasonLen, reason.length, -1);
+            int oldTrailPosLen = trailPos.length;
+            trailPos = Arrays.copyOf(trailPos, capacity + 1);
+            Arrays.fill(trailPos, oldTrailPosLen, trailPos.length, -1);
             activity = Arrays.copyOf(activity, capacity + 1);
             seenMark = Arrays.copyOf(seenMark, capacity + 1);
             lbdStamp = Arrays.copyOf(lbdStamp, capacity + 1);
@@ -266,8 +540,12 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             int oldWatchLen = (oldCap + 1) * 2;
             int newWatchLen = (capacity + 1) * 2;
             watches = Arrays.copyOf(watches, newWatchLen);
+            pbWatchIds = Arrays.copyOf(pbWatchIds, newWatchLen);
+            pbWatchWeights = Arrays.copyOf(pbWatchWeights, newWatchLen);
             for (int i = oldWatchLen; i < newWatchLen; i++) {
                 watches[i] = new IntList();
+                pbWatchIds[i] = new IntList();
+                pbWatchWeights[i] = new IntList();
             }
         }
 
@@ -378,6 +656,24 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             return numVars;
         }
 
+        public int newAuxiliaryVar() {
+            return newVar();
+        }
+
+        public int newVariable(String name) {
+            Objects.requireNonNull(name, "name");
+            Integer existing = variables.get(name);
+            if (existing != null) {
+                return existing;
+            }
+            var formula = SymbolicConfiguration.variable(name);
+            return encodeInternal(formula, 0);
+        }
+
+        public int variableLit(String name) {
+            return variables.getOrDefault(Objects.requireNonNull(name, "name"), 0);
+        }
+
         public int encode(SymbolicConfiguration.Formula formula) {
             return encodeInternal(formula, 0);
         }
@@ -391,6 +687,137 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
         public void addBlockingClause(int... literals) {
             backtrackTo(0);
             addPermanentClause(literals);
+        }
+
+        /**
+         * Adds a native linear Pseudo-Boolean constraint {@code sum(w_i * lit_i) >= rhs}
+         * enforced via Chai-Kuehlmann PB-BCP alongside 2-WL Boolean clauses.
+         */
+        public void addPbConstraint(PbConstraint constraint) {
+            Objects.requireNonNull(constraint, "constraint");
+            backtrackTo(0);
+            if (topLevelUnsat) {
+                return;
+            }
+            if (clauses.size() + pbConstraints.size() >= limits.maxClauses()) {
+                if (learntCount > 0) {
+                    reduceLearnedClauses();
+                }
+                if (clauses.size() + pbConstraints.size() >= limits.maxClauses()) {
+                    throw new Limit();
+                }
+            }
+            NormalizedPb norm = constraint.normalize();
+            if (norm.tautology) {
+                return;
+            }
+            if (norm.conflict) {
+                topLevelUnsat = true;
+                return;
+            }
+            int maxVar = 0;
+            for (int lit : norm.lits) {
+                int v = Math.abs(lit);
+                if (v > maxVar) {
+                    maxVar = v;
+                }
+            }
+            while (numVars < maxVar) {
+                newVar();
+            }
+
+            // Simplify against any level-0 unit assignments already on the trail
+            long adjRhs = norm.rhs;
+            int[] remLits = new int[norm.lits.length];
+            int[] remWeights = new int[norm.weights.length];
+            int count = 0;
+            for (int i = 0; i < norm.lits.length; i++) {
+                int lit = norm.lits[i];
+                int w = norm.weights[i];
+                int lv = litValue(lit);
+                if (lv == 1) {
+                    adjRhs -= w;
+                } else if (lv == 0) {
+                    remLits[count] = lit;
+                    remWeights[count] = w;
+                    count++;
+                }
+            }
+            if (adjRhs <= 0L) {
+                return;
+            }
+            long maxSum = 0L;
+            for (int i = 0; i < count; i++) {
+                int satW = (int) Math.min(remWeights[i], adjRhs);
+                remWeights[i] = satW;
+                maxSum += satW;
+            }
+            if (maxSum < adjRhs) {
+                topLevelUnsat = true;
+                return;
+            }
+            if (count == 1) {
+                if (!enqueue(remLits[0], -1)) {
+                    topLevelUnsat = true;
+                }
+                return;
+            }
+
+            // Re-sort descending by saturated weight, tie-break lit asc
+            Integer[] order = new Integer[count];
+            for (int i = 0; i < count; i++) {
+                order[i] = i;
+            }
+            Arrays.sort(order, (a, b) -> {
+                int cmp = Integer.compare(remWeights[b], remWeights[a]);
+                return cmp != 0 ? cmp : Integer.compare(remLits[a], remLits[b]);
+            });
+            int[] finalLits = new int[count];
+            int[] finalWeights = new int[count];
+            for (int i = 0; i < count; i++) {
+                int oi = order[i];
+                finalLits[i] = remLits[oi];
+                finalWeights[i] = remWeights[oi];
+            }
+
+            int pbIdx = pbConstraints.size();
+            var pb = new InternalPb(finalLits, finalWeights, adjRhs, maxSum);
+            pbConstraints.add(pb);
+            pbLitCount += count;
+            for (int i = 0; i < count; i++) {
+                int watchSlot = litIdx(finalLits[i]);
+                pbWatchIds[watchSlot].add(pbIdx);
+                pbWatchWeights[watchSlot].add(finalWeights[i]);
+            }
+
+            // Immediate level-0 Chai-Kuehlmann unit forcing if slackMax - w_j < rhs
+            long margin = pb.slackMax - pb.rhs;
+            for (int i = 0; i < count && finalWeights[i] > margin; i++) {
+                if (litValue(finalLits[i]) == 0 && !enqueue(finalLits[i], -1)) {
+                    topLevelUnsat = true;
+                    return;
+                }
+            }
+        }
+
+        public void addAtLeastK(int k, int... lits) {
+            addPbConstraint(PbConstraint.atLeastK(lits, k));
+        }
+
+        public void addAtMostK(int k, int... lits) {
+            addPbConstraint(PbConstraint.atMostK(lits, k));
+        }
+
+        public void addExactly1(int... lits) {
+            for (var pb : PbConstraint.exactly1(lits)) {
+                addPbConstraint(pb);
+            }
+        }
+
+        public void addExactlyK(int k, int... lits) {
+            for (var pb : PbConstraint.exactlyK(lits, k)) {
+                addPbConstraint(pb);
+            }
         }
 
         private int encodeInternal(SymbolicConfiguration.Formula formula, int depth) {
@@ -448,6 +875,7 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
                 learntCount++;
             } else {
                 permanentCount++;
+                permanentLitCount += normalized.length;
             }
             watches[litIdx(normalized[0])].add(cIdx);
             watches[litIdx(normalized[1])].add(cIdx);
@@ -516,7 +944,7 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
                             queryId, Satisfiability.UNSATISFIABLE, Map.of(), steps, Optional.empty());
                 }
                 int topConflict = propagate();
-                if (topConflict >= 0) {
+                if (topConflict != -1) {
                     topLevelUnsat = true;
                     return new SymbolicConfiguration.Answer(
                             queryId, Satisfiability.UNSATISFIABLE, Map.of(), steps, Optional.empty());
@@ -535,7 +963,7 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
 
                 while (true) {
                     int confl = propagate();
-                    if (confl >= 0) {
+                    if (confl != -1) {
                         totalConflicts++;
                         conflictsSinceRestart++;
                         if (decisionLevel == 0) {
@@ -648,10 +1076,18 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             while (decisionLevel > targetLevel) {
                 int start = trailLim[--decisionLevel];
                 for (int c = trailSize - 1; c >= start; c--) {
-                    int v = Math.abs(trail[c]);
+                    int lit = trail[c];
+                    int v = Math.abs(lit);
+                    int falseIdx = litIdx(-lit);
+                    IntList pbIds = pbWatchIds[falseIdx];
+                    IntList pbWs = pbWatchWeights[falseIdx];
+                    for (int k = 0; k < pbIds.size; k++) {
+                        pbConstraints.get(pbIds.data[k]).slackMax += pbWs.data[k];
+                    }
                     savedPhase[v] = values[v];
                     values[v] = 0;
                     reason[v] = -1;
+                    trailPos[v] = -1;
                     level[v] = 0;
                     heapInsert(v);
                 }
@@ -660,7 +1096,7 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             }
         }
 
-        private boolean enqueue(int lit, int reasonClauseIdx) {
+        private boolean enqueue(int lit, int reasonRef) {
             int v = Math.abs(lit);
             byte sign = (byte) (lit > 0 ? 1 : -1);
             if (values[v] != 0) {
@@ -668,8 +1104,15 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             }
             values[v] = sign;
             level[v] = decisionLevel;
-            reason[v] = reasonClauseIdx;
+            reason[v] = reasonRef;
+            trailPos[v] = trailSize;
             trail[trailSize++] = lit;
+            int falseIdx = litIdx(-lit);
+            IntList pbIds = pbWatchIds[falseIdx];
+            IntList pbWs = pbWatchWeights[falseIdx];
+            for (int k = 0; k < pbIds.size; k++) {
+                pbConstraints.get(pbIds.data[k]).slackMax -= pbWs.data[k];
+            }
             return true;
         }
 
@@ -678,7 +1121,8 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
                 step();
                 int p = trail[qHead++];
                 int falseLit = -p;
-                IntList ws = watches[litIdx(falseLit)];
+                int watchIdx = litIdx(falseLit);
+                IntList ws = watches[watchIdx];
                 int i = 0;
                 while (i < ws.size()) {
                     step();
@@ -714,8 +1158,87 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
                     }
                     enqueue(first, cIdx);
                 }
+
+                // Chai-Kuehlmann PB-BCP over native Pseudo-Boolean constraints watching falseLit
+                IntList pbWs = pbWatchIds[watchIdx];
+                for (int b = 0; b < pbWs.size; b++) {
+                    step();
+                    int pbIdx = pbWs.data[b];
+                    InternalPb pb = pbConstraints.get(pbIdx);
+                    long slack = pb.slackMax;
+                    if (slack < pb.rhs) {
+                        return -(pbIdx + 2);
+                    }
+                    long margin = slack - pb.rhs;
+                    if (pb.weights[0] > margin) {
+                        int[] pbLits = pb.lits;
+                        int[] pbWeights = pb.weights;
+                        for (int j = 0; j < pbLits.length && pbWeights[j] > margin; j++) {
+                            step();
+                            int l = pbLits[j];
+                            if (litValue(l) == 0) {
+                                enqueue(l, -(pbIdx + 2));
+                            }
+                        }
+                    }
+                }
             }
             return -1;
+        }
+
+        private int[] explainPbReason(int pbIdx, int impliedLit) {
+            InternalPb pb = pbConstraints.get(pbIdx);
+            int[] pbLits = pb.lits;
+            int[] pbWeights = pb.weights;
+            long need;
+            int tLimit;
+            if (impliedLit == 0) {
+                need = pb.maxSum - pb.rhs + 1L;
+                tLimit = Integer.MAX_VALUE;
+            } else {
+                int wImplied = 0;
+                for (int i = 0; i < pbLits.length; i++) {
+                    if (pbLits[i] == impliedLit) {
+                        wImplied = pbWeights[i];
+                        break;
+                    }
+                }
+                if (wImplied == 0) {
+                    throw new IllegalStateException("PB reason missing implied literal " + impliedLit);
+                }
+                need = pb.maxSum - wImplied - pb.rhs + 1L;
+                tLimit = trailPos[Math.abs(impliedLit)];
+            }
+            long acc = 0L;
+            // Pass 1: absorb level-0 falsified literals first (zero cost in learned clause)
+            for (int i = 0; i < pbLits.length; i++) {
+                int lit = pbLits[i];
+                if (lit == impliedLit) {
+                    continue;
+                }
+                int v = Math.abs(lit);
+                if (litValue(lit) == -1 && trailPos[v] < tLimit && level[v] == 0) {
+                    acc += pbWeights[i];
+                }
+            }
+            int[] buf = new int[pbLits.length];
+            int count = 0;
+            // Pass 2: collect minimal sufficient higher-level falsified literals (weights already descending)
+            for (int i = 0; i < pbLits.length && acc < need; i++) {
+                int lit = pbLits[i];
+                if (lit == impliedLit) {
+                    continue;
+                }
+                int v = Math.abs(lit);
+                if (litValue(lit) == -1 && trailPos[v] < tLimit && level[v] > 0) {
+                    buf[count++] = lit;
+                    acc += pbWeights[i];
+                }
+            }
+            if (acc < need) {
+                throw new IllegalStateException("PB reason slack underflow: acc=" + acc + " need=" + need);
+            }
+            return Arrays.copyOf(buf, count);
         }
 
         private int computeLbd(int[] clause) {
@@ -734,8 +1257,8 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
             return lbd;
         }
 
-        private int[] analyzeConflict(int conflictIdx, int[] outMeta) {
-            int cIdx = conflictIdx;
+        private int[] analyzeConflict(int conflictRef, int[] outMeta) {
+            int cRef = conflictRef;
             int p = 0;
             int counter = 0;
             int trailIdx = trailSize - 1;
@@ -744,26 +1267,44 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
 
             do {
                 step();
-                int[] c = clauses.get(cIdx);
-                if (clauseLearnt[cIdx]) {
-                    bumpClauseActivity(cIdx);
-                    int updatedLbd = computeLbd(c);
-                    if (updatedLbd < clauseLbd[cIdx]) {
-                        clauseLbd[cIdx] = updatedLbd;
+                if (cRef >= 0) {
+                    int[] c = clauses.get(cRef);
+                    if (clauseLearnt[cRef]) {
+                        bumpClauseActivity(cRef);
+                        int updatedLbd = computeLbd(c);
+                        if (updatedLbd < clauseLbd[cRef]) {
+                            clauseLbd[cRef] = updatedLbd;
+                        }
                     }
-                }
-                int start = (p == 0) ? 0 : 1;
-                for (int j = start; j < c.length; j++) {
-                    int lit = c[j];
-                    int v = Math.abs(lit);
-                    int lvl = level[v];
-                    if (!seenMark[v] && lvl > 0) {
-                        bumpActivity(v);
-                        seenMark[v] = true;
-                        if (lvl == decisionLevel) {
-                            counter++;
-                        } else {
-                            learned.add(lit);
+                    int start = (p == 0) ? 0 : 1;
+                    for (int j = start; j < c.length; j++) {
+                        int lit = c[j];
+                        int v = Math.abs(lit);
+                        int lvl = level[v];
+                        if (!seenMark[v] && lvl > 0) {
+                            bumpActivity(v);
+                            seenMark[v] = true;
+                            if (lvl == decisionLevel) {
+                                counter++;
+                            } else {
+                                learned.add(lit);
+                            }
+                        }
+                    }
+                } else {
+                    int pbIdx = -(cRef + 2);
+                    int[] pbReason = explainPbReason(pbIdx, p);
+                    for (int lit : pbReason) {
+                        int v = Math.abs(lit);
+                        int lvl = level[v];
+                        if (!seenMark[v] && lvl > 0) {
+                            bumpActivity(v);
+                            seenMark[v] = true;
+                            if (lvl == decisionLevel) {
+                                counter++;
+                            } else {
+                                learned.add(lit);
+                            }
                         }
                     }
                 }
@@ -777,8 +1318,8 @@ public enum IncrementalCdclReasoner implements ConfigurationReasoner {
                 int pv = Math.abs(p);
                 seenMark[pv] = false;
                 counter--;
-                cIdx = reason[pv];
-            } while (counter > 0 && cIdx >= 0);
+                cRef = reason[pv];
+            } while (counter > 0 && cRef != -1);
 
             learned.set(0, -p);
             int[] out = new int[learned.size()];

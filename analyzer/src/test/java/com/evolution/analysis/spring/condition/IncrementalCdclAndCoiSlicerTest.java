@@ -1087,6 +1087,259 @@ class IncrementalCdclAndCoiSlicerTest {
                 "Unique @Primary among 2 DataSource beans must satisfy @ConditionalOnSingleCandidate");
     }
 
+    @Test
+    void nativePbChaiKuehlmannPropagationAnd1UipMatchBruteForceAcross300RandomMixedFormulas() {
+        var rng = new Random(2026112801L);
+        for (int trial = 0; trial < 300; trial++) {
+            int nVars = 5 + (trial % 4); // 5..8 vars (32..256 worlds)
+            int pbCount = 3 + (trial % 5);
+            int cnfCount = 2 + (trial % 4);
+
+            var pbs = new ArrayList<IncrementalCdclReasoner.PbConstraint>(pbCount + cnfCount);
+            for (int c = 0; c < pbCount; c++) {
+                int len = 2 + rng.nextInt(nVars - 1);
+                var chosenVars = new ArrayList<Integer>(nVars);
+                for (int v = 1; v <= nVars; v++) chosenVars.add(v);
+                Collections.shuffle(chosenVars, rng);
+                int[] lits = new int[len];
+                int[] weights = new int[len];
+                int maxPos = 0;
+                int minNeg = 0;
+                for (int i = 0; i < len; i++) {
+                    int v = chosenVars.get(i);
+                    lits[i] = rng.nextBoolean() ? v : -v;
+                    int w = rng.nextInt(7) - 2; // includes negative weights (-2..4)
+                    if (w == 0) w = 1;
+                    weights[i] = w;
+                    if (w > 0) maxPos += w; else minNeg += w;
+                }
+                int rhs = minNeg + rng.nextInt(Math.max(1, maxPos - minNeg + 2));
+                pbs.add(new IncrementalCdclReasoner.PbConstraint(lits, weights, rhs));
+            }
+            for (int c = 0; c < cnfCount; c++) {
+                int len = 2 + rng.nextInt(3);
+                int[] lits = new int[len];
+                for (int i = 0; i < len; i++) {
+                    int v = 1 + rng.nextInt(nVars);
+                    lits[i] = rng.nextBoolean() ? v : -v;
+                }
+                pbs.add(IncrementalCdclReasoner.PbConstraint.clause(lits));
+            }
+
+            int worlds = 1 << nVars;
+            boolean[] worldSat = new boolean[worlds];
+            boolean anySat = false;
+            boolean[] bits = new boolean[nVars + 1];
+            for (int mask = 0; mask < worlds; mask++) {
+                for (int v = 1; v <= nVars; v++) {
+                    bits[v] = (mask & (1 << (v - 1))) != 0;
+                }
+                boolean ok = true;
+                for (var pb : pbs) {
+                    if (!pb.evaluate(bits)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                worldSat[mask] = ok;
+                anySat |= ok;
+            }
+
+            var session = new IncrementalCdclReasoner.Session(Limits.defaults());
+            for (int v = 1; v <= nVars; v++) {
+                session.newVariable("x" + v);
+            }
+            for (var pb : pbs) {
+                session.addPbConstraint(pb);
+            }
+
+            var plainAns = session.solveIncremental(ContentDigest.sha256Utf8("pb-trial-" + trial));
+            assertEquals(anySat ? SATISFIABLE : UNSATISFIABLE, plainAns.status(),
+                    "PB plain SAT mismatch on trial " + trial);
+            if (anySat) {
+                boolean[] wBits = new boolean[nVars + 1];
+                for (int v = 1; v <= nVars; v++) {
+                    wBits[v] = Boolean.TRUE.equals(plainAns.witness().get("x" + v));
+                }
+                for (var pb : pbs) {
+                    assertTrue(pb.evaluate(wBits), "PB witness violates " + pb + " on trial " + trial);
+                }
+            }
+
+            // Test 4 assumption queries per trial (1,200 PB assumption queries)
+            for (int q = 0; q < 4; q++) {
+                int aLen = 1 + rng.nextInt(3);
+                int[] aLits = new int[aLen];
+                for (int a = 0; a < aLen; a++) {
+                    int v = 1 + rng.nextInt(nVars);
+                    aLits[a] = rng.nextBoolean() ? v : -v;
+                }
+                boolean expectedSat = false;
+                for (int mask = 0; mask < worlds; mask++) {
+                    if (!worldSat[mask]) continue;
+                    boolean match = true;
+                    for (int lit : aLits) {
+                        int v = Math.abs(lit);
+                        boolean val = (mask & (1 << (v - 1))) != 0;
+                        if (val != (lit > 0)) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) {
+                        expectedSat = true;
+                        break;
+                    }
+                }
+                var ans = session.solveIncremental(ContentDigest.sha256Utf8("pb-t" + trial + "-q" + q), aLits);
+                assertEquals(expectedSat ? SATISFIABLE : UNSATISFIABLE, ans.status(),
+                        "PB assumption mismatch on trial " + trial + " q=" + q);
+                if (expectedSat) {
+                    boolean[] wBits = new boolean[nVars + 1];
+                    for (int v = 1; v <= nVars; v++) {
+                        wBits[v] = Boolean.TRUE.equals(ans.witness().get("x" + v));
+                    }
+                    for (var pb : pbs) {
+                        assertTrue(pb.evaluate(wBits), "PB assumption witness violates " + pb);
+                    }
+                    for (int lit : aLits) {
+                        assertEquals(lit > 0, wBits[Math.abs(lit)], "Assumption violated: " + lit);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void nativePbPigeonholeAndMultiValueDomainReductionExceed60Percent() throws Exception {
+        // 1. PHP(5, 4) with native AtLeast1 + AtMost1 PB constraints -> UNSAT quickly
+        int pigeons = 5;
+        int holes = 4;
+        var phpSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        int[][] x = new int[pigeons][holes];
+        for (int p = 0; p < pigeons; p++) {
+            for (int h = 0; h < holes; h++) {
+                x[p][h] = phpSession.newVariable("p" + p + "_h" + h);
+            }
+            phpSession.addAtLeastK(1, x[p]);
+        }
+        for (int h = 0; h < holes; h++) {
+            int[] col = new int[pigeons];
+            for (int p = 0; p < pigeons; p++) col[p] = x[p][h];
+            phpSession.addAtMostK(1, col);
+        }
+        var phpAns = phpSession.solveIncremental(ContentDigest.sha256Utf8("pb-php54"));
+        assertEquals(UNSATISFIABLE, phpAns.status());
+        assertEquals(pigeons + holes, phpSession.pbConstraintCount());
+
+        // 2. RepositoryConfigurationSpaceBuilder MAX_VALUES_PER_PROPERTY=8 native Exactly1 PB encoding >= 60% savings
+        var build = ConditionLoweringTest.fixture(List.of()).build();
+        var config = new ConfigDataIngestion().ingest(
+                IngestionFixtures.inputs(Map.of("src/main/resources/application.properties", "app.mode=v1\n")),
+                ConfigDataIngestion.Policy.defaults());
+        var ev = new ConditionEvidence.Derived(List.of(config.identity()),
+                new VersionedIdentifier("pb-domain-test", "1"), "pb-domain-test");
+        var domains = new ArrayList<FiniteDomain>();
+        for (int d = 0; d < 4; d++) {
+            var vals = new ArrayList<FiniteDomain.Value>(RepositoryConfigurationSpaceBuilder.MAX_VALUES_PER_PROPERTY);
+            vals.add(FiniteDomain.Value.missing());
+            for (int v = 1; v < RepositoryConfigurationSpaceBuilder.MAX_VALUES_PER_PROPERTY; v++) {
+                vals.add(FiniteDomain.Value.exact("opt-" + v));
+            }
+            domains.add(new FiniteDomain(
+                    new FiniteDomain.Variable(FiniteDomain.Kind.PROPERTY, "app.tier." + d), vals, ev));
+        }
+
+        var domainSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        var varMap = new LinkedHashMap<FiniteDomain.Variable, Map<FiniteDomain.Value, Integer>>();
+        var encoding = RepositoryConfigurationSpaceBuilder.encodeDomainExclusivityPb(domains, domainSession, varMap);
+        assertEquals(4, encoding.domainCount());
+        assertEquals(8, encoding.pbConstraintCount(), "4 domains x 2 PB constraints (AtLeast1 + AtMost1)");
+        assertEquals(64, encoding.pbLiteralCount(), "4 domains x 16 PB literals");
+        assertEquals(116, encoding.pairwiseClauseCount(), "4 domains x (1 + C(8,2)=28) pairwise clauses");
+        assertEquals(256, encoding.pairwiseLiteralCount(), "4 domains x 64 pairwise literals");
+        assertTrue(encoding.literalReductionRatio() >= 0.75 - 1e-9,
+                () -> "Expected >= 75% literal reduction on 8-value domains, got " + encoding.literalReductionRatio());
+        assertTrue(encoding.constraintReductionRatio() >= 0.93,
+                () -> "Expected >= 93% constraint reduction on 8-value domains, got " + encoding.constraintReductionRatio());
+
+        // Verify domain exclusivity semantically: picking two distinct values in the same domain is UNSAT
+        var d0Lits = varMap.get(domains.getFirst().variable());
+        int litMissing = d0Lits.get(FiniteDomain.Value.missing());
+        int litOpt1 = d0Lits.get(FiniteDomain.Value.exact("opt-1"));
+        assertEquals(UNSATISFIABLE, domainSession.solveIncremental(
+                ContentDigest.sha256Utf8("dom-mutex"), litMissing, litOpt1).status());
+        assertEquals(SATISFIABLE, domainSession.solveIncremental(
+                ContentDigest.sha256Utf8("dom-single"), litOpt1).status());
+
+        // 3. ConditionEvidenceLowering native PB for @ConditionalOnSingleCandidate (8 candidates -> >= 60% reduction)
+        var scSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        int[] cands = new int[8];
+        boolean[] prims = new boolean[8];
+        for (int i = 0; i < 8; i++) {
+            cands[i] = scSession.newVariable("bean_" + i);
+        }
+        prims[0] = true;
+        int scRes = scSession.newVariable("single_cand_ok");
+        var scSummary = ConditionEvidenceLowering.lowerSingleCandidateToPb(cands, prims, scRes, scSession);
+        assertTrue(scSummary.literalReductionRatio() >= 0.60,
+                () -> "Expected >= 60% literal reduction for 8-candidate @ConditionalOnSingleCandidate, got "
+                        + scSummary.literalReductionRatio());
+        // Check exact semantics: 0 active -> false; 1 active -> true; 2 non-primary -> false; primary + non-primary -> true
+        assertEquals(UNSATISFIABLE, scSession.solveIncremental(ContentDigest.sha256Utf8("sc-0"),
+                scRes, -cands[0], -cands[1], -cands[2], -cands[3], -cands[4], -cands[5], -cands[6], -cands[7]).status());
+        assertEquals(SATISFIABLE, scSession.solveIncremental(ContentDigest.sha256Utf8("sc-1"),
+                scRes, -cands[0], cands[1], -cands[2], -cands[3], -cands[4], -cands[5], -cands[6], -cands[7]).status());
+        assertEquals(UNSATISFIABLE, scSession.solveIncremental(ContentDigest.sha256Utf8("sc-2-noprim"),
+                scRes, -cands[0], cands[1], cands[2]).status());
+        assertEquals(SATISFIABLE, scSession.solveIncremental(ContentDigest.sha256Utf8("sc-prim-plus"),
+                scRes, cands[0], cands[1], cands[2]).status());
+
+        // 4. ConditionEvidenceLowering native PB for SpEL numeric thresholds #{2 * ${app.tier:1} + ${app.boost:0} >= 5}
+        var parsedSpel = ConditionEvidenceLowering.parseSpelNumericThreshold(
+                "#{2 * ${app.tier:1} + ${app.boost:0} >= 5}").orElseThrow();
+        assertEquals(2, parsedSpel.terms().size());
+        assertEquals(ConditionEvidenceLowering.ComparisonOp.GE, parsedSpel.operator());
+        assertEquals(5, parsedSpel.threshold());
+
+        var spelSession = new IncrementalCdclReasoner.Session(Limits.defaults());
+        var tierMap = new LinkedHashMap<Integer, Integer>();
+        var boostMap = new LinkedHashMap<Integer, Integer>();
+        int[] tierLits = new int[4];
+        int[] boostLits = new int[4];
+        for (int i = 0; i < 4; i++) {
+            tierLits[i] = spelSession.newVariable("tier_" + i);
+            tierMap.put(i, tierLits[i]);
+            boostLits[i] = spelSession.newVariable("boost_" + i);
+            boostMap.put(i, boostLits[i]);
+        }
+        spelSession.addExactly1(tierLits);
+        spelSession.addExactly1(boostLits);
+        int spelOk = spelSession.newVariable("spel_ok");
+        ConditionEvidenceLowering.lowerSpelNumericThresholdToPb(
+                parsedSpel, Map.of("app.tier", tierMap, "app.boost", boostMap), spelOk, spelSession);
+
+        // Exhaustively verify all 4x4 = 16 combinations match (2*tier + boost >= 5)
+        for (int t = 0; t < 4; t++) {
+            for (int b = 0; b < 4; b++) {
+                boolean expected = (2 * t + b) >= 5;
+                var ansPos = spelSession.solveIncremental(
+                        ContentDigest.sha256Utf8("spel-" + t + "-" + b + "-pos"),
+                        tierLits[t], boostLits[b], spelOk);
+                var ansNeg = spelSession.solveIncremental(
+                        ContentDigest.sha256Utf8("spel-" + t + "-" + b + "-neg"),
+                        tierLits[t], boostLits[b], -spelOk);
+                assertEquals(expected ? SATISFIABLE : UNSATISFIABLE, ansPos.status());
+                assertEquals(expected ? UNSATISFIABLE : SATISFIABLE, ansNeg.status());
+            }
+        }
+        System.out.printf(Locale.ROOT,
+                "[WP2.3-PB-ENCODING] 8-val-domains: litReduction=%.1f%% constraintReduction=%.1f%% | 8-cand-singleCandidate: litReduction=%.1f%%%n",
+                encoding.literalReductionRatio() * 100.0,
+                encoding.constraintReductionRatio() * 100.0,
+                scSummary.literalReductionRatio() * 100.0);
+    }
+
     private static BytecodeAutoConfigScanner.StarterConfiguration starterCfg(
             String fqn,
             ContentDigest jarDigest,
